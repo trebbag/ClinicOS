@@ -15,54 +15,63 @@ async function proxyRequest(
   request: Request,
   context: RouteContext
 ): Promise<Response> {
-  assertWebProductionConfig();
+  try {
+    assertWebProductionConfig();
 
-  const url = new URL(request.url);
-  const { path } = await context.params;
-  const targetUrl = buildTargetUrl(path, url.search);
-  const headers = new Headers();
+    const url = new URL(request.url);
+    const { path } = await context.params;
+    const targetUrl = buildTargetUrl(path, url.search);
+    const headers = new Headers();
 
-  request.headers.forEach((value, key) => {
-    if (["host", "content-length"].includes(key.toLowerCase())) {
-      return;
+    request.headers.forEach((value, key) => {
+      if (["host", "content-length"].includes(key.toLowerCase())) {
+        return;
+      }
+      headers.set(key, value);
+    });
+
+    headers.set("x-forwarded-host", url.host);
+    headers.set("x-forwarded-proto", url.protocol.replace(":", ""));
+
+    const method = request.method.toUpperCase();
+    const body =
+      method === "GET" || method === "HEAD"
+        ? undefined
+        : await request.arrayBuffer();
+
+    const upstream = await fetch(targetUrl, {
+      method,
+      headers,
+      body
+    });
+
+    const responseHeaders = new Headers();
+    upstream.headers.forEach((value, key) => {
+      if (key.toLowerCase() === "set-cookie") {
+        return;
+      }
+      responseHeaders.set(key, value);
+    });
+
+    const setCookies =
+      (upstream.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
+    for (const value of setCookies) {
+      responseHeaders.append("set-cookie", value);
     }
-    headers.set(key, value);
-  });
 
-  headers.set("x-forwarded-host", url.host);
-  headers.set("x-forwarded-proto", url.protocol.replace(":", ""));
-
-  const method = request.method.toUpperCase();
-  const body =
-    method === "GET" || method === "HEAD"
-      ? undefined
-      : await request.arrayBuffer();
-
-  const upstream = await fetch(targetUrl, {
-    method,
-    headers,
-    body
-  });
-
-  const responseHeaders = new Headers();
-  upstream.headers.forEach((value, key) => {
-    if (key.toLowerCase() === "set-cookie") {
-      return;
-    }
-    responseHeaders.set(key, value);
-  });
-
-  const setCookies =
-    (upstream.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
-  for (const value of setCookies) {
-    responseHeaders.append("set-cookie", value);
+    return new Response(upstream.body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: responseHeaders
+    });
+  } catch (error) {
+    return Response.json(
+      {
+        error: error instanceof Error ? error.message : String(error)
+      },
+      { status: 503 }
+    );
   }
-
-  return new Response(upstream.body, {
-    status: upstream.status,
-    statusText: upstream.statusText,
-    headers: responseHeaders
-  });
 }
 
 export async function GET(request: Request, context: RouteContext): Promise<Response> {

@@ -25,6 +25,16 @@ Using the current local `.env` and repo code:
 
 That means the remaining pilot blockers are now mostly deployment and enrollment inputs, not missing product code or missing Microsoft configuration.
 
+## Current rollout checkpoint
+
+- The local repo is healthy and connected to the external Postgres database.
+- The database currently has:
+  - `0` user profiles
+  - `0` enrolled devices
+  - `0` active sessions
+- That means the first admin bootstrap and device enrollment have not happened yet.
+- The current public Render smoke check against the configured `PUBLIC_APP_ORIGIN` is still failing with web `500` responses, so the deployed web service needs a fresh redeploy using the latest code before pilot enrollment can begin.
+
 ## What I still need from you next
 
 1. The final same-origin pilot URL on Render
