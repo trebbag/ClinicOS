@@ -1,0 +1,22 @@
+{
+  "name": "@clinic-os/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --root ../.. --config vitest.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@clinic-os/agents": "0.1.0",
+    "@clinic-os/db": "0.1.0",
+    "@clinic-os/domain": "0.1.0",
+    "@clinic-os/msgraph": "0.1.0",
+    "dotenv": "^16.4.7",
+    "@clinic-os/workflows": "0.1.0",
+    "zod": "^3.24.1"
+  }
+}

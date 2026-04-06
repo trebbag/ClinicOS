@@ -1,0 +1,153 @@
+services:
+  - type: web
+    name: clinic-os-web
+    env: node
+    rootDir: .
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm --workspace @clinic-os/web run start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: AUTH_MODE
+        value: device_profiles
+      - key: NEXT_PUBLIC_AUTH_MODE
+        value: device_profiles
+      - key: MICROSOFT_INTEGRATION_MODE
+        value: live
+      - key: NEXT_PUBLIC_API_PROXY_PATH
+        value: /clinic-api
+      - key: DATABASE_URL
+        fromDatabase:
+          name: clinic-os-db
+          property: connectionString
+      - key: PUBLIC_APP_ORIGIN
+        sync: false
+      - key: INTERNAL_API_BASE_URL
+        sync: false
+      - key: MICROSOFT_TENANT_ID
+        sync: false
+      - key: MICROSOFT_CLIENT_ID
+        sync: false
+      - key: MICROSOFT_CLIENT_SECRET
+        sync: false
+      - key: MICROSOFT_SHAREPOINT_SITE_ID
+        sync: false
+      - key: MICROSOFT_SHAREPOINT_POLICY_FOLDER
+        sync: false
+      - key: MICROSOFT_LISTS_SITE_ID
+        sync: false
+      - key: MICROSOFT_LIST_ISSUES_ID
+        sync: false
+      - key: MICROSOFT_LIST_ACTION_ITEMS_ID
+        sync: false
+      - key: MICROSOFT_LIST_IMPORT_STATUS_ID
+        sync: false
+      - key: MICROSOFT_PLANNER_PLAN_ID
+        sync: false
+      - key: MICROSOFT_PLANNER_BUCKET_ID
+        sync: false
+      - key: MICROSOFT_TEAMS_APPROVALS_WEBHOOK_URL
+        sync: false
+      - key: MICROSOFT_TEAMS_OFFICE_OPS_WEBHOOK_URL
+        sync: false
+
+  - type: pserv
+    name: clinic-os-api
+    env: node
+    rootDir: .
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm --workspace @clinic-os/api run start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: AUTH_MODE
+        value: device_profiles
+      - key: MICROSOFT_INTEGRATION_MODE
+        value: live
+      - key: DATABASE_URL
+        fromDatabase:
+          name: clinic-os-db
+          property: connectionString
+      - key: PUBLIC_APP_ORIGIN
+        sync: false
+      - key: MICROSOFT_TENANT_ID
+        sync: false
+      - key: MICROSOFT_CLIENT_ID
+        sync: false
+      - key: MICROSOFT_CLIENT_SECRET
+        sync: false
+      - key: MICROSOFT_SHAREPOINT_SITE_ID
+        sync: false
+      - key: MICROSOFT_SHAREPOINT_POLICY_FOLDER
+        sync: false
+      - key: MICROSOFT_LISTS_SITE_ID
+        sync: false
+      - key: MICROSOFT_LIST_ISSUES_ID
+        sync: false
+      - key: MICROSOFT_LIST_ACTION_ITEMS_ID
+        sync: false
+      - key: MICROSOFT_LIST_IMPORT_STATUS_ID
+        sync: false
+      - key: MICROSOFT_PLANNER_PLAN_ID
+        sync: false
+      - key: MICROSOFT_PLANNER_BUCKET_ID
+        sync: false
+      - key: MICROSOFT_TEAMS_APPROVALS_WEBHOOK_URL
+        sync: false
+      - key: MICROSOFT_TEAMS_OFFICE_OPS_WEBHOOK_URL
+        sync: false
+
+  - type: worker
+    name: clinic-os-worker
+    env: node
+    rootDir: .
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm --workspace @clinic-os/worker run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MICROSOFT_INTEGRATION_MODE
+        value: live
+      - key: DATABASE_URL
+        fromDatabase:
+          name: clinic-os-db
+          property: connectionString
+      - key: WORKER_BATCH_SIZE
+        value: 10
+      - key: WORKER_POLL_INTERVAL_MS
+        value: 5000
+      - key: MICROSOFT_TENANT_ID
+        sync: false
+      - key: MICROSOFT_CLIENT_ID
+        sync: false
+      - key: MICROSOFT_CLIENT_SECRET
+        sync: false
+      - key: MICROSOFT_SHAREPOINT_SITE_ID
+        sync: false
+      - key: MICROSOFT_SHAREPOINT_POLICY_FOLDER
+        sync: false
+      - key: MICROSOFT_LISTS_SITE_ID
+        sync: false
+      - key: MICROSOFT_LIST_ISSUES_ID
+        sync: false
+      - key: MICROSOFT_LIST_ACTION_ITEMS_ID
+        sync: false
+      - key: MICROSOFT_LIST_IMPORT_STATUS_ID
+        sync: false
+      - key: MICROSOFT_PLANNER_PLAN_ID
+        sync: false
+      - key: MICROSOFT_PLANNER_BUCKET_ID
+        sync: false
+      - key: MICROSOFT_TEAMS_APPROVALS_WEBHOOK_URL
+        sync: false
+      - key: MICROSOFT_TEAMS_OFFICE_OPS_WEBHOOK_URL
+        sync: false
+
+databases:
+  - name: clinic-os-db
+    plan: basic-256mb

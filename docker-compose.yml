@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: clinic-os-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: clinic_os
+      POSTGRES_USER: clinic_os
+      POSTGRES_PASSWORD: clinic_os
+    ports:
+      - "5432:5432"
+    volumes:
+      - clinic_os_pg:/var/lib/postgresql/data
+
+volumes:
+  clinic_os_pg:

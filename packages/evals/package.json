@@ -1,0 +1,22 @@
+{
+  "name": "@clinic-os/evals",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/evals/src/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./dist/evals/src/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --root ../.. --config vitest.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@clinic-os/approvals": "0.1.0",
+    "@clinic-os/agents": "0.1.0",
+    "@clinic-os/domain": "0.1.0",
+    "@clinic-os/workflows": "0.1.0"
+  }
+}

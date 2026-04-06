@@ -1,0 +1,467 @@
+import type {
+  ActionItemRecord,
+  ApprovalTask,
+  AuditEvent,
+  ChecklistItemRecord,
+  ChecklistRun,
+  ChecklistTemplate,
+  DeviceAllowedProfile,
+  DeviceEnrollmentCode,
+  DeviceSession,
+  DocumentRecord,
+  EnrolledDevice,
+  MetricRun,
+  MicrosoftIntegrationValidationRecord,
+  ScorecardReviewRecord,
+  TrainingCompletionRecord,
+  TrainingRequirement,
+  UserProfile,
+  WorkerJobRecord,
+  WorkflowRun
+} from "@clinic-os/domain";
+import type { ClinicRepository } from "@clinic-os/db";
+
+type FilterMap = Record<string, string | undefined>;
+
+function matchesFilters<T extends Record<string, unknown>>(item: T, filters?: FilterMap): boolean {
+  if (!filters) return true;
+  return Object.entries(filters).every(([key, value]) => value === undefined || item[key] === value);
+}
+
+export class MemoryClinicRepository implements ClinicRepository {
+  public readonly workflows: WorkflowRun[] = [];
+  public readonly documents: DocumentRecord[] = [];
+  public readonly approvals: ApprovalTask[] = [];
+  public readonly actionItems: ActionItemRecord[] = [];
+  public readonly checklistTemplates: ChecklistTemplate[] = [];
+  public readonly checklistRuns: ChecklistRun[] = [];
+  public readonly checklistItems: ChecklistItemRecord[] = [];
+  public readonly metrics: MetricRun[] = [];
+  public readonly scorecardReviews: ScorecardReviewRecord[] = [];
+  public readonly trainingRequirements: TrainingRequirement[] = [];
+  public readonly trainingCompletions: TrainingCompletionRecord[] = [];
+  public readonly auditEvents: AuditEvent[] = [];
+  public readonly userProfiles: UserProfile[] = [];
+  public readonly enrolledDevices: EnrolledDevice[] = [];
+  public readonly deviceAllowedProfiles: DeviceAllowedProfile[] = [];
+  public readonly enrollmentCodes: DeviceEnrollmentCode[] = [];
+  public readonly deviceSessions: DeviceSession[] = [];
+  public readonly workerJobs: WorkerJobRecord[] = [];
+  public readonly integrationValidations: MicrosoftIntegrationValidationRecord[] = [];
+
+  async createWorkflowRun(run: WorkflowRun): Promise<WorkflowRun> {
+    this.workflows.unshift(run);
+    return run;
+  }
+
+  async updateWorkflowRun(id: string, patch: Partial<WorkflowRun>): Promise<WorkflowRun> {
+    const index = this.workflows.findIndex((run) => run.id === id);
+    this.workflows[index] = { ...this.workflows[index], ...patch };
+    return this.workflows[index];
+  }
+
+  async getWorkflowRun(id: string): Promise<WorkflowRun | null> {
+    return this.workflows.find((run) => run.id === id) ?? null;
+  }
+
+  async listWorkflowRuns(filters?: { workflowDefinitionId?: string }): Promise<WorkflowRun[]> {
+    return this.workflows.filter((run) => matchesFilters(run, filters));
+  }
+
+  async createDocument(document: DocumentRecord): Promise<DocumentRecord> {
+    this.documents.unshift(document);
+    return document;
+  }
+
+  async updateDocument(id: string, patch: Partial<DocumentRecord>): Promise<DocumentRecord> {
+    const index = this.documents.findIndex((document) => document.id === id);
+    this.documents[index] = { ...this.documents[index], ...patch };
+    return this.documents[index];
+  }
+
+  async getDocument(id: string): Promise<DocumentRecord | null> {
+    return this.documents.find((document) => document.id === id) ?? null;
+  }
+
+  async listDocuments(filters?: { status?: string; approvalClass?: string }): Promise<DocumentRecord[]> {
+    return this.documents.filter((document) => matchesFilters(document, filters));
+  }
+
+  async createApprovalTasks(tasks: ApprovalTask[]): Promise<ApprovalTask[]> {
+    this.approvals.push(...tasks);
+    return tasks;
+  }
+
+  async updateApprovalTask(id: string, patch: Partial<ApprovalTask>): Promise<ApprovalTask> {
+    const index = this.approvals.findIndex((approval) => approval.id === id);
+    this.approvals[index] = { ...this.approvals[index], ...patch };
+    return this.approvals[index];
+  }
+
+  async getApprovalTask(id: string): Promise<ApprovalTask | null> {
+    return this.approvals.find((approval) => approval.id === id) ?? null;
+  }
+
+  async listApprovalTasks(filters?: { reviewerRole?: string; status?: string; targetId?: string }): Promise<ApprovalTask[]> {
+    return this.approvals.filter((approval) => matchesFilters(approval, filters));
+  }
+
+  async createActionItem(item: ActionItemRecord): Promise<ActionItemRecord> {
+    this.actionItems.unshift(item);
+    return item;
+  }
+
+  async updateActionItem(id: string, patch: Partial<ActionItemRecord>): Promise<ActionItemRecord> {
+    const index = this.actionItems.findIndex((item) => item.id === id);
+    this.actionItems[index] = { ...this.actionItems[index], ...patch };
+    return this.actionItems[index];
+  }
+
+  async listActionItems(filters?: {
+    ownerRole?: string;
+    status?: string;
+    kind?: string;
+    escalationStatus?: string;
+    sourceWorkflowRunId?: string;
+  }): Promise<ActionItemRecord[]> {
+    return this.actionItems.filter((item) => matchesFilters(item, filters));
+  }
+
+  async getActionItem(id: string): Promise<ActionItemRecord | null> {
+    return this.actionItems.find((item) => item.id === id) ?? null;
+  }
+
+  async createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate> {
+    this.checklistTemplates.unshift(template);
+    return template;
+  }
+
+  async updateChecklistTemplate(id: string, patch: Partial<ChecklistTemplate>): Promise<ChecklistTemplate> {
+    const index = this.checklistTemplates.findIndex((template) => template.id === id);
+    this.checklistTemplates[index] = { ...this.checklistTemplates[index], ...patch };
+    return this.checklistTemplates[index];
+  }
+
+  async getChecklistTemplate(id: string): Promise<ChecklistTemplate | null> {
+    return this.checklistTemplates.find((template) => template.id === id) ?? null;
+  }
+
+  async listChecklistTemplates(filters?: {
+    workflowDefinitionId?: string;
+    isActive?: boolean;
+  }): Promise<ChecklistTemplate[]> {
+    return this.checklistTemplates.filter((template) =>
+      (filters?.workflowDefinitionId === undefined || template.workflowDefinitionId === filters.workflowDefinitionId)
+      && (filters?.isActive === undefined || template.isActive === filters.isActive)
+    );
+  }
+
+  async createChecklistRun(run: ChecklistRun): Promise<ChecklistRun> {
+    this.checklistRuns.unshift(run);
+    return run;
+  }
+
+  async updateChecklistRun(id: string, patch: Partial<ChecklistRun>): Promise<ChecklistRun> {
+    const index = this.checklistRuns.findIndex((run) => run.id === id);
+    this.checklistRuns[index] = { ...this.checklistRuns[index], ...patch };
+    return this.checklistRuns[index];
+  }
+
+  async getChecklistRun(id: string): Promise<ChecklistRun | null> {
+    return this.checklistRuns.find((run) => run.id === id) ?? null;
+  }
+
+  async listChecklistRuns(filters?: {
+    workflowRunId?: string;
+    templateId?: string;
+  }): Promise<ChecklistRun[]> {
+    return this.checklistRuns.filter((run) => matchesFilters(run, filters));
+  }
+
+  async createChecklistItems(items: ChecklistItemRecord[]): Promise<ChecklistItemRecord[]> {
+    this.checklistItems.push(...items);
+    return items;
+  }
+
+  async updateChecklistItem(id: string, patch: Partial<ChecklistItemRecord>): Promise<ChecklistItemRecord> {
+    const index = this.checklistItems.findIndex((item) => item.id === id);
+    this.checklistItems[index] = { ...this.checklistItems[index], ...patch };
+    return this.checklistItems[index];
+  }
+
+  async getChecklistItem(id: string): Promise<ChecklistItemRecord | null> {
+    return this.checklistItems.find((item) => item.id === id) ?? null;
+  }
+
+  async listChecklistItems(filters?: {
+    checklistRunId?: string;
+    status?: string;
+    reviewActionItemId?: string;
+  }): Promise<ChecklistItemRecord[]> {
+    return this.checklistItems.filter((item) => matchesFilters(item, filters));
+  }
+
+  async createScorecardReviews(records: ScorecardReviewRecord[]): Promise<ScorecardReviewRecord[]> {
+    this.scorecardReviews.unshift(...records);
+    return records;
+  }
+
+  async updateScorecardReview(id: string, patch: Partial<ScorecardReviewRecord>): Promise<ScorecardReviewRecord> {
+    const index = this.scorecardReviews.findIndex((review) => review.id === id);
+    this.scorecardReviews[index] = { ...this.scorecardReviews[index], ...patch };
+    return this.scorecardReviews[index];
+  }
+
+  async getScorecardReview(id: string): Promise<ScorecardReviewRecord | null> {
+    return this.scorecardReviews.find((review) => review.id === id) ?? null;
+  }
+
+  async listScorecardReviews(filters?: {
+    status?: string;
+    assignedReviewerRole?: string;
+    workflowRunId?: string;
+    employeeId?: string;
+  }): Promise<ScorecardReviewRecord[]> {
+    return this.scorecardReviews.filter((review) => matchesFilters(review, filters));
+  }
+
+  async createMetricRuns(metricRuns: MetricRun[]): Promise<MetricRun[]> {
+    this.metrics.push(...metricRuns);
+    return metricRuns;
+  }
+
+  async listMetricRuns(filters?: { entityId?: string }): Promise<MetricRun[]> {
+    return this.metrics.filter((metric) => matchesFilters(metric, filters));
+  }
+
+  async createTrainingRequirement(requirement: TrainingRequirement): Promise<TrainingRequirement> {
+    this.trainingRequirements.unshift(requirement);
+    return requirement;
+  }
+
+  async updateTrainingRequirement(id: string, patch: Partial<TrainingRequirement>): Promise<TrainingRequirement> {
+    const index = this.trainingRequirements.findIndex((requirement) => requirement.id === id);
+    this.trainingRequirements[index] = { ...this.trainingRequirements[index], ...patch };
+    return this.trainingRequirements[index];
+  }
+
+  async getTrainingRequirement(id: string): Promise<TrainingRequirement | null> {
+    return this.trainingRequirements.find((requirement) => requirement.id === id) ?? null;
+  }
+
+  async listTrainingRequirements(filters?: {
+    employeeId?: string;
+    employeeRole?: string;
+    requirementType?: string;
+  }): Promise<TrainingRequirement[]> {
+    return this.trainingRequirements.filter((requirement) => matchesFilters(requirement, filters));
+  }
+
+  async createTrainingCompletion(record: TrainingCompletionRecord): Promise<TrainingCompletionRecord> {
+    this.trainingCompletions.unshift(record);
+    return record;
+  }
+
+  async listTrainingCompletions(filters?: {
+    requirementId?: string;
+    employeeId?: string;
+    employeeRole?: string;
+  }): Promise<TrainingCompletionRecord[]> {
+    return this.trainingCompletions.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createAuditEvent(event: AuditEvent): Promise<AuditEvent> {
+    this.auditEvents.unshift(event);
+    return event;
+  }
+
+  async listAuditEvents(filters?: { entityType?: string; entityId?: string }): Promise<AuditEvent[]> {
+    return this.auditEvents.filter((event) => matchesFilters(event, filters));
+  }
+
+  async createUserProfile(profile: UserProfile): Promise<UserProfile> {
+    this.userProfiles.unshift(profile);
+    return profile;
+  }
+
+  async updateUserProfile(id: string, patch: Partial<UserProfile>): Promise<UserProfile> {
+    const index = this.userProfiles.findIndex((profile) => profile.id === id);
+    this.userProfiles[index] = { ...this.userProfiles[index], ...patch };
+    return this.userProfiles[index];
+  }
+
+  async getUserProfile(id: string): Promise<UserProfile | null> {
+    return this.userProfiles.find((profile) => profile.id === id) ?? null;
+  }
+
+  async listUserProfiles(filters?: { status?: string; role?: string }): Promise<UserProfile[]> {
+    return this.userProfiles.filter((profile) => matchesFilters(profile, filters));
+  }
+
+  async createEnrolledDevice(device: EnrolledDevice): Promise<EnrolledDevice> {
+    this.enrolledDevices.unshift(device);
+    return device;
+  }
+
+  async updateEnrolledDevice(id: string, patch: Partial<EnrolledDevice>): Promise<EnrolledDevice> {
+    const index = this.enrolledDevices.findIndex((device) => device.id === id);
+    this.enrolledDevices[index] = { ...this.enrolledDevices[index], ...patch };
+    return this.enrolledDevices[index];
+  }
+
+  async getEnrolledDevice(id: string): Promise<EnrolledDevice | null> {
+    return this.enrolledDevices.find((device) => device.id === id) ?? null;
+  }
+
+  async getEnrolledDeviceBySecretHash(secretHash: string): Promise<EnrolledDevice | null> {
+    return this.enrolledDevices.find((device) => device.deviceSecretHash === secretHash) ?? null;
+  }
+
+  async listEnrolledDevices(filters?: { status?: string; primaryProfileId?: string }): Promise<EnrolledDevice[]> {
+    return this.enrolledDevices.filter((device) => matchesFilters(device, filters));
+  }
+
+  async replaceDeviceAllowedProfiles(deviceId: string, records: DeviceAllowedProfile[]): Promise<DeviceAllowedProfile[]> {
+    for (let index = this.deviceAllowedProfiles.length - 1; index >= 0; index -= 1) {
+      if (this.deviceAllowedProfiles[index].deviceId === deviceId) {
+        this.deviceAllowedProfiles.splice(index, 1);
+      }
+    }
+    this.deviceAllowedProfiles.push(...records);
+    return this.deviceAllowedProfiles.filter((record) => record.deviceId === deviceId);
+  }
+
+  async updateDeviceAllowedProfile(id: string, patch: Partial<DeviceAllowedProfile>): Promise<DeviceAllowedProfile> {
+    const index = this.deviceAllowedProfiles.findIndex((record) => record.id === id);
+    this.deviceAllowedProfiles[index] = { ...this.deviceAllowedProfiles[index], ...patch };
+    return this.deviceAllowedProfiles[index];
+  }
+
+  async listDeviceAllowedProfiles(filters?: { deviceId?: string; profileId?: string }): Promise<DeviceAllowedProfile[]> {
+    return this.deviceAllowedProfiles.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createDeviceEnrollmentCode(code: DeviceEnrollmentCode): Promise<DeviceEnrollmentCode> {
+    this.enrollmentCodes.unshift(code);
+    return code;
+  }
+
+  async updateDeviceEnrollmentCode(id: string, patch: Partial<DeviceEnrollmentCode>): Promise<DeviceEnrollmentCode> {
+    const index = this.enrollmentCodes.findIndex((code) => code.id === id);
+    this.enrollmentCodes[index] = { ...this.enrollmentCodes[index], ...patch };
+    return this.enrollmentCodes[index];
+  }
+
+  async getDeviceEnrollmentCodeByCodeHash(codeHash: string): Promise<DeviceEnrollmentCode | null> {
+    return this.enrollmentCodes.find((code) => code.codeHash === codeHash) ?? null;
+  }
+
+  async createDeviceSession(session: DeviceSession): Promise<DeviceSession> {
+    this.deviceSessions.unshift(session);
+    return session;
+  }
+
+  async updateDeviceSession(id: string, patch: Partial<DeviceSession>): Promise<DeviceSession> {
+    const index = this.deviceSessions.findIndex((session) => session.id === id);
+    this.deviceSessions[index] = { ...this.deviceSessions[index], ...patch };
+    return this.deviceSessions[index];
+  }
+
+  async getDeviceSession(id: string): Promise<DeviceSession | null> {
+    return this.deviceSessions.find((session) => session.id === id) ?? null;
+  }
+
+  async getDeviceSessionBySecretHash(secretHash: string): Promise<DeviceSession | null> {
+    return this.deviceSessions.find((session) => session.sessionSecretHash === secretHash) ?? null;
+  }
+
+  async listDeviceSessions(filters?: { deviceId?: string; profileId?: string; includeRevoked?: boolean }): Promise<DeviceSession[]> {
+    return this.deviceSessions.filter((session) =>
+      (filters?.deviceId === undefined || session.deviceId === filters.deviceId)
+      && (filters?.profileId === undefined || session.profileId === filters.profileId)
+      && (filters?.includeRevoked ? true : session.revokedAt === null)
+    );
+  }
+
+  async enqueueWorkerJob(job: WorkerJobRecord): Promise<WorkerJobRecord> {
+    this.workerJobs.unshift(job);
+    return job;
+  }
+
+  async getWorkerJob(id: string): Promise<WorkerJobRecord | null> {
+    return this.workerJobs.find((job) => job.id === id) ?? null;
+  }
+
+  async listWorkerJobs(filters?: {
+    status?: string;
+    type?: string;
+    sourceEntityId?: string;
+    sourceEntityType?: string;
+  }): Promise<WorkerJobRecord[]> {
+    return this.workerJobs.filter((job) => matchesFilters(job, filters));
+  }
+
+  async updateWorkerJob(id: string, patch: Partial<WorkerJobRecord>): Promise<WorkerJobRecord> {
+    const index = this.workerJobs.findIndex((job) => job.id === id);
+    this.workerJobs[index] = { ...this.workerJobs[index], ...patch };
+    return this.workerJobs[index];
+  }
+
+  async leaseWorkerJobs(options?: {
+    limit?: number;
+    now?: string;
+    lockTimeoutMinutes?: number;
+  }): Promise<WorkerJobRecord[]> {
+    const now = new Date(options?.now ?? new Date().toISOString());
+    const staleThreshold = new Date(now.getTime() - (options?.lockTimeoutMinutes ?? 5) * 60_000).toISOString();
+    const limit = Math.max(1, options?.limit ?? 10);
+    const leased: WorkerJobRecord[] = [];
+
+    for (const job of this.workerJobs
+      .filter((candidate) =>
+        ["queued", "failed"].includes(candidate.status)
+        && candidate.scheduledAt <= now.toISOString()
+        && (!candidate.lockedAt || candidate.lockedAt < staleThreshold)
+      )
+      .sort((left, right) => left.scheduledAt.localeCompare(right.scheduledAt))) {
+      if (leased.length >= limit) {
+        break;
+      }
+
+      job.status = "processing";
+      job.lockedAt = now.toISOString();
+      job.attempts += 1;
+      job.updatedAt = now.toISOString();
+      leased.push(job);
+    }
+
+    return leased;
+  }
+
+  async retryWorkerJob(id: string, nowInput?: string): Promise<WorkerJobRecord> {
+    const index = this.workerJobs.findIndex((job) => job.id === id);
+    const now = nowInput ?? new Date().toISOString();
+    this.workerJobs[index] = {
+      ...this.workerJobs[index],
+      status: "queued",
+      attempts: 0,
+      lockedAt: null,
+      lastError: null,
+      resultJson: null,
+      scheduledAt: now,
+      updatedAt: now
+    };
+    return this.workerJobs[index];
+  }
+
+  async createMicrosoftIntegrationValidationRecord(
+    record: MicrosoftIntegrationValidationRecord
+  ): Promise<MicrosoftIntegrationValidationRecord> {
+    this.integrationValidations.unshift(record);
+    return record;
+  }
+
+  async getLatestMicrosoftIntegrationValidationRecord(): Promise<MicrosoftIntegrationValidationRecord | null> {
+    return this.integrationValidations[0] ?? null;
+  }
+}

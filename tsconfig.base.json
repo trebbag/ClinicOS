@@ -1,0 +1,48 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@clinic-os/domain": [
+        "packages/domain/src/index.ts"
+      ],
+      "@clinic-os/workflows": [
+        "packages/workflows/src/index.ts"
+      ],
+      "@clinic-os/agents": [
+        "packages/agents/src/index.ts"
+      ],
+      "@clinic-os/prompts": [
+        "packages/prompts/src/index.ts"
+      ],
+      "@clinic-os/tools": [
+        "packages/tools/src/index.ts"
+      ],
+      "@clinic-os/msgraph": [
+        "packages/msgraph/src/index.ts"
+      ],
+      "@clinic-os/approvals": [
+        "packages/approvals/src/index.ts"
+      ],
+      "@clinic-os/retrieval": [
+        "packages/retrieval/src/index.ts"
+      ],
+      "@clinic-os/metrics": [
+        "packages/metrics/src/index.ts"
+      ],
+      "@clinic-os/evals": [
+        "packages/evals/src/index.ts"
+      ],
+      "@clinic-os/db": [
+        "packages/db/src/index.ts"
+      ]
+    }
+  }
+}

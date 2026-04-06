@@ -1,0 +1,5 @@
+model = "gpt-5.4"
+
+[project]
+name = "Clinic OS"
+description = "Workflow-first clinic operating system for non-PHI operational workflows."

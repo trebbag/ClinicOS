@@ -1,0 +1,16 @@
+{
+  "title": "Document Control Policy",
+  "ownerRole": "medical_director",
+  "approvalClass": "policy_effective",
+  "serviceLines": [
+    "primary_care",
+    "telehealth",
+    "aesthetics"
+  ],
+  "reviewCadenceDays": 365,
+  "reviewers": [
+    "medical_director",
+    "cfo"
+  ],
+  "status": "draft"
+}

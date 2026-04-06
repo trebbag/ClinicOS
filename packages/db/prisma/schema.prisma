@@ -1,0 +1,353 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model WorkflowRun {
+  id                   String   @id
+  workflowDefinitionId String
+  requestedBy          String
+  requestedByRole      String
+  state                String
+  createdAt            DateTime
+  updatedAt            DateTime
+  documentId           String?
+  lastTransitionNote   String?
+  inputJson            Json
+}
+
+model DocumentRecord {
+  id            String   @id
+  title         String
+  ownerRole     String
+  approvalClass String
+  artifactType  String
+  summary       String
+  workflowRunId String?
+  createdBy     String
+  createdAt     DateTime
+  updatedAt     DateTime
+  status        String
+  body          String
+  version       Int
+  publishedAt   DateTime?
+  publishedPath String?
+  reviewDueAt   DateTime?
+  serviceLines  Json
+}
+
+model ApprovalTask {
+  id            String   @id
+  targetType    String
+  targetId      String
+  reviewerRole  String
+  approvalClass String
+  requestedBy   String
+  requestedAt   DateTime
+  status        String
+  decidedAt     DateTime?
+  decisionNotes String?
+}
+
+model MetricRun {
+  id         String   @id
+  metricKey  String
+  entityId   String
+  periodStart DateTime
+  periodEnd   DateTime
+  value      Float
+  createdAt  DateTime
+}
+
+model Incident {
+  id             String   @id
+  title          String
+  severity       String
+  detectedAt     DateTime
+  detectedByRole String
+  status         String
+  summary        String
+}
+
+model CAPA {
+  id               String   @id
+  sourceId         String
+  sourceType       String
+  ownerRole        String
+  dueDate          DateTime
+  status           String
+  correctiveAction String
+  preventiveAction String
+}
+
+model PublicAsset {
+  id            String   @id
+  assetType     String
+  title         String
+  status        String
+  ownerRole     String
+  body          String
+  claimsReviewed Boolean
+}
+
+model AuditEvent {
+  id         String   @id
+  eventType  String
+  entityType String
+  entityId   String
+  actorId    String
+  actorRole  String
+  actorName  String?
+  payload    Json
+  createdAt  DateTime
+}
+
+model UserProfile {
+  id          String   @id
+  displayName String
+  role        String
+  status      String
+  pinHash     String
+  createdAt   DateTime
+  updatedAt   DateTime
+
+  @@index([role, status])
+}
+
+model EnrolledDevice {
+  id                String   @id
+  deviceLabel       String
+  status            String
+  deviceSecretHash  String   @unique
+  primaryProfileId  String
+  trustExpiresAt    DateTime
+  lastSeenAt        DateTime?
+  createdByProfileId String
+  createdAt         DateTime
+  updatedAt         DateTime
+
+  @@index([status, trustExpiresAt])
+  @@index([primaryProfileId])
+}
+
+model DeviceAllowedProfile {
+  id                String   @id
+  deviceId          String
+  profileId         String
+  isPrimary         Boolean
+  failedPinAttempts Int
+  lockedUntil       DateTime?
+  createdAt         DateTime
+  updatedAt         DateTime
+
+  @@unique([deviceId, profileId])
+  @@index([deviceId, isPrimary])
+  @@index([profileId])
+}
+
+model DeviceEnrollmentCode {
+  id                 String   @id
+  codeHash           String   @unique
+  createdByProfileId String
+  primaryProfileId   String
+  allowedProfileIds  Json
+  expiresAt          DateTime
+  consumedAt         DateTime?
+  consumedByDeviceId String?
+  createdAt          DateTime
+
+  @@index([expiresAt, consumedAt])
+}
+
+model DeviceSession {
+  id                String   @id
+  deviceId          String
+  profileId         String
+  sessionSecretHash String   @unique
+  idleExpiresAt     DateTime
+  absoluteExpiresAt DateTime
+  lastSeenAt        DateTime
+  revokedAt         DateTime?
+  createdAt         DateTime
+  updatedAt         DateTime
+
+  @@index([deviceId, revokedAt])
+  @@index([profileId, revokedAt])
+  @@index([idleExpiresAt, absoluteExpiresAt])
+}
+
+model ActionItem {
+  id                String   @id
+  kind              String
+  title             String
+  description       String?
+  ownerRole         String
+  createdBy         String
+  status            String
+  resolutionNote    String?
+  dueDate           DateTime?
+  closedAt          DateTime?
+  escalationStatus  String
+  escalatedToRole   String?
+  needsReviewAt     DateTime?
+  escalatedAt       DateTime?
+  plannerTaskId     String?
+  syncStatus        String
+  lastSyncedAt      DateTime?
+  lastSyncError     String?
+  completedExternallyAt DateTime?
+  sourceWorkflowRunId String?
+  createdAt         DateTime
+  updatedAt         DateTime
+
+  @@index([ownerRole, status])
+  @@index([escalationStatus, dueDate])
+  @@index([plannerTaskId])
+}
+
+model ScorecardReviewRecord {
+  id                          String   @id
+  workflowRunId               String
+  packetDocumentId            String
+  actionItemId                String
+  medicalDirectorActionItemId String?
+  trainingFollowUpActionItemId String?
+  employeeId                  String
+  employeeRole                String
+  periodStart                 DateTime
+  periodEnd                   DateTime
+  overallScore                Float
+  safetyComplianceScore       Float
+  assignedReviewerRole        String
+  status                      String
+  oversightStatus             String
+  requiresMedicalDirectorReview Boolean
+  dueDate                     DateTime
+  resolutionNote              String?
+  hrSignedOffAt               DateTime?
+  medicalDirectorSignedOffAt  DateTime?
+  escalatedAt                 DateTime?
+  sentBackAt                  DateTime?
+  reminderSentAt              DateTime?
+  createdAt                   DateTime
+  updatedAt                   DateTime
+
+  @@index([workflowRunId, status])
+  @@index([employeeId, employeeRole, periodStart, periodEnd])
+  @@index([assignedReviewerRole, dueDate])
+}
+
+model ChecklistTemplate {
+  id                   String   @id
+  name                 String
+  workflowDefinitionId String
+  isActive             Boolean
+  itemsJson            Json
+  createdBy            String
+  createdAt            DateTime
+  updatedAt            DateTime
+
+  @@index([workflowDefinitionId, isActive])
+}
+
+model ChecklistRun {
+  id            String   @id
+  templateId    String
+  workflowRunId String
+  targetDate    DateTime
+  createdAt     DateTime
+  updatedAt     DateTime
+
+  @@index([workflowRunId, targetDate])
+  @@index([templateId])
+}
+
+model ChecklistItemRecord {
+  id                 String   @id
+  checklistRunId     String
+  templateItemId     String?
+  label              String
+  areaLabel          String
+  required           Boolean
+  status             String
+  note               String?
+  completedAt        DateTime?
+  completedBy        String?
+  reviewActionItemId String?
+  createdAt          DateTime
+  updatedAt          DateTime
+
+  @@index([checklistRunId, status])
+}
+
+model TrainingRequirement {
+  id                 String   @id
+  employeeId         String
+  employeeRole       String
+  requirementType    String
+  title              String
+  dueDate            DateTime?
+  notes              String?
+  lastReminderSentAt DateTime?
+  createdBy          String
+  createdAt          DateTime
+  updatedAt          DateTime
+
+  @@index([employeeId, employeeRole, requirementType])
+}
+
+model TrainingCompletionRecord {
+  id           String   @id
+  requirementId String
+  employeeId   String
+  employeeRole String
+  completedAt  DateTime
+  validUntil   DateTime?
+  recordedBy   String
+  note         String?
+  createdAt    DateTime
+  updatedAt    DateTime
+
+  @@index([requirementId, completedAt])
+  @@index([employeeId, employeeRole, completedAt])
+}
+
+model WorkerJobRecord {
+  id               String   @id
+  type             String
+  status           String
+  attempts         Int
+  maxAttempts      Int
+  scheduledAt      DateTime
+  lockedAt         DateTime?
+  lastError        String?
+  payload          Json
+  resultJson       Json?
+  sourceEntityType String?
+  sourceEntityId   String?
+  createdAt        DateTime
+  updatedAt        DateTime
+
+  @@index([status, scheduledAt])
+  @@index([sourceEntityType, sourceEntityId])
+}
+
+model MicrosoftIntegrationValidationRecord {
+  id               String   @id
+  provider         String
+  mode             String
+  configComplete   Boolean
+  overallStatus    String
+  readyForLive     Boolean
+  missingConfigKeys Json
+  surfacesJson     Json
+  checkedAt        DateTime
+  checkedById      String
+  checkedByRole    String
+
+  @@index([provider, checkedAt])
+}

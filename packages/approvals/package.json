@@ -1,0 +1,19 @@
+{
+  "name": "@clinic-os/approvals",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/approvals/src/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./dist/approvals/src/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --root ../.. --config vitest.config.ts --passWithNoTests"
+  },
+  "dependencies": {
+    "@clinic-os/domain": "0.1.0"
+  }
+}

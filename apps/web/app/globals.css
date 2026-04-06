@@ -1,0 +1,220 @@
+:root {
+  --bg: #0b1020;
+  --surface: #141b2d;
+  --text: #e7ecf7;
+  --muted: #97a3bd;
+  --accent: #4cc9f0;
+  --border: #2a3550;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+main {
+  padding: 24px;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+}
+
+.grid.cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.grid.cols-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.grid.cols-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.nav {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(20, 27, 45, 0.85);
+  position: sticky;
+  top: 0;
+}
+
+.nav a {
+  color: var(--text);
+}
+
+.stack {
+  display: grid;
+  gap: 12px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.button,
+input,
+select,
+textarea {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #101726;
+  color: var(--text);
+  font: inherit;
+}
+
+.button {
+  padding: 10px 14px;
+  cursor: pointer;
+  background: linear-gradient(135deg, #1c2942, #16435c);
+}
+
+.button.secondary {
+  background: #172033;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  padding: 10px 12px;
+}
+
+textarea {
+  resize: vertical;
+}
+
+h1, h2, h3 {
+  margin-top: 0;
+}
+
+pre {
+  background: #101726;
+  padding: 16px;
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.table {
+  display: grid;
+  gap: 8px;
+}
+
+.table-row {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(151, 163, 189, 0.15);
+}
+
+.table-head {
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  background: #18253c;
+  border: 1px solid rgba(76, 201, 240, 0.2);
+}
+
+.badge-approved,
+.badge-published,
+.badge-done,
+.badge-signed_off,
+.badge-succeeded,
+.badge-ready {
+  background: rgba(22, 91, 72, 0.35);
+}
+
+.badge-rejected,
+.badge-dead_letter,
+.badge-failed,
+.badge-escalated,
+.badge-auth_error,
+.badge-unreachable {
+  background: rgba(124, 37, 55, 0.4);
+}
+
+.badge-in_review,
+.badge-requested,
+.badge-in_progress,
+.badge-blocked,
+.badge-quality_checked,
+.badge-awaiting_human_review,
+.badge-pending_hr_review,
+.badge-pending_medical_director_review,
+.badge-needs_review,
+.badge-publish_pending,
+.badge-processing,
+.badge-degraded {
+  background: rgba(112, 85, 22, 0.4);
+}
+
+.badge-queued,
+.badge-missing_config {
+  background: rgba(39, 67, 121, 0.4);
+}
+
+.error {
+  border-color: #8b3d56;
+  color: #ffd9e1;
+}
+
+.button-link {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+@media (max-width: 960px) {
+  .grid.cols-2,
+  .grid.cols-3,
+  .grid.cols-4,
+  .table-row {
+    grid-template-columns: 1fr;
+  }
+}
