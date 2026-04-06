@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { actorFromRequest, resolvedIdentityFromRequest } from "../lib/auth";
+import { actorFromRequest, capabilitiesFromActor, resolvedIdentityFromRequest } from "../lib/auth";
 import {
   appendSetCookie,
   DEVICE_COOKIE_NAME,
@@ -60,7 +60,8 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
     return {
       ...state,
-      actor: request.clinicActor ?? null
+      actor: request.clinicActor ?? null,
+      capabilities: capabilitiesFromActor(request.clinicActor)
     };
   });
 
@@ -70,6 +71,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
     return {
       actor,
+      capabilities: capabilitiesFromActor(actor),
       authMode: identity.authMode,
       authenticatedAt: identity.authenticatedAt,
       deviceId: identity.deviceId,

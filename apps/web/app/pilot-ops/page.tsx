@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { adminRoles, useAppAuth } from "../../components/auth-provider";
+import { adminProfileRoles, useAppAuth, type AppCapability } from "../../components/auth-provider";
 import { apiRequest, type ActorRole } from "../../lib/api";
 
 type WhoAmI = {
@@ -12,6 +12,7 @@ type WhoAmI = {
   };
   authMode: "dev_headers" | "trusted_proxy" | "device_profiles";
   authenticatedAt: string;
+  capabilities: AppCapability[];
 };
 
 type SurfaceStatus = {
@@ -57,6 +58,54 @@ type ConfigStatus = {
     deadLetter: number;
     succeeded: number;
   };
+};
+
+type MaintenanceSummary = {
+  checkedAt: string;
+  thresholds: {
+    authArtifactRetentionDays: number;
+    workerJobRetentionDays: number;
+    staleProcessingMinutes: number;
+  };
+  auth: {
+    activeDevices: number;
+    activeSessions: number;
+    expiredActiveSessions: number;
+    purgeableRevokedSessions: number;
+    activeEnrollmentCodes: number;
+    purgeableEnrollmentCodes: number;
+    lockedProfileAssignments: number;
+  };
+  worker: {
+    queued: number;
+    processing: number;
+    staleProcessing: number;
+    failed: number;
+    deadLetter: number;
+    purgeableSucceeded: number;
+    purgeableDeadLetter: number;
+  };
+  microsoft: {
+    mode: "stub" | "live";
+    readyForLive: boolean;
+  };
+};
+
+type CleanupResult = {
+  checkedAt: string;
+  dryRun: boolean;
+  targets: string[];
+  revokedExpiredSessions: number;
+  purgedRevokedSessions: number;
+  purgedEnrollmentCodes: number;
+  requeuedStaleProcessingJobs: number;
+  purgedSucceededWorkerJobs: number;
+  purgedDeadLetterWorkerJobs: number;
+};
+
+type RoleCapabilityRecord = {
+  role: ActorRole | string;
+  capabilities: AppCapability[];
 };
 
 type OverviewStats = {
@@ -124,10 +173,13 @@ type DeviceEditState = {
 };
 
 export default function PilotOpsPage(): JSX.Element {
-  const { actor } = useAppAuth();
+  const { actor, hasCapability } = useAppAuth();
   const [whoami, setWhoami] = useState<WhoAmI | null>(null);
   const [integrationStatus, setIntegrationStatus] = useState<MicrosoftStatus | null>(null);
   const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
+  const [maintenanceSummary, setMaintenanceSummary] = useState<MaintenanceSummary | null>(null);
+  const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null);
+  const [roleCapabilities, setRoleCapabilities] = useState<RoleCapabilityRecord[]>([]);
   const [overview, setOverview] = useState<OverviewStats | null>(null);
   const [authEvents, setAuthEvents] = useState<AuditEvent[]>([]);
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
@@ -155,10 +207,12 @@ export default function PilotOpsPage(): JSX.Element {
     }
 
     try {
-      const [currentUser, microsoft, runtimeStatus, overviewStats, profileRows, deviceRows, authAudit] = await Promise.all([
+      const [currentUser, microsoft, runtimeStatus, maintenance, capabilityRows, overviewStats, profileRows, deviceRows, authAudit] = await Promise.all([
         apiRequest<WhoAmI>("/auth/whoami", actor),
         apiRequest<MicrosoftStatus>("/integrations/microsoft/status", actor),
         apiRequest<ConfigStatus>("/ops/config-status", actor),
+        apiRequest<MaintenanceSummary>("/ops/maintenance-summary", actor),
+        apiRequest<RoleCapabilityRecord[]>("/ops/role-capabilities", actor),
         apiRequest<OverviewStats>("/dashboard/overview", actor),
         apiRequest<UserProfile[]>("/user-profiles", actor),
         apiRequest<DeviceRecord[]>("/devices", actor),
@@ -167,6 +221,8 @@ export default function PilotOpsPage(): JSX.Element {
       setWhoami(currentUser);
       setIntegrationStatus(microsoft);
       setConfigStatus(runtimeStatus);
+      setMaintenanceSummary(maintenance);
+      setRoleCapabilities(capabilityRows);
       setOverview(overviewStats);
       setAuthEvents(authAudit.slice(0, 12));
       setProfiles(profileRows);
@@ -205,12 +261,12 @@ export default function PilotOpsPage(): JSX.Element {
   }
 
   useEffect(() => {
-    if (!actor || !adminRoles.includes(actor.role)) {
+    if (!actor || !hasCapability("pilot_ops.view")) {
       return;
     }
 
     void load();
-  }, [actor]);
+  }, [actor, hasCapability]);
 
   async function handleValidate() {
     if (!actor) {
@@ -366,6 +422,28 @@ export default function PilotOpsPage(): JSX.Element {
     }
   }
 
+  async function handleCleanup(dryRun: boolean) {
+    if (!actor) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await apiRequest<CleanupResult>("/ops/cleanup", actor, {
+        method: "POST",
+        body: JSON.stringify({
+          dryRun
+        })
+      });
+      setCleanupResult(result);
+      await load();
+    } catch (cleanupError) {
+      setError(cleanupError instanceof Error ? cleanupError.message : "Unable to run pilot cleanup.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function toggleDeviceProfile(deviceId: string, profileId: string): void {
     setDeviceEdits((current) => {
       const edit = current[deviceId];
@@ -413,7 +491,7 @@ export default function PilotOpsPage(): JSX.Element {
         </div>
       </div>
 
-      {actor && !adminRoles.includes(actor.role) ? (
+      {actor && !hasCapability("pilot_ops.view") ? (
         <div className="card error">Pilot ops is only available to admin-capable profiles.</div>
       ) : null}
 
@@ -557,6 +635,79 @@ export default function PilotOpsPage(): JSX.Element {
 
       <div className="grid cols-2">
         <div className="card">
+          <h2>Operational maintenance</h2>
+          <div className="actions">
+            <button
+              className="button secondary"
+              onClick={() => { void handleCleanup(true); }}
+              disabled={loading || !actor || !hasCapability("ops.run_cleanup")}
+            >
+              Preview cleanup
+            </button>
+            <button
+              className="button"
+              onClick={() => { void handleCleanup(false); }}
+              disabled={loading || !actor || !hasCapability("ops.run_cleanup")}
+            >
+              Run default cleanup
+            </button>
+          </div>
+          <div className="table" style={{ marginTop: 12 }}>
+            <div className="table-row table-head">
+              <span>Area</span>
+              <span>Current</span>
+              <span>Cleanup-ready</span>
+            </div>
+            <div className="table-row">
+              <span>Enrollment codes</span>
+              <span>{maintenanceSummary?.auth.activeEnrollmentCodes ?? 0} active</span>
+              <span>{maintenanceSummary?.auth.purgeableEnrollmentCodes ?? 0}</span>
+            </div>
+            <div className="table-row">
+              <span>Device sessions</span>
+              <span>{maintenanceSummary?.auth.activeSessions ?? 0} active</span>
+              <span>
+                {(maintenanceSummary?.auth.expiredActiveSessions ?? 0) + (maintenanceSummary?.auth.purgeableRevokedSessions ?? 0)}
+              </span>
+            </div>
+            <div className="table-row">
+              <span>Worker jobs</span>
+              <span>{maintenanceSummary?.worker.processing ?? 0} processing</span>
+              <span>{maintenanceSummary?.worker.staleProcessing ?? 0} stale</span>
+            </div>
+          </div>
+          <div className="muted" style={{ marginTop: 12 }}>
+            Retention: auth artifacts {maintenanceSummary?.thresholds.authArtifactRetentionDays ?? 0} days, worker jobs {maintenanceSummary?.thresholds.workerJobRetentionDays ?? 0} days, stale processing {maintenanceSummary?.thresholds.staleProcessingMinutes ?? 0} minutes.
+          </div>
+          {cleanupResult ? (
+            <div className="card" style={{ marginTop: 12 }}>
+              <strong>{cleanupResult.dryRun ? "Cleanup preview" : "Cleanup result"}</strong>
+              <div className="muted">
+                {cleanupResult.requeuedStaleProcessingJobs} stale worker jobs requeued, {cleanupResult.revokedExpiredSessions} expired sessions revoked, {cleanupResult.purgedEnrollmentCodes} enrollment codes purged.
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="card">
+          <h2>Role capabilities</h2>
+          <div className="table">
+            <div className="table-row table-head">
+              <span>Role</span>
+              <span>Capabilities</span>
+            </div>
+            {roleCapabilities.map((entry) => (
+              <div key={entry.role} className="table-row">
+                <span>{entry.role}</span>
+                <span>{entry.capabilities.join(", ") || "none"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid cols-2">
+        <div className="card">
           <h2>Create profile</h2>
           <form className="stack" onSubmit={(event) => { void handleCreateProfile(event); }}>
             <input
@@ -566,7 +717,7 @@ export default function PilotOpsPage(): JSX.Element {
               required
             />
             <select value={newProfileRole} onChange={(event) => setNewProfileRole(event.target.value as ActorRole)}>
-              {adminRoles.map((role) => (
+              {adminProfileRoles.map((role) => (
                 <option key={role} value={role}>
                   {role}
                 </option>
@@ -673,7 +824,7 @@ export default function PilotOpsPage(): JSX.Element {
                     }
                   }))}
                 >
-                  {adminRoles.map((role) => (
+                  {adminProfileRoles.map((role) => (
                     <option key={role} value={role}>
                       {role}
                     </option>

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { actorFromRequest, requireAnyRole } from "../lib/auth";
+import { actorFromRequest, requireCapability } from "../lib/auth";
 
 export async function registerOfficeOpsRoutes(app: FastifyInstance): Promise<void> {
   app.get("/office-ops/dashboard", async (request) => {
@@ -28,7 +28,7 @@ export async function registerOfficeOpsRoutes(app: FastifyInstance): Promise<voi
 
   app.post("/office-ops/reconcile-planner", async (request) => {
     const actor = actorFromRequest(request);
-    requireAnyRole(actor, ["medical_director", "quality_lead", "office_manager", "cfo"]);
+    requireCapability(actor, "office_ops.reconcile_planner");
     return app.clinicService.reconcilePlannerTasks(actor);
   });
 }

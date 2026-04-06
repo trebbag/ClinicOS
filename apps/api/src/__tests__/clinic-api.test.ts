@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
+import {
+  createDeviceEnrollmentCode,
+  createDeviceSession,
+  createEnrolledDevice,
+  createUserProfile,
+  createWorkerJob
+} from "@clinic-os/domain";
 import { buildMicrosoftPilotOps } from "@clinic-os/msgraph";
 import { buildApp } from "../app";
 import { buildIdentityResolver, signTrustedProxyRequest } from "../lib/auth";
@@ -902,6 +909,191 @@ describe("Clinic API", () => {
     expect(configStatus.json<{ microsoft: { mode: string }; pilotUsable: boolean }>().pilotUsable).toBe(true);
 
     await readyApp.close();
+  });
+
+  it("enforces pilot-ops capabilities instead of broad shared admin role checks", async () => {
+    const capabilityRepository = new MemoryClinicRepository();
+    const capabilityService = new ClinicApiService(capabilityRepository, new LocalApprovedDocumentPublisher(), {
+      authMode: "dev_headers",
+      integrationMode: "stub",
+      microsoftPreflight: {
+        getMissingConfigKeys: () => [],
+        validate: async () => ({
+          mode: "stub",
+          configComplete: true,
+          overallStatus: "ready",
+          readyForLive: true,
+          missingConfigKeys: [],
+          surfaces: []
+        })
+      }
+    });
+    const capabilityApp = buildApp({
+      authMode: "dev_headers",
+      service: capabilityService,
+      repository: capabilityRepository,
+      databaseReadyCheck: async () => true
+    });
+
+    const hrConfig = await capabilityApp.inject({
+      method: "GET",
+      url: "/ops/config-status",
+      headers: headers("hr_lead")
+    });
+    expect(hrConfig.statusCode).toBe(200);
+
+    const hrWorker = await capabilityApp.inject({
+      method: "GET",
+      url: "/worker-jobs",
+      headers: headers("hr_lead")
+    });
+    expect(hrWorker.statusCode).toBe(403);
+
+    const hrValidate = await capabilityApp.inject({
+      method: "POST",
+      url: "/integrations/microsoft/validate",
+      headers: headers("hr_lead")
+    });
+    expect(hrValidate.statusCode).toBe(403);
+
+    const hrAudit = await capabilityApp.inject({
+      method: "GET",
+      url: "/audit-events?eventTypePrefix=auth.",
+      headers: headers("hr_lead")
+    });
+    expect(hrAudit.statusCode).toBe(200);
+
+    await capabilityApp.close();
+  });
+
+  it("reports maintenance needs and cleans up expired auth artifacts plus stale worker locks", async () => {
+    const cleanupRepository = new MemoryClinicRepository();
+    const cleanupService = new ClinicApiService(cleanupRepository, new LocalApprovedDocumentPublisher(), {
+      authMode: "dev_headers",
+      integrationMode: "stub",
+      microsoftPreflight: {
+        getMissingConfigKeys: () => [],
+        validate: async () => ({
+          mode: "stub",
+          configComplete: true,
+          overallStatus: "ready",
+          readyForLive: true,
+          missingConfigKeys: [],
+          surfaces: []
+        })
+      }
+    });
+    const cleanupApp = buildApp({
+      authMode: "dev_headers",
+      service: cleanupService,
+      repository: cleanupRepository,
+      databaseReadyCheck: async () => true
+    });
+
+    const profile = createUserProfile({
+      displayName: "Ops Admin",
+      role: "medical_director",
+      pinHash: "hashed"
+    });
+    cleanupRepository.userProfiles.push(profile);
+    cleanupRepository.enrolledDevices.push(createEnrolledDevice({
+      deviceLabel: "Ops Console",
+      deviceSecretHash: "device-secret",
+      primaryProfileId: profile.id,
+      trustExpiresAt: "2026-05-01T00:00:00.000Z",
+      createdByProfileId: profile.id
+    }));
+    cleanupRepository.enrollmentCodes.push(createDeviceEnrollmentCode({
+      codeHash: "expired-code",
+      createdByProfileId: profile.id,
+      primaryProfileId: profile.id,
+      allowedProfileIds: [profile.id],
+      expiresAt: "2026-03-20T00:00:00.000Z"
+    }));
+    cleanupRepository.deviceSessions.push(
+      createDeviceSession({
+        deviceId: cleanupRepository.enrolledDevices[0].id,
+        profileId: profile.id,
+        sessionSecretHash: "expired-active-session",
+        idleExpiresAt: "2026-03-20T00:00:00.000Z",
+        absoluteExpiresAt: "2026-03-25T00:00:00.000Z"
+      }),
+      {
+        ...createDeviceSession({
+          deviceId: cleanupRepository.enrolledDevices[0].id,
+          profileId: profile.id,
+          sessionSecretHash: "revoked-session",
+          idleExpiresAt: "2026-03-01T00:00:00.000Z",
+          absoluteExpiresAt: "2026-03-10T00:00:00.000Z"
+        }),
+        revokedAt: "2026-03-21T00:00:00.000Z",
+        updatedAt: "2026-03-21T00:00:00.000Z"
+      }
+    );
+    cleanupRepository.workerJobs.push(
+      {
+        ...createWorkerJob({
+          type: "planner.task.create",
+          payload: { smoke: true }
+        }),
+        status: "processing",
+        lockedAt: "2026-04-05T00:00:00.000Z",
+        attempts: 1,
+        updatedAt: "2026-04-05T00:00:00.000Z"
+      },
+      {
+        ...createWorkerJob({
+          type: "teams.notification",
+          payload: { smoke: true }
+        }),
+        status: "succeeded",
+        updatedAt: "2026-03-01T00:00:00.000Z"
+      }
+    );
+
+    const summary = await cleanupApp.inject({
+      method: "GET",
+      url: "/ops/maintenance-summary",
+      headers: headers("medical_director")
+    });
+    expect(summary.statusCode).toBe(200);
+    expect(summary.json<{ auth: { expiredActiveSessions: number; purgeableEnrollmentCodes: number }; worker: { staleProcessing: number; purgeableSucceeded: number } }>().auth.expiredActiveSessions).toBe(1);
+    expect(summary.json<{ auth: { expiredActiveSessions: number; purgeableEnrollmentCodes: number }; worker: { staleProcessing: number; purgeableSucceeded: number } }>().auth.purgeableEnrollmentCodes).toBe(1);
+    expect(summary.json<{ auth: { expiredActiveSessions: number; purgeableEnrollmentCodes: number }; worker: { staleProcessing: number; purgeableSucceeded: number } }>().worker.staleProcessing).toBe(1);
+    expect(summary.json<{ auth: { expiredActiveSessions: number; purgeableEnrollmentCodes: number }; worker: { staleProcessing: number; purgeableSucceeded: number } }>().worker.purgeableSucceeded).toBe(1);
+
+    const dryRun = await cleanupApp.inject({
+      method: "POST",
+      url: "/ops/cleanup",
+      headers: headers("medical_director"),
+      payload: {
+        dryRun: true
+      }
+    });
+    expect(dryRun.statusCode).toBe(200);
+    expect(cleanupRepository.enrollmentCodes).toHaveLength(1);
+
+    const cleanup = await cleanupApp.inject({
+      method: "POST",
+      url: "/ops/cleanup",
+      headers: headers("medical_director"),
+      payload: {
+        dryRun: false
+      }
+    });
+    expect(cleanup.statusCode).toBe(200);
+    expect(cleanup.json<{ requeuedStaleProcessingJobs: number; purgedEnrollmentCodes: number; revokedExpiredSessions: number; purgedRevokedSessions: number }>().requeuedStaleProcessingJobs).toBe(1);
+    expect(cleanup.json<{ requeuedStaleProcessingJobs: number; purgedEnrollmentCodes: number; revokedExpiredSessions: number; purgedRevokedSessions: number }>().purgedEnrollmentCodes).toBe(1);
+    expect(cleanup.json<{ requeuedStaleProcessingJobs: number; purgedEnrollmentCodes: number; revokedExpiredSessions: number; purgedRevokedSessions: number }>().revokedExpiredSessions).toBe(1);
+    expect(cleanup.json<{ requeuedStaleProcessingJobs: number; purgedEnrollmentCodes: number; revokedExpiredSessions: number; purgedRevokedSessions: number }>().purgedRevokedSessions).toBe(1);
+
+    expect(cleanupRepository.enrollmentCodes).toHaveLength(0);
+    expect(cleanupRepository.deviceSessions).toHaveLength(1);
+    expect(cleanupRepository.deviceSessions[0].revokedAt).not.toBeNull();
+    expect(cleanupRepository.workerJobs.find((job) => job.status === "queued")).toBeDefined();
+    expect(cleanupRepository.workerJobs.some((job) => job.status === "succeeded")).toBe(true);
+
+    await cleanupApp.close();
   });
 
   it("locks a profile after repeated bad PIN attempts and rejects mutating requests without Origin in device mode", async () => {

@@ -1,14 +1,8 @@
 import { prisma, PrismaClinicRepository } from "@clinic-os/db";
-import type { Role } from "@clinic-os/domain";
+import { rolesWithCapability, type Role } from "@clinic-os/domain";
 import { DeviceProfileAuthService } from "../lib/deviceAuth";
 
-const allowedRoles: Role[] = [
-  "medical_director",
-  "quality_lead",
-  "office_manager",
-  "hr_lead",
-  "cfo"
-];
+const allowedRoles: Role[] = rolesWithCapability("auth.mint_enrollment_codes");
 
 function readFlag(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);

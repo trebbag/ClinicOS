@@ -356,6 +356,29 @@ export class MemoryClinicRepository implements ClinicRepository {
     return this.enrollmentCodes.find((code) => code.codeHash === codeHash) ?? null;
   }
 
+  async listDeviceEnrollmentCodes(filters?: {
+    createdByProfileId?: string;
+    primaryProfileId?: string;
+    includeConsumed?: boolean;
+  }): Promise<DeviceEnrollmentCode[]> {
+    return this.enrollmentCodes.filter((code) =>
+      (filters?.createdByProfileId === undefined || code.createdByProfileId === filters.createdByProfileId)
+      && (filters?.primaryProfileId === undefined || code.primaryProfileId === filters.primaryProfileId)
+      && (filters?.includeConsumed ? true : code.consumedAt === null)
+    );
+  }
+
+  async deleteDeviceEnrollmentCodes(ids: string[]): Promise<number> {
+    let deleted = 0;
+    for (let index = this.enrollmentCodes.length - 1; index >= 0; index -= 1) {
+      if (ids.includes(this.enrollmentCodes[index].id)) {
+        this.enrollmentCodes.splice(index, 1);
+        deleted += 1;
+      }
+    }
+    return deleted;
+  }
+
   async createDeviceSession(session: DeviceSession): Promise<DeviceSession> {
     this.deviceSessions.unshift(session);
     return session;
@@ -381,6 +404,17 @@ export class MemoryClinicRepository implements ClinicRepository {
       && (filters?.profileId === undefined || session.profileId === filters.profileId)
       && (filters?.includeRevoked ? true : session.revokedAt === null)
     );
+  }
+
+  async deleteDeviceSessions(ids: string[]): Promise<number> {
+    let deleted = 0;
+    for (let index = this.deviceSessions.length - 1; index >= 0; index -= 1) {
+      if (ids.includes(this.deviceSessions[index].id)) {
+        this.deviceSessions.splice(index, 1);
+        deleted += 1;
+      }
+    }
+    return deleted;
   }
 
   async enqueueWorkerJob(job: WorkerJobRecord): Promise<WorkerJobRecord> {
@@ -452,6 +486,17 @@ export class MemoryClinicRepository implements ClinicRepository {
       updatedAt: now
     };
     return this.workerJobs[index];
+  }
+
+  async deleteWorkerJobs(ids: string[]): Promise<number> {
+    let deleted = 0;
+    for (let index = this.workerJobs.length - 1; index >= 0; index -= 1) {
+      if (ids.includes(this.workerJobs[index].id)) {
+        this.workerJobs.splice(index, 1);
+        deleted += 1;
+      }
+    }
+    return deleted;
   }
 
   async createMicrosoftIntegrationValidationRecord(

@@ -22,6 +22,26 @@ export type AuthProfileSummary = {
   lockedUntil: string | null;
 };
 
+export type AppCapability =
+  | "dashboard.view"
+  | "approvals.view"
+  | "office_ops.view"
+  | "office_ops.manage"
+  | "office_ops.reconcile_planner"
+  | "quality.view"
+  | "scorecards.view"
+  | "pilot_ops.view"
+  | "ops.view_config"
+  | "ops.run_cleanup"
+  | "integrations.view_status"
+  | "integrations.validate"
+  | "worker_jobs.view"
+  | "worker_jobs.retry"
+  | "auth.manage_profiles"
+  | "auth.manage_devices"
+  | "auth.mint_enrollment_codes"
+  | "audit.view_auth_events";
+
 type AuthStateResponse = {
   authMode: BrowserAuthMode;
   device: {
@@ -42,9 +62,10 @@ type AuthStateResponse = {
     role: ActorRole;
     name?: string;
   } | null;
+  capabilities: AppCapability[];
 };
 
-export const adminRoles: ActorRole[] = [
+export const adminProfileRoles: ActorRole[] = [
   "medical_director",
   "quality_lead",
   "office_manager",
@@ -80,7 +101,14 @@ export const devProfiles: ActorIdentity[] = [
   }
 ];
 
-export const navigationLinks = [
+type NavigationLink = {
+  href: "/" | "/medical-director" | "/office-manager" | "/pilot-ops" | "/quality" | "/scorecards";
+  label: string;
+  allowedRoles: ActorRole[];
+  requiredCapability?: AppCapability;
+};
+
+export const navigationLinks: NavigationLink[] = [
   {
     href: "/" as const,
     label: "Overview",
@@ -99,7 +127,8 @@ export const navigationLinks = [
   {
     href: "/pilot-ops" as const,
     label: "Pilot Ops",
-    allowedRoles: adminRoles
+    allowedRoles: adminProfileRoles,
+    requiredCapability: "pilot_ops.view" as const
   },
   {
     href: "/quality" as const,
@@ -111,7 +140,7 @@ export const navigationLinks = [
     label: "Scorecards",
     allowedRoles: ["office_manager", "hr_lead", "medical_director"] as ActorRole[]
   }
-] as const;
+];
 
 const devProfileStorageKey = "clinic-os.dev-profile";
 
@@ -125,7 +154,11 @@ function getStoredDevProfile(): ActorIdentity {
   return match ?? devProfiles[0];
 }
 
-export function canAccessRoute(role: ActorRole | null, href: string): boolean {
+export function canAccessRoute(
+  role: ActorRole | null,
+  href: string,
+  capabilities: AppCapability[] = []
+): boolean {
   if (!role) {
     return false;
   }
@@ -133,15 +166,18 @@ export function canAccessRoute(role: ActorRole | null, href: string): boolean {
   if (!link) {
     return true;
   }
-  return link.allowedRoles.includes(role);
+  return link.allowedRoles.includes(role)
+    && (!link.requiredCapability || capabilities.includes(link.requiredCapability));
 }
 
 type AppAuthContextValue = {
   authState: AuthStateResponse | null;
   actor: ActorIdentity | null;
+  capabilities: AppCapability[];
   loading: boolean;
   error: string | null;
   refreshAuth: () => Promise<void>;
+  hasCapability: (capability: AppCapability) => boolean;
   selectDevProfile: (role: ActorRole) => void;
   enrollDevice: (input: { enrollmentCode: string; deviceLabel: string }) => Promise<void>;
   login: (input: { profileId: string; pin: string }) => Promise<void>;
@@ -207,9 +243,11 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   const value = useMemo<AppAuthContextValue>(() => ({
     authState,
     actor,
+    capabilities: authState?.capabilities ?? [],
     loading,
     error,
     refreshAuth,
+    hasCapability: (capability) => (authState?.capabilities ?? []).includes(capability),
     selectDevProfile,
     enrollDevice: async (input) => {
       await runAuthMutation("/auth/enroll-device", input);

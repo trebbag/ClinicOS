@@ -14,4 +14,9 @@ describe("web env helpers", () => {
     vi.stubEnv("INTERNAL_API_BASE_URL", "http://clinic-os-api.internal:4000");
     expect(getInternalApiBaseUrl()).toBe("http://clinic-os-api.internal:4000");
   });
+
+  it("normalizes Render host:port values into http URLs", () => {
+    vi.stubEnv("INTERNAL_API_BASE_URL", "clinic-os-api.internal:4000");
+    expect(getInternalApiBaseUrl()).toBe("http://clinic-os-api.internal:4000");
+  });
 });

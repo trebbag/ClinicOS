@@ -1,8 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyRequest } from "fastify";
 import {
+  actorHasCapability,
   actorContextSchema,
+  capabilitiesForRole,
   resolvedIdentitySchema,
+  type AppCapability,
   type ActorContext,
   type AuthMode,
   type ResolvedIdentity,
@@ -267,5 +270,19 @@ export function resolvedIdentityFromRequest(request: FastifyRequest): ResolvedId
 export function requireAnyRole(actor: ActorContext, allowedRoles: Role[]): void {
   if (!allowedRoles.includes(actor.role)) {
     forbidden(`Role ${actor.role} is not allowed to perform this action.`);
+  }
+}
+
+export function capabilitiesFromActor(actor: ActorContext | null | undefined): AppCapability[] {
+  if (!actor) {
+    return [];
+  }
+
+  return capabilitiesForRole(actor.role);
+}
+
+export function requireCapability(actor: ActorContext, capability: AppCapability): void {
+  if (!actorHasCapability(actor, capability)) {
+    forbidden(`Role ${actor.role} is not allowed to perform capability ${capability}.`);
   }
 }

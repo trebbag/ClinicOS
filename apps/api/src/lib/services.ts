@@ -21,6 +21,9 @@ import {
   createWorkflowRun,
   deidentifiedOperationalRowSchema,
   documentMetadataSchema,
+  listRoleCapabilities,
+  opsCleanupCommandSchema,
+  opsCleanupResultSchema,
   scorecardImportJobSchema,
   scorecardReviewDecisionCommandSchema,
   trainingCompletionCreateSchema,
@@ -31,6 +34,7 @@ import {
   type ActionItemRecord,
   type ApiRuntimeConfigStatus,
   type ApprovalTask,
+  type AppCapability,
   type AuditEvent,
   type AuthMode,
   type ChecklistItemRecord,
@@ -40,8 +44,12 @@ import {
   type MicrosoftIntegrationStatus,
   type MicrosoftIntegrationValidationRecord,
   type DocumentRecord,
+  type OpsCleanupResult,
+  type OpsCleanupTarget,
+  type OpsMaintenanceSummary,
   type OfficeOpsDailyStatus,
   type PublicationMode,
+  type RoleCapabilityRecord,
   type TrainingDashboard,
   type TrainingGapItem,
   type TrainingGapStatus,
@@ -84,6 +92,14 @@ function addDays(input: string, days: number): string {
   const date = new Date(input);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString();
+}
+
+function subtractDays(input: string, days: number): string {
+  return addDays(input, days * -1);
+}
+
+function subtractMinutes(input: string, minutes: number): string {
+  return new Date(new Date(input).getTime() - minutes * 60_000).toISOString();
 }
 
 function buildMetricRuns(scorecard: RoleScorecard): MetricRun[] {
@@ -892,6 +908,10 @@ export class ClinicApiService {
     };
   }
 
+  getRoleCapabilities(): RoleCapabilityRecord[] {
+    return listRoleCapabilities();
+  }
+
   async retryWorkerJob(actor: ActorContext, jobId: string): Promise<WorkerJobRecord> {
     const job = await this.repository.getWorkerJob(jobId);
     if (!job) {
@@ -925,6 +945,180 @@ export class ClinicApiService {
       missingConfigKeys,
       latestValidation
     };
+  }
+
+  async getOpsMaintenanceSummary(options?: {
+    now?: string;
+    authArtifactRetentionDays?: number;
+    workerJobRetentionDays?: number;
+    staleProcessingMinutes?: number;
+  }): Promise<OpsMaintenanceSummary> {
+    const now = options?.now ?? new Date().toISOString();
+    const authArtifactRetentionDays = options?.authArtifactRetentionDays ?? 7;
+    const workerJobRetentionDays = options?.workerJobRetentionDays ?? 14;
+    const staleProcessingMinutes = options?.staleProcessingMinutes ?? 15;
+
+    const [devices, sessions, enrollmentCodes, assignments, jobs, microsoft] = await Promise.all([
+      this.repository.listEnrolledDevices(),
+      this.repository.listDeviceSessions({ includeRevoked: true }),
+      this.repository.listDeviceEnrollmentCodes({ includeConsumed: true }),
+      this.repository.listDeviceAllowedProfiles(),
+      this.repository.listWorkerJobs(),
+      this.getMicrosoftIntegrationStatus()
+    ]);
+
+    const authRetentionCutoff = subtractDays(now, authArtifactRetentionDays);
+    const workerRetentionCutoff = subtractDays(now, workerJobRetentionDays);
+    const staleProcessingCutoff = subtractMinutes(now, staleProcessingMinutes);
+
+    const expiredActiveSessions = sessions.filter((session) =>
+      session.revokedAt === null
+      && (session.idleExpiresAt < now || session.absoluteExpiresAt < now)
+    );
+    const purgeableRevokedSessions = sessions.filter((session) =>
+      session.revokedAt !== null && session.revokedAt < authRetentionCutoff
+    );
+    const purgeableEnrollmentCodes = enrollmentCodes.filter((code) => {
+      const terminalAt = code.consumedAt ?? code.expiresAt;
+      return (Boolean(code.consumedAt) || code.expiresAt < now) && terminalAt < authRetentionCutoff;
+    });
+    const staleProcessingJobs = jobs.filter((job) =>
+      job.status === "processing"
+      && Boolean(job.lockedAt)
+      && (job.lockedAt ?? now) < staleProcessingCutoff
+    );
+    const purgeableSucceededJobs = jobs.filter((job) =>
+      job.status === "succeeded" && job.updatedAt < workerRetentionCutoff
+    );
+    const purgeableDeadLetterJobs = jobs.filter((job) =>
+      job.status === "dead_letter" && job.updatedAt < workerRetentionCutoff
+    );
+
+    return {
+      checkedAt: now,
+      thresholds: {
+        authArtifactRetentionDays,
+        workerJobRetentionDays,
+        staleProcessingMinutes
+      },
+      auth: {
+        activeDevices: devices.filter((device) => device.status === "active" && device.trustExpiresAt >= now).length,
+        activeSessions: sessions.filter((session) =>
+          session.revokedAt === null
+          && session.idleExpiresAt >= now
+          && session.absoluteExpiresAt >= now
+        ).length,
+        expiredActiveSessions: expiredActiveSessions.length,
+        purgeableRevokedSessions: purgeableRevokedSessions.length,
+        activeEnrollmentCodes: enrollmentCodes.filter((code) => !code.consumedAt && code.expiresAt >= now).length,
+        purgeableEnrollmentCodes: purgeableEnrollmentCodes.length,
+        lockedProfileAssignments: assignments.filter((assignment) => assignment.lockedUntil && assignment.lockedUntil > now).length
+      },
+      worker: {
+        queued: jobs.filter((job) => job.status === "queued").length,
+        processing: jobs.filter((job) => job.status === "processing").length,
+        staleProcessing: staleProcessingJobs.length,
+        failed: jobs.filter((job) => job.status === "failed").length,
+        deadLetter: jobs.filter((job) => job.status === "dead_letter").length,
+        purgeableSucceeded: purgeableSucceededJobs.length,
+        purgeableDeadLetter: purgeableDeadLetterJobs.length
+      },
+      microsoft: {
+        mode: microsoft.mode,
+        readyForLive: microsoft.readyForLive
+      }
+    };
+  }
+
+  async runOpsCleanup(actor: ActorContext, input: unknown): Promise<OpsCleanupResult> {
+    const command = opsCleanupCommandSchema.parse(input);
+    const now = new Date().toISOString();
+    const authRetentionCutoff = subtractDays(now, command.authArtifactRetentionDays);
+    const workerRetentionCutoff = subtractDays(now, command.workerJobRetentionDays);
+    const staleProcessingCutoff = subtractMinutes(now, command.staleProcessingMinutes);
+    const targets = new Set<OpsCleanupTarget>(command.targets);
+
+    const [sessions, enrollmentCodes, jobs] = await Promise.all([
+      this.repository.listDeviceSessions({ includeRevoked: true }),
+      this.repository.listDeviceEnrollmentCodes({ includeConsumed: true }),
+      this.repository.listWorkerJobs()
+    ]);
+
+    const expiredSessionsToRevoke = targets.has("expired_sessions")
+      ? sessions.filter((session) =>
+        session.revokedAt === null
+        && (session.idleExpiresAt < now || session.absoluteExpiresAt < now)
+      )
+      : [];
+    const revokedSessionsToPurge = targets.has("expired_sessions")
+      ? sessions.filter((session) => session.revokedAt !== null && session.revokedAt < authRetentionCutoff)
+      : [];
+    const enrollmentCodesToPurge = targets.has("enrollment_codes")
+      ? enrollmentCodes.filter((code) => {
+        const terminalAt = code.consumedAt ?? code.expiresAt;
+        return (Boolean(code.consumedAt) || code.expiresAt < now) && terminalAt < authRetentionCutoff;
+      })
+      : [];
+    const staleProcessingJobs = targets.has("stale_processing_jobs")
+      ? jobs.filter((job) =>
+        job.status === "processing"
+        && Boolean(job.lockedAt)
+        && (job.lockedAt ?? now) < staleProcessingCutoff
+      )
+      : [];
+    const succeededJobsToPurge = targets.has("succeeded_worker_jobs")
+      ? jobs.filter((job) => job.status === "succeeded" && job.updatedAt < workerRetentionCutoff)
+      : [];
+    const deadLetterJobsToPurge = targets.has("dead_letter_worker_jobs")
+      ? jobs.filter((job) => job.status === "dead_letter" && job.updatedAt < workerRetentionCutoff)
+      : [];
+
+    if (!command.dryRun) {
+      await Promise.all(expiredSessionsToRevoke.map((session) =>
+        this.repository.updateDeviceSession(session.id, {
+          revokedAt: now,
+          updatedAt: now
+        })
+      ));
+      await this.repository.deleteDeviceSessions(revokedSessionsToPurge.map((session) => session.id));
+      await this.repository.deleteDeviceEnrollmentCodes(enrollmentCodesToPurge.map((code) => code.id));
+      await Promise.all(staleProcessingJobs.map((job) =>
+        this.repository.updateWorkerJob(job.id, {
+          status: "queued",
+          lockedAt: null,
+          lastError: "Requeued by operator cleanup after stale processing lock.",
+          scheduledAt: now,
+          updatedAt: now
+        })
+      ));
+      await this.repository.deleteWorkerJobs(succeededJobsToPurge.map((job) => job.id));
+      await this.repository.deleteWorkerJobs(deadLetterJobsToPurge.map((job) => job.id));
+    }
+
+    const result = opsCleanupResultSchema.parse({
+      checkedAt: now,
+      dryRun: command.dryRun,
+      targets: command.targets,
+      revokedExpiredSessions: expiredSessionsToRevoke.length,
+      purgedRevokedSessions: revokedSessionsToPurge.length,
+      purgedEnrollmentCodes: enrollmentCodesToPurge.length,
+      requeuedStaleProcessingJobs: staleProcessingJobs.length,
+      purgedSucceededWorkerJobs: succeededJobsToPurge.length,
+      purgedDeadLetterWorkerJobs: deadLetterJobsToPurge.length
+    });
+
+    await this.recordAudit(actor, "ops.cleanup_ran", "ops_maintenance", actor.actorId, {
+      dryRun: result.dryRun,
+      targets: result.targets,
+      revokedExpiredSessions: result.revokedExpiredSessions,
+      purgedRevokedSessions: result.purgedRevokedSessions,
+      purgedEnrollmentCodes: result.purgedEnrollmentCodes,
+      requeuedStaleProcessingJobs: result.requeuedStaleProcessingJobs,
+      purgedSucceededWorkerJobs: result.purgedSucceededWorkerJobs,
+      purgedDeadLetterWorkerJobs: result.purgedDeadLetterWorkerJobs
+    });
+
+    return result;
   }
 
   async getRuntimeConfigStatus(input: {

@@ -7,9 +7,13 @@ import { navigationLinks, useAppAuth, devProfiles } from "./auth-provider";
 
 export function Nav(): JSX.Element {
   const router = useRouter();
-  const { actor, authState, selectDevProfile, lock, logout } = useAppAuth();
+  const { actor, authState, capabilities, selectDevProfile, lock, logout } = useAppAuth();
 
-  const visibleLinks = navigationLinks.filter((link) => actor && link.allowedRoles.includes(actor.role));
+  const visibleLinks = navigationLinks.filter((link) =>
+    actor
+    && link.allowedRoles.includes(actor.role)
+    && (!link.requiredCapability || capabilities.includes(link.requiredCapability))
+  );
 
   return (
     <nav className="nav">

@@ -131,11 +131,14 @@ export type ClinicRepository = {
   createDeviceEnrollmentCode(code: DeviceEnrollmentCode): Promise<DeviceEnrollmentCode>;
   updateDeviceEnrollmentCode(id: string, patch: Partial<DeviceEnrollmentCode>): Promise<DeviceEnrollmentCode>;
   getDeviceEnrollmentCodeByCodeHash(codeHash: string): Promise<DeviceEnrollmentCode | null>;
+  listDeviceEnrollmentCodes(filters?: { createdByProfileId?: string; primaryProfileId?: string; includeConsumed?: boolean }): Promise<DeviceEnrollmentCode[]>;
+  deleteDeviceEnrollmentCodes(ids: string[]): Promise<number>;
   createDeviceSession(session: DeviceSession): Promise<DeviceSession>;
   updateDeviceSession(id: string, patch: Partial<DeviceSession>): Promise<DeviceSession>;
   getDeviceSession(id: string): Promise<DeviceSession | null>;
   getDeviceSessionBySecretHash(secretHash: string): Promise<DeviceSession | null>;
   listDeviceSessions(filters?: { deviceId?: string; profileId?: string; includeRevoked?: boolean }): Promise<DeviceSession[]>;
+  deleteDeviceSessions(ids: string[]): Promise<number>;
   enqueueWorkerJob(job: WorkerJobRecord): Promise<WorkerJobRecord>;
   getWorkerJob(id: string): Promise<WorkerJobRecord | null>;
   listWorkerJobs(filters?: {
@@ -151,6 +154,7 @@ export type ClinicRepository = {
     lockTimeoutMinutes?: number;
   }): Promise<WorkerJobRecord[]>;
   retryWorkerJob(id: string, now?: string): Promise<WorkerJobRecord>;
+  deleteWorkerJobs(ids: string[]): Promise<number>;
   createMicrosoftIntegrationValidationRecord(
     record: MicrosoftIntegrationValidationRecord
   ): Promise<MicrosoftIntegrationValidationRecord>;
@@ -1386,6 +1390,38 @@ export class PrismaClinicRepository implements ClinicRepository {
     return record ? this.mapDeviceEnrollmentCode(record) : null;
   }
 
+  async listDeviceEnrollmentCodes(filters?: {
+    createdByProfileId?: string;
+    primaryProfileId?: string;
+    includeConsumed?: boolean;
+  }): Promise<DeviceEnrollmentCode[]> {
+    const records = await this.client.deviceEnrollmentCode.findMany({
+      where: {
+        ...(filters?.createdByProfileId ? { createdByProfileId: filters.createdByProfileId } : {}),
+        ...(filters?.primaryProfileId ? { primaryProfileId: filters.primaryProfileId } : {}),
+        ...(filters?.includeConsumed ? {} : { consumedAt: null })
+      },
+      orderBy: [{ createdAt: "desc" }, { expiresAt: "asc" }]
+    });
+    return records.map((record) => this.mapDeviceEnrollmentCode(record));
+  }
+
+  async deleteDeviceEnrollmentCodes(ids: string[]): Promise<number> {
+    if (ids.length === 0) {
+      return 0;
+    }
+
+    const result = await this.client.deviceEnrollmentCode.deleteMany({
+      where: {
+        id: {
+          in: ids
+        }
+      }
+    });
+
+    return result.count;
+  }
+
   async createDeviceSession(session: DeviceSession): Promise<DeviceSession> {
     const record = await this.client.deviceSession.create({
       data: {
@@ -1446,6 +1482,22 @@ export class PrismaClinicRepository implements ClinicRepository {
       orderBy: [{ revokedAt: "asc" }, { updatedAt: "desc" }]
     });
     return records.map((record) => this.mapDeviceSession(record));
+  }
+
+  async deleteDeviceSessions(ids: string[]): Promise<number> {
+    if (ids.length === 0) {
+      return 0;
+    }
+
+    const result = await this.client.deviceSession.deleteMany({
+      where: {
+        id: {
+          in: ids
+        }
+      }
+    });
+
+    return result.count;
   }
 
   async enqueueWorkerJob(job: WorkerJobRecord): Promise<WorkerJobRecord> {
@@ -1597,6 +1649,22 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
 
     return this.mapWorkerJobRecord(record);
+  }
+
+  async deleteWorkerJobs(ids: string[]): Promise<number> {
+    if (ids.length === 0) {
+      return 0;
+    }
+
+    const result = await this.client.workerJobRecord.deleteMany({
+      where: {
+        id: {
+          in: ids
+        }
+      }
+    });
+
+    return result.count;
   }
 
   async createMicrosoftIntegrationValidationRecord(

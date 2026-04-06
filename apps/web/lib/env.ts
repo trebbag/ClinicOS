@@ -6,6 +6,15 @@ function required(name: string): string {
   return value;
 }
 
+function normalizeServerBaseUrl(value: string): string {
+  const trimmed = value.replace(/\/$/, "");
+  if (trimmed.includes("://")) {
+    return trimmed;
+  }
+
+  return `http://${trimmed}`;
+}
+
 export const browserApiProxyPath =
   process.env.NEXT_PUBLIC_API_PROXY_PATH?.replace(/\/$/, "") || "/clinic-api";
 
@@ -15,11 +24,11 @@ export function buildBrowserApiUrl(path: string): string {
 }
 
 export function getInternalApiBaseUrl(): string {
-  return (
+  return normalizeServerBaseUrl(
     process.env.INTERNAL_API_BASE_URL
     || process.env.NEXT_PUBLIC_API_BASE_URL
     || "http://127.0.0.1:4000"
-  ).replace(/\/$/, "");
+  );
 }
 
 export function getPublicAppOrigin(): string {

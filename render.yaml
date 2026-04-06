@@ -25,7 +25,10 @@ services:
       - key: PUBLIC_APP_ORIGIN
         sync: false
       - key: INTERNAL_API_BASE_URL
-        sync: false
+        fromService:
+          type: pserv
+          name: clinic-os-api
+          property: hostport
       - key: MICROSOFT_TENANT_ID
         sync: false
       - key: MICROSOFT_CLIENT_ID

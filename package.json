@@ -18,7 +18,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "codex:doctor": "bash ./scripts/validate-tree.sh",
     "codex:prompts": "node ./scripts/print-codex-kickoff.mjs",
-    "smoke:render": "node ./scripts/render-smoke.mjs"
+    "smoke:render": "node ./scripts/render-smoke.mjs",
+    "smoke:pilot-live": "node ./scripts/pilot-live-smoke.mjs"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

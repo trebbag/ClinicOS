@@ -1,6 +1,7 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type { ClinicRepository } from "@clinic-os/db";
 import {
+  actorHasCapability,
   authStateSchema,
   createAuditEvent,
   createDeviceAllowedProfile,
@@ -12,6 +13,7 @@ import {
   deviceEnrollmentCodeCreateSchema,
   deviceProfileLoginSchema,
   enrolledDeviceUpdateSchema,
+  type AppCapability,
   type ActorContext,
   type AuthMode,
   type AuthProfileSummary,
@@ -30,14 +32,6 @@ import { badRequest, forbidden, notFound, unauthorized } from "./http";
 
 export const DEVICE_COOKIE_NAME = "clinic_device";
 export const SESSION_COOKIE_NAME = "clinic_session";
-
-const adminRoles: Role[] = [
-  "medical_director",
-  "quality_lead",
-  "office_manager",
-  "cfo",
-  "hr_lead"
-];
 
 type DeviceAuthOptions = {
   mode: AuthMode;
@@ -206,9 +200,9 @@ export class DeviceProfileAuthService {
     private readonly options: DeviceAuthOptions
   ) {}
 
-  private requireAdmin(actor: ActorContext): void {
-    if (!adminRoles.includes(actor.role)) {
-      forbidden(`Role ${actor.role} is not allowed to manage device auth.`);
+  private requireCapability(actor: ActorContext, capability: AppCapability): void {
+    if (!actorHasCapability(actor, capability)) {
+      forbidden(`Role ${actor.role} is not allowed to perform capability ${capability}.`);
     }
   }
 
@@ -482,7 +476,7 @@ export class DeviceProfileAuthService {
   }
 
   async createUserProfile(actor: ActorContext, input: unknown): Promise<PublicUserProfile> {
-    this.requireAdmin(actor);
+    this.requireCapability(actor, "auth.manage_profiles");
     const command = userProfileCreateSchema.parse(input);
     const created = await this.repository.createUserProfile(createUserProfile({
       displayName: command.displayName,
@@ -498,7 +492,7 @@ export class DeviceProfileAuthService {
   }
 
   async updateUserProfile(actor: ActorContext, profileId: string, input: unknown): Promise<PublicUserProfile> {
-    this.requireAdmin(actor);
+    this.requireCapability(actor, "auth.manage_profiles");
     const command = userProfileUpdateSchema.parse(input);
     const profile = await this.repository.getUserProfile(profileId);
     if (!profile) {
@@ -523,7 +517,7 @@ export class DeviceProfileAuthService {
   }
 
   async listUserProfiles(actor: ActorContext): Promise<PublicUserProfile[]> {
-    this.requireAdmin(actor);
+    this.requireCapability(actor, "auth.manage_profiles");
     const profiles = await this.repository.listUserProfiles();
     return profiles.map(sanitizeProfile);
   }
@@ -535,7 +529,7 @@ export class DeviceProfileAuthService {
     primaryProfileId: string;
     allowedProfileIds: string[];
   }> {
-    this.requireAdmin(actor);
+    this.requireCapability(actor, "auth.mint_enrollment_codes");
     const command = deviceEnrollmentCodeCreateSchema.parse(input);
     const profileIds = Array.from(new Set([command.primaryProfileId, ...command.allowedProfileIds]));
     if (!profileIds.includes(command.primaryProfileId)) {
@@ -754,13 +748,13 @@ export class DeviceProfileAuthService {
   }
 
   async listDevices(actor: ActorContext): Promise<PublicEnrolledDevice[]> {
-    this.requireAdmin(actor);
+    this.requireCapability(actor, "auth.manage_devices");
     const devices = await this.repository.listEnrolledDevices();
     return Promise.all(devices.map((device) => this.buildPublicDevice(device)));
   }
 
   async updateDevice(actor: ActorContext, deviceId: string, input: unknown): Promise<PublicEnrolledDevice> {
-    this.requireAdmin(actor);
+    this.requireCapability(actor, "auth.manage_devices");
     const command = enrolledDeviceUpdateSchema.parse(input);
     const device = await this.repository.getEnrolledDevice(deviceId);
     if (!device) {
@@ -814,7 +808,7 @@ export class DeviceProfileAuthService {
   }
 
   async revokeDevice(actor: ActorContext, deviceId: string): Promise<PublicEnrolledDevice> {
-    this.requireAdmin(actor);
+    this.requireCapability(actor, "auth.manage_devices");
     const device = await this.repository.getEnrolledDevice(deviceId);
     if (!device) {
       notFound(`Enrolled device not found: ${deviceId}`);
