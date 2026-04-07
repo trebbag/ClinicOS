@@ -10,6 +10,13 @@ import {
   capaResolutionCommandSchema,
   capaUpdateSchema,
   checklistItemUpdateSchema,
+  committeeCreateSchema,
+  committeeMeetingCompleteSchema,
+  committeeMeetingCreateSchema,
+  committeeMeetingDecisionCommandSchema,
+  committeeUpdateSchema,
+  createCommitteeMeetingRecord,
+  createCommitteeRecord,
   createCapaRecord,
   createChecklistItemRecord,
   createChecklistRun,
@@ -54,6 +61,10 @@ import {
   type ChecklistItemRecord,
   type ChecklistRun,
   type ChecklistTemplate,
+  type CommitteeDecisionRecord,
+  type CommitteeMeetingRecord,
+  type CommitteeQapiSnapshot,
+  type CommitteeRecord,
   type MetricRun,
   type MicrosoftIntegrationStatus,
   type MicrosoftIntegrationValidationRecord,
@@ -144,6 +155,30 @@ function derivePublicAssetStatus(input: {
         return "claims_in_review";
       }
       return "draft";
+  }
+}
+
+function deriveCommitteeMeetingStatus(input: {
+  documentStatus: DocumentRecord["status"];
+  currentStatus: CommitteeMeetingRecord["status"];
+}): CommitteeMeetingRecord["status"] {
+  if (["completed", "cancelled"].includes(input.currentStatus)) {
+    return input.currentStatus;
+  }
+
+  switch (input.documentStatus) {
+    case "in_review":
+      return "review_pending";
+    case "approved":
+    case "published":
+      return "approved";
+    case "rejected":
+      return "sent_back";
+    case "draft":
+    case "publish_pending":
+    case "archived":
+    default:
+      return "packet_ready";
   }
 }
 
@@ -793,6 +828,7 @@ export class ClinicApiService {
     });
 
     await this.syncPublicAssetFromDocument(updatedDocument);
+    await this.syncCommitteeMeetingFromDocument(updatedDocument);
 
     return {
       approval: updatedApproval,
@@ -832,6 +868,7 @@ export class ClinicApiService {
     });
 
     await this.syncPublicAssetFromDocument(updatedDocument);
+    await this.syncCommitteeMeetingFromDocument(updatedDocument);
 
     return updatedDocument;
   }
@@ -1079,6 +1116,389 @@ export class ClinicApiService {
     });
 
     return synced ?? asset;
+  }
+
+  async listCommittees(filters?: {
+    category?: string;
+    isActive?: boolean;
+    qapiFocus?: boolean;
+    serviceLine?: string;
+  }): Promise<CommitteeRecord[]> {
+    return this.repository.listCommittees(filters);
+  }
+
+  async createCommittee(actor: ActorContext, input: unknown): Promise<CommitteeRecord> {
+    const command = committeeCreateSchema.parse(input);
+    const created = await this.repository.createCommittee(createCommitteeRecord({
+      name: command.name,
+      category: command.category,
+      cadence: command.cadence,
+      chairRole: command.chairRole,
+      recorderRole: command.recorderRole,
+      scope: command.scope,
+      serviceLine: command.serviceLine ?? null,
+      qapiFocus: command.qapiFocus ?? command.category === "qapi"
+    }));
+
+    await this.recordAudit(actor, "committee.created", "committee", created.id, {
+      category: created.category,
+      cadence: created.cadence,
+      qapiFocus: created.qapiFocus
+    });
+
+    return created;
+  }
+
+  async updateCommittee(actor: ActorContext, committeeId: string, input: unknown): Promise<CommitteeRecord> {
+    const command = committeeUpdateSchema.parse(input);
+    const committee = await this.repository.getCommittee(committeeId);
+    if (!committee) {
+      notFound(`Committee not found: ${committeeId}`);
+    }
+
+    const updated = await this.repository.updateCommittee(committee.id, {
+      name: command.name ?? committee.name,
+      category: command.category ?? committee.category,
+      cadence: command.cadence ?? committee.cadence,
+      chairRole: command.chairRole ?? committee.chairRole,
+      recorderRole: command.recorderRole ?? committee.recorderRole,
+      scope: command.scope ?? committee.scope,
+      serviceLine: command.serviceLine !== undefined ? command.serviceLine : committee.serviceLine,
+      qapiFocus: command.qapiFocus ?? committee.qapiFocus,
+      isActive: command.isActive ?? committee.isActive,
+      updatedAt: new Date().toISOString()
+    });
+
+    await this.recordAudit(actor, "committee.updated", "committee", updated.id, {
+      category: updated.category,
+      isActive: updated.isActive
+    });
+
+    return updated;
+  }
+
+  async bootstrapRecommendedCommittees(actor: ActorContext): Promise<{
+    created: CommitteeRecord[];
+    existing: CommitteeRecord[];
+  }> {
+    const existing = await this.repository.listCommittees();
+    const recommended = [
+      {
+        name: "Leadership Committee",
+        category: "leadership" as const,
+        cadence: "monthly" as const,
+        chairRole: "medical_director" as const,
+        recorderRole: "office_manager" as const,
+        scope: "Strategic priorities, staffing decisions, and high-risk escalations.",
+        qapiFocus: false
+      },
+      {
+        name: "QAPI Committee",
+        category: "qapi" as const,
+        cadence: "monthly" as const,
+        chairRole: "medical_director" as const,
+        recorderRole: "quality_lead" as const,
+        scope: "Monthly quality review, incident themes, CAPA follow-through, and dashboard review.",
+        qapiFocus: true
+      },
+      {
+        name: "HR / Training Committee",
+        category: "hr_training" as const,
+        cadence: "monthly" as const,
+        chairRole: "hr_lead" as const,
+        recorderRole: "office_manager" as const,
+        scope: "Onboarding status, competency gaps, and performance-review tracking.",
+        qapiFocus: false
+      },
+      {
+        name: "Revenue / Commercial Committee",
+        category: "revenue_commercial" as const,
+        cadence: "monthly" as const,
+        chairRole: "cfo" as const,
+        recorderRole: "office_manager" as const,
+        scope: "Payer issues, service-line revenue review, pricing governance, and commercial risk.",
+        qapiFocus: false
+      }
+    ];
+
+    const created: CommitteeRecord[] = [];
+    const alreadyPresent: CommitteeRecord[] = [];
+
+    for (const template of recommended) {
+      const match = existing.find((committee) => committee.name === template.name);
+      if (match) {
+        alreadyPresent.push(match);
+        continue;
+      }
+      created.push(await this.createCommittee(actor, template));
+    }
+
+    return {
+      created,
+      existing: alreadyPresent
+    };
+  }
+
+  async listCommitteeMeetings(filters?: {
+    committeeId?: string;
+    status?: string;
+  }): Promise<CommitteeMeetingRecord[]> {
+    return this.repository.listCommitteeMeetings(filters);
+  }
+
+  async createCommitteeMeeting(actor: ActorContext, input: unknown): Promise<CommitteeMeetingRecord> {
+    const command = committeeMeetingCreateSchema.parse(input);
+    const committee = await this.repository.getCommittee(command.committeeId);
+    if (!committee || !committee.isActive) {
+      badRequest(`Committee is not available for scheduling: ${command.committeeId}`);
+    }
+
+    const qapiSnapshot = committee.qapiFocus
+      ? await this.buildCommitteeQapiSnapshot(command.qapiSummaryNote ?? null)
+      : null;
+    const created = await this.repository.createCommitteeMeeting(createCommitteeMeetingRecord({
+      committeeId: committee.id,
+      title: command.title ?? `${committee.name} - ${command.scheduledFor.slice(0, 10)}`,
+      scheduledFor: command.scheduledFor,
+      notes: command.notes ?? null,
+      agendaItems: command.agendaItems,
+      qapiSnapshot,
+      createdBy: actor.actorId
+    }));
+
+    await this.recordAudit(actor, "committee.meeting_created", "committee_meeting", created.id, {
+      committeeId: created.committeeId,
+      scheduledFor: created.scheduledFor,
+      agendaItemCount: created.agendaItems.length
+    });
+
+    return created;
+  }
+
+  async generateCommitteePacket(actor: ActorContext, committeeMeetingId: string): Promise<{
+    committeeMeeting: CommitteeMeetingRecord;
+    document: DocumentRecord;
+  }> {
+    const meeting = await this.repository.getCommitteeMeeting(committeeMeetingId);
+    if (!meeting) {
+      notFound(`Committee meeting not found: ${committeeMeetingId}`);
+    }
+    if (["review_pending", "approved", "completed", "cancelled"].includes(meeting.status)) {
+      badRequest("Committee packet cannot be regenerated after review has started.");
+    }
+
+    const committee = await this.repository.getCommittee(meeting.committeeId);
+    if (!committee || !committee.isActive) {
+      badRequest(`Committee is not available for packet generation: ${meeting.committeeId}`);
+    }
+
+    const qapiSnapshot = committee.qapiFocus
+      ? await this.buildCommitteeQapiSnapshot(meeting.qapiSnapshot?.summaryNote ?? null)
+      : null;
+    const packetBody = this.buildCommitteePacketBody(committee, {
+      ...meeting,
+      qapiSnapshot
+    });
+
+    const workflow = meeting.workflowRunId
+      ? await this.repository.getWorkflowRun(meeting.workflowRunId)
+      : await this.createWorkflowRun(actor, {
+        workflowId: committee.qapiFocus ? "qapi_monthly_review" : "committee_packet_review",
+        input: {
+          committeeId: committee.id,
+          committeeName: committee.name,
+          scheduledFor: meeting.scheduledFor,
+          requestedBy: actor.actorId,
+          qapiFocus: committee.qapiFocus,
+          agendaItemCount: meeting.agendaItems.length
+        }
+      });
+
+    if (!workflow) {
+      badRequest("Committee packet workflow could not be created.");
+    }
+
+    await this.advanceWorkflowIfPossible(actor, workflow.id, ["scoped", "drafted", "quality_checked"], "Committee packet drafted.");
+
+    const now = new Date().toISOString();
+    const artifactType = committee.qapiFocus ? "qapi_committee_packet" : "committee_packet";
+    const summary = committee.qapiFocus
+      ? "Monthly QAPI review packet generated from live clinic governance data."
+      : `Committee packet for ${committee.name}.`;
+
+    let document = meeting.packetDocumentId ? await this.repository.getDocument(meeting.packetDocumentId) : null;
+    if (document && !["draft", "rejected"].includes(document.status)) {
+      badRequest("Committee packet is already under review or approved.");
+    }
+
+    if (document) {
+      document = await this.repository.updateDocument(document.id, {
+        title: meeting.title,
+        ownerRole: committee.chairRole,
+        summary,
+        body: packetBody,
+        serviceLines: committee.serviceLine ? [committee.serviceLine] : [],
+        status: "draft",
+        updatedAt: now,
+        version: document.version + 1
+      });
+    } else {
+      document = await this.createDocument(actor, {
+        title: meeting.title,
+        ownerRole: committee.chairRole,
+        approvalClass: "clinical_governance",
+        artifactType,
+        summary,
+        workflowRunId: workflow.id,
+        serviceLines: committee.serviceLine ? [committee.serviceLine] : [],
+        body: packetBody
+      });
+    }
+
+    const updatedMeeting = await this.repository.updateCommitteeMeeting(meeting.id, {
+      status: "packet_ready",
+      packetDocumentId: document.id,
+      workflowRunId: workflow.id,
+      qapiSnapshot,
+      updatedAt: now
+    });
+
+    await this.recordAudit(actor, "committee.packet_generated", "committee_meeting", updatedMeeting.id, {
+      committeeId: updatedMeeting.committeeId,
+      packetDocumentId: updatedMeeting.packetDocumentId,
+      workflowRunId: updatedMeeting.workflowRunId,
+      qapiFocus: committee.qapiFocus
+    });
+
+    return {
+      committeeMeeting: updatedMeeting,
+      document
+    };
+  }
+
+  async submitCommitteeMeeting(actor: ActorContext, committeeMeetingId: string): Promise<{
+    committeeMeeting: CommitteeMeetingRecord;
+    document: DocumentRecord;
+    approvals: ApprovalTask[];
+  }> {
+    const meeting = await this.repository.getCommitteeMeeting(committeeMeetingId);
+    if (!meeting) {
+      notFound(`Committee meeting not found: ${committeeMeetingId}`);
+    }
+    if (!meeting.packetDocumentId) {
+      badRequest("Generate the committee packet before routing it for review.");
+    }
+    if (!["packet_ready", "sent_back"].includes(meeting.status)) {
+      badRequest("Committee packet is not ready for approval routing.");
+    }
+
+    await this.advanceWorkflowIfPossible(
+      actor,
+      meeting.workflowRunId,
+      ["quality_checked", "awaiting_human_review"],
+      "Committee packet routed for human review."
+    );
+
+    const result = await this.submitDocument(actor, meeting.packetDocumentId);
+    const synced = await this.syncCommitteeMeetingFromDocument(result.document);
+
+    await this.recordAudit(actor, "committee.packet_submitted", "committee_meeting", meeting.id, {
+      packetDocumentId: meeting.packetDocumentId,
+      approvalCount: result.approvals.length
+    });
+
+    return {
+      committeeMeeting: synced ?? meeting,
+      document: result.document,
+      approvals: result.approvals
+    };
+  }
+
+  async recordCommitteeDecisions(actor: ActorContext, committeeMeetingId: string, input: unknown): Promise<CommitteeMeetingRecord> {
+    const command = committeeMeetingDecisionCommandSchema.parse(input);
+    const meeting = await this.repository.getCommitteeMeeting(committeeMeetingId);
+    if (!meeting) {
+      notFound(`Committee meeting not found: ${committeeMeetingId}`);
+    }
+    if (!["approved", "completed"].includes(meeting.status)) {
+      badRequest("Committee decisions can only be recorded after the packet is approved.");
+    }
+
+    const committee = await this.repository.getCommittee(meeting.committeeId);
+    if (!committee) {
+      notFound(`Committee not found: ${meeting.committeeId}`);
+    }
+
+    const now = new Date().toISOString();
+    const nextDecisions: CommitteeDecisionRecord[] = [...meeting.decisions];
+    let createdActionItems = 0;
+
+    for (const decision of command.decisions) {
+      let actionItemId: string | null = null;
+      if (decision.dueDate) {
+        const actionItem = await this.createActionItem(actor, {
+          kind: "action_item",
+          title: `${committee.name}: ${decision.summary}`,
+          description: decision.notes ?? `Committee follow-up from ${meeting.title}.`,
+          ownerRole: decision.ownerRole,
+          dueDate: decision.dueDate,
+          sourceWorkflowRunId: meeting.workflowRunId ?? undefined
+        });
+        actionItemId = actionItem.id;
+        createdActionItems += 1;
+      }
+
+      nextDecisions.push({
+        id: randomId("committee_decision"),
+        summary: decision.summary,
+        ownerRole: decision.ownerRole,
+        dueDate: decision.dueDate ?? null,
+        status: decision.status ?? "open",
+        actionItemId,
+        linkedIncidentId: decision.linkedIncidentId ?? null,
+        linkedCapaId: decision.linkedCapaId ?? null,
+        notes: decision.notes ?? null
+      });
+    }
+
+    const updated = await this.repository.updateCommitteeMeeting(meeting.id, {
+      decisions: nextDecisions,
+      updatedAt: now
+    });
+
+    await this.recordAudit(actor, "committee.decisions_recorded", "committee_meeting", updated.id, {
+      decisionCount: command.decisions.length,
+      createdActionItems
+    });
+
+    return updated;
+  }
+
+  async completeCommitteeMeeting(actor: ActorContext, committeeMeetingId: string, input: unknown): Promise<CommitteeMeetingRecord> {
+    const command = committeeMeetingCompleteSchema.parse(input);
+    const meeting = await this.repository.getCommitteeMeeting(committeeMeetingId);
+    if (!meeting) {
+      notFound(`Committee meeting not found: ${committeeMeetingId}`);
+    }
+    if (!["approved", "completed"].includes(meeting.status)) {
+      badRequest("Committee meetings can only be completed after the packet is approved.");
+    }
+
+    const now = new Date().toISOString();
+    const updated = await this.repository.updateCommitteeMeeting(meeting.id, {
+      status: "completed",
+      notes: command.notes ?? meeting.notes,
+      completedAt: meeting.completedAt ?? now,
+      updatedAt: now
+    });
+
+    await this.advanceWorkflowIfPossible(actor, meeting.workflowRunId, ["approved", "archived"], "Committee meeting completed.");
+    await this.recordAudit(actor, "committee.meeting_completed", "committee_meeting", updated.id, {
+      completedAt: updated.completedAt,
+      decisionCount: updated.decisions.length
+    });
+
+    return updated;
   }
 
   async createActionItem(actor: ActorContext, input: unknown) {
@@ -2913,6 +3333,100 @@ export class ClinicApiService {
     }
   }
 
+  private async buildCommitteeQapiSnapshot(summaryNote: string | null): Promise<CommitteeQapiSnapshot> {
+    const now = new Date().toISOString();
+    const [overview, incidents, capas, workerSummary] = await Promise.all([
+      this.getOverviewStats(),
+      this.repository.listIncidents(),
+      this.repository.listCapas(),
+      this.getWorkerJobSummary()
+    ]);
+
+    const openIncidents = incidents.filter((incident) => incident.status !== "closed");
+    const openCapas = capas.filter((capa) => capa.status !== "closed");
+
+    return {
+      openIncidents: openIncidents.length,
+      criticalIncidents: openIncidents.filter((incident) => incident.severity === "critical").length,
+      openCapas: openCapas.length,
+      overdueCapas: openCapas.filter((capa) => capa.dueDate < now).length,
+      overdueActionItems: overview.overdueActionItems,
+      pendingApprovals: overview.openApprovals,
+      overdueScorecardReviews: overview.overdueScorecardReviews,
+      queuedJobs: workerSummary.queued + workerSummary.processing,
+      summaryNote
+    };
+  }
+
+  private buildCommitteePacketBody(
+    committee: CommitteeRecord,
+    meeting: CommitteeMeetingRecord
+  ): string {
+    const agenda = meeting.agendaItems.map((item, index) => [
+      `${index + 1}. ${item.title}`,
+      `   owner role: ${item.ownerRole}`,
+      `   status: ${item.status}`,
+      `   due date: ${item.dueDate ?? "n/a"}`,
+      `   summary: ${item.summary}`,
+      item.linkedIncidentId ? `   linked incident: ${item.linkedIncidentId}` : null,
+      item.linkedCapaId ? `   linked CAPA: ${item.linkedCapaId}` : null
+    ].filter(Boolean).join("\n")).join("\n\n");
+
+    const decisions = meeting.decisions.length > 0
+      ? meeting.decisions.map((decision, index) => [
+          `${index + 1}. ${decision.summary}`,
+          `   owner role: ${decision.ownerRole}`,
+          `   status: ${decision.status}`,
+          `   due date: ${decision.dueDate ?? "n/a"}`,
+          decision.actionItemId ? `   linked action item: ${decision.actionItemId}` : null,
+          decision.linkedIncidentId ? `   linked incident: ${decision.linkedIncidentId}` : null,
+          decision.linkedCapaId ? `   linked CAPA: ${decision.linkedCapaId}` : null,
+          decision.notes ? `   notes: ${decision.notes}` : null
+        ].filter(Boolean).join("\n")).join("\n\n")
+      : "No decisions recorded yet.";
+
+    const qapiSection = meeting.qapiSnapshot
+      ? [
+          "## QAPI Snapshot",
+          `- Open incidents: ${meeting.qapiSnapshot.openIncidents}`,
+          `- Critical incidents: ${meeting.qapiSnapshot.criticalIncidents}`,
+          `- Open CAPAs: ${meeting.qapiSnapshot.openCapas}`,
+          `- Overdue CAPAs: ${meeting.qapiSnapshot.overdueCapas}`,
+          `- Overdue action items: ${meeting.qapiSnapshot.overdueActionItems}`,
+          `- Pending approvals: ${meeting.qapiSnapshot.pendingApprovals}`,
+          `- Overdue scorecard reviews: ${meeting.qapiSnapshot.overdueScorecardReviews}`,
+          `- Queued jobs: ${meeting.qapiSnapshot.queuedJobs}`,
+          meeting.qapiSnapshot.summaryNote ? `- Note: ${meeting.qapiSnapshot.summaryNote}` : null
+        ].filter(Boolean).join("\n")
+      : null;
+
+    return [
+      `# ${meeting.title}`,
+      "",
+      `Committee: ${committee.name}`,
+      `Category: ${committee.category}`,
+      `Cadence: ${committee.cadence}`,
+      `Chair role: ${committee.chairRole}`,
+      `Recorder role: ${committee.recorderRole}`,
+      `Scheduled for: ${meeting.scheduledFor}`,
+      committee.serviceLine ? `Service line: ${committee.serviceLine}` : null,
+      "",
+      "## Scope",
+      committee.scope,
+      "",
+      "## Meeting Notes",
+      meeting.notes ?? "No meeting notes recorded.",
+      "",
+      "## Agenda",
+      agenda,
+      "",
+      qapiSection,
+      qapiSection ? "" : null,
+      "## Decisions",
+      decisions
+    ].filter((line): line is string => line !== null).join("\n");
+  }
+
   private async syncPublicAssetFromDocument(document: DocumentRecord): Promise<PublicAssetRecord | null> {
     const asset = await this.repository.getPublicAssetByDocumentId(document.id);
     if (!asset) {
@@ -2931,6 +3445,21 @@ export class ClinicApiService {
       }),
       publishedAt: document.publishedAt,
       publishedPath: document.publishedPath,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  private async syncCommitteeMeetingFromDocument(document: DocumentRecord): Promise<CommitteeMeetingRecord | null> {
+    const meeting = await this.repository.getCommitteeMeetingByPacketDocumentId(document.id);
+    if (!meeting) {
+      return null;
+    }
+
+    return this.repository.updateCommitteeMeeting(meeting.id, {
+      status: deriveCommitteeMeetingStatus({
+        documentStatus: document.status,
+        currentStatus: meeting.status
+      }),
       updatedAt: new Date().toISOString()
     });
   }

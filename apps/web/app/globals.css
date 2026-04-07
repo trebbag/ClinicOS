@@ -83,6 +83,22 @@ main {
   flex-wrap: wrap;
 }
 
+.eyebrow {
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.page-header {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
 .button,
 input,
 select,
@@ -181,6 +197,8 @@ pre {
 .badge-approval_pending,
 .badge-requested,
 .badge-in_progress,
+.badge-review_pending,
+.badge-packet_ready,
 .badge-blocked,
 .badge-quality_checked,
 .badge-awaiting_human_review,
@@ -194,6 +212,7 @@ pre {
 }
 
 .badge-queued,
+.badge-planned,
 .badge-missing_config,
 .badge-archived {
   background: rgba(39, 67, 121, 0.4);
@@ -202,6 +221,16 @@ pre {
 .badge-sent_back,
 .badge-needs_revision,
 .badge-unsupported {
+  background: rgba(124, 37, 55, 0.4);
+}
+
+.badge-completed,
+.badge-closed {
+  background: rgba(22, 91, 72, 0.35);
+}
+
+.badge-cancelled,
+.badge-deferred {
   background: rgba(124, 37, 55, 0.4);
 }
 

@@ -10,6 +10,8 @@ import { registerAuthRoutes } from "./routes/auth";
 import { registerActionItemRoutes } from "./routes/action-items";
 import { registerDashboardRoutes } from "./routes/dashboard";
 import { registerCapaRoutes } from "./routes/capas";
+import { registerCommitteeMeetingRoutes } from "./routes/committee-meetings";
+import { registerCommitteeRoutes } from "./routes/committees";
 import { registerDeviceRoutes } from "./routes/devices";
 import { registerDocumentRoutes } from "./routes/documents";
 import { registerHealthRoutes } from "./routes/health";
@@ -159,6 +161,8 @@ export function buildApp(options?: {
   registerActionItemRoutes(app);
   registerIncidentRoutes(app);
   registerCapaRoutes(app);
+  registerCommitteeRoutes(app);
+  registerCommitteeMeetingRoutes(app);
   registerPublicAssetRoutes(app);
   registerOfficeOpsRoutes(app);
   registerAuditRoutes(app);

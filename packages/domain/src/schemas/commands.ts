@@ -4,6 +4,13 @@ import { actionItemKindSchema, actionItemStatusSchema } from "./actionItem";
 import { capaCreateSchema, capaResolutionCommandSchema, capaUpdateSchema } from "./capa";
 import { checklistItemStatusSchema } from "./checklist";
 import {
+  committeeCreateSchema,
+  committeeMeetingCompleteSchema,
+  committeeMeetingCreateSchema,
+  committeeMeetingDecisionCommandSchema,
+  committeeUpdateSchema
+} from "./committee";
+import {
   incidentCreateSchema,
   incidentReviewDecisionCommandSchema,
   incidentUpdateSchema
@@ -94,8 +101,18 @@ export type IncidentReviewDecisionCommand = z.infer<typeof incidentReviewDecisio
 export type CapaCreateCommand = z.infer<typeof capaCreateSchema>;
 export type CapaUpdateCommand = z.infer<typeof capaUpdateSchema>;
 export type CapaResolutionCommand = z.infer<typeof capaResolutionCommandSchema>;
+export type CommitteeCreateCommand = z.infer<typeof committeeCreateSchema>;
+export type CommitteeUpdateCommand = z.infer<typeof committeeUpdateSchema>;
+export type CommitteeMeetingCreateCommand = z.infer<typeof committeeMeetingCreateSchema>;
+export type CommitteeMeetingDecisionCommand = z.infer<typeof committeeMeetingDecisionCommandSchema>;
+export type CommitteeMeetingCompleteCommand = z.infer<typeof committeeMeetingCompleteSchema>;
 
 export {
+  committeeCreateSchema,
+  committeeUpdateSchema,
+  committeeMeetingCreateSchema,
+  committeeMeetingDecisionCommandSchema,
+  committeeMeetingCompleteSchema,
   incidentCreateSchema,
   incidentUpdateSchema,
   incidentReviewDecisionCommandSchema,

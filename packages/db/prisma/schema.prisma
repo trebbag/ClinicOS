@@ -142,6 +142,45 @@ model PublicAsset {
   @@index([serviceLine])
 }
 
+model Committee {
+  id           String   @id
+  name         String
+  category     String
+  cadence      String
+  chairRole    String
+  recorderRole String
+  scope        String
+  serviceLine  String?
+  qapiFocus    Boolean
+  isActive     Boolean
+  createdAt    DateTime
+  updatedAt    DateTime
+
+  @@index([category, isActive])
+  @@index([serviceLine])
+}
+
+model CommitteeMeeting {
+  id               String   @id
+  committeeId      String
+  title            String
+  scheduledFor     DateTime
+  status           String
+  packetDocumentId String?  @unique
+  workflowRunId    String?  @unique
+  notes            String?
+  agendaItemsJson  Json
+  decisionsJson    Json
+  qapiSnapshotJson Json?
+  createdBy        String
+  createdAt        DateTime
+  updatedAt        DateTime
+  completedAt      DateTime?
+
+  @@index([committeeId, status])
+  @@index([scheduledFor])
+}
+
 model AuditEvent {
   id         String   @id
   eventType  String

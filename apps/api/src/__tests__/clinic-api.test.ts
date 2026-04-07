@@ -311,6 +311,121 @@ describe("Clinic API", () => {
     expect(published?.publishedPath).toBeTruthy();
   });
 
+  it("schedules a QAPI committee meeting, routes the packet for approval, and records follow-up decisions", async () => {
+    const bootstrap = await app.inject({
+      method: "POST",
+      url: "/committees/bootstrap-defaults",
+      headers: headers("quality_lead")
+    });
+    expect(bootstrap.statusCode).toBe(200);
+
+    const qapiCommittee = repository.committees.find((committee) => committee.category === "qapi");
+    expect(qapiCommittee).toBeDefined();
+
+    const createMeeting = await app.inject({
+      method: "POST",
+      url: "/committee-meetings",
+      headers: headers("quality_lead"),
+      payload: {
+        committeeId: qapiCommittee!.id,
+        scheduledFor: "2026-04-20T14:00:00.000Z",
+        notes: "Review recurring incident themes and overdue CAPAs.",
+        qapiSummaryNote: "Emphasize repeated operational exceptions.",
+        agendaItems: [
+          {
+            title: "Incident trends",
+            ownerRole: "quality_lead",
+            summary: "Review incident patterns from the last 30 days."
+          },
+          {
+            title: "CAPA follow-through",
+            ownerRole: "medical_director",
+            summary: "Confirm verification steps for overdue CAPAs.",
+            dueDate: "2026-04-25T00:00:00.000Z"
+          }
+        ]
+      }
+    });
+    expect(createMeeting.statusCode).toBe(200);
+    const meeting = createMeeting.json<{ id: string; status: string; qapiSnapshot: { openIncidents: number } | null }>();
+    expect(meeting.status).toBe("planned");
+    expect(meeting.qapiSnapshot).not.toBeNull();
+
+    const generatePacket = await app.inject({
+      method: "POST",
+      url: `/committee-meetings/${meeting.id}/generate-packet`,
+      headers: headers("quality_lead")
+    });
+    expect(generatePacket.statusCode).toBe(200);
+    expect(generatePacket.json<{ committeeMeeting: { status: string }; document: { artifactType: string } }>().committeeMeeting.status).toBe("packet_ready");
+    expect(generatePacket.json<{ committeeMeeting: { status: string }; document: { artifactType: string } }>().document.artifactType).toBe("qapi_committee_packet");
+
+    const submitPacket = await app.inject({
+      method: "POST",
+      url: `/committee-meetings/${meeting.id}/submit`,
+      headers: headers("quality_lead")
+    });
+    expect(submitPacket.statusCode).toBe(200);
+    const approvalDocumentId = submitPacket.json<{ document: { id: string } }>().document.id;
+
+    const medicalDirectorApproval = repository.approvals.find((approval) =>
+      approval.targetId === approvalDocumentId && approval.reviewerRole === "medical_director"
+    );
+    const physicianApproval = repository.approvals.find((approval) =>
+      approval.targetId === approvalDocumentId && approval.reviewerRole === "patient_care_team_physician"
+    );
+    expect(medicalDirectorApproval).toBeDefined();
+    expect(physicianApproval).toBeDefined();
+
+    const firstApproval = await app.inject({
+      method: "POST",
+      url: `/approvals/${medicalDirectorApproval!.id}/decide`,
+      headers: headers("medical_director"),
+      payload: { decision: "approved" }
+    });
+    expect(firstApproval.statusCode).toBe(200);
+
+    const secondApproval = await app.inject({
+      method: "POST",
+      url: `/approvals/${physicianApproval!.id}/decide`,
+      headers: headers("patient_care_team_physician")
+      ,
+      payload: { decision: "approved" }
+    });
+    expect(secondApproval.statusCode).toBe(200);
+    expect(repository.committeeMeetings.find((record) => record.id === meeting.id)?.status).toBe("approved");
+
+    const decisionResponse = await app.inject({
+      method: "POST",
+      url: `/committee-meetings/${meeting.id}/record-decisions`,
+      headers: headers("medical_director"),
+      payload: {
+        decisions: [
+          {
+            summary: "Assign CAPA verification follow-up.",
+            ownerRole: "quality_lead",
+            dueDate: "2026-04-28T00:00:00.000Z",
+            notes: "Return with verification evidence at the next QAPI review."
+          }
+        ]
+      }
+    });
+    expect(decisionResponse.statusCode).toBe(200);
+    expect(decisionResponse.json<{ decisions: Array<{ actionItemId: string | null }> }>().decisions[0]?.actionItemId).toBeTruthy();
+
+    const completeMeeting = await app.inject({
+      method: "POST",
+      url: `/committee-meetings/${meeting.id}/complete`,
+      headers: headers("medical_director"),
+      payload: {
+        notes: "Meeting completed with follow-up assigned."
+      }
+    });
+    expect(completeMeeting.statusCode).toBe(200);
+    expect(completeMeeting.json<{ status: string }>().status).toBe("completed");
+    expect(repository.actionItems.some((item) => item.title.includes("Assign CAPA verification follow-up."))).toBe(true);
+  });
+
   it("rejects workflow creation for a role outside the workflow owner set", async () => {
     const response = await app.inject({
       method: "POST",

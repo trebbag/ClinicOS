@@ -6,6 +6,8 @@ import type {
   ChecklistItemRecord,
   ChecklistRun,
   ChecklistTemplate,
+  CommitteeMeetingRecord,
+  CommitteeRecord,
   DeviceAllowedProfile,
   DeviceEnrollmentCode,
   DeviceSession,
@@ -30,6 +32,8 @@ import {
   checklistItemRecordSchema,
   checklistRunSchema,
   checklistTemplateSchema,
+  committeeMeetingRecordSchema,
+  committeeRecordSchema,
   deviceAllowedProfileSchema,
   deviceEnrollmentCodeSchema,
   deviceSessionSchema,
@@ -101,6 +105,23 @@ export type ClinicRepository = {
     assetType?: string;
     serviceLine?: string;
   }): Promise<PublicAssetRecord[]>;
+  createCommittee(record: CommitteeRecord): Promise<CommitteeRecord>;
+  updateCommittee(id: string, patch: Partial<CommitteeRecord>): Promise<CommitteeRecord>;
+  getCommittee(id: string): Promise<CommitteeRecord | null>;
+  listCommittees(filters?: {
+    category?: string;
+    isActive?: boolean;
+    qapiFocus?: boolean;
+    serviceLine?: string;
+  }): Promise<CommitteeRecord[]>;
+  createCommitteeMeeting(record: CommitteeMeetingRecord): Promise<CommitteeMeetingRecord>;
+  updateCommitteeMeeting(id: string, patch: Partial<CommitteeMeetingRecord>): Promise<CommitteeMeetingRecord>;
+  getCommitteeMeeting(id: string): Promise<CommitteeMeetingRecord | null>;
+  getCommitteeMeetingByPacketDocumentId(packetDocumentId: string): Promise<CommitteeMeetingRecord | null>;
+  listCommitteeMeetings(filters?: {
+    committeeId?: string;
+    status?: string;
+  }): Promise<CommitteeMeetingRecord[]>;
   createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate>;
   updateChecklistTemplate(id: string, patch: Partial<ChecklistTemplate>): Promise<ChecklistTemplate>;
   getChecklistTemplate(id: string): Promise<ChecklistTemplate | null>;
@@ -472,6 +493,60 @@ export class PrismaClinicRepository implements ClinicRepository {
       publishedPath: record.publishedPath ?? null,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString()
+    });
+  }
+
+  private mapCommitteeRecord(record: {
+    id: string;
+    name: string;
+    category: string;
+    cadence: string;
+    chairRole: string;
+    recorderRole: string;
+    scope: string;
+    serviceLine: string | null;
+    qapiFocus: boolean;
+    isActive: boolean;
+    createdAt: Date;
+    updatedAt: Date;
+  }): CommitteeRecord {
+    return committeeRecordSchema.parse({
+      ...record,
+      serviceLine: record.serviceLine ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString()
+    });
+  }
+
+  private mapCommitteeMeetingRecord(record: {
+    id: string;
+    committeeId: string;
+    title: string;
+    scheduledFor: Date;
+    status: string;
+    packetDocumentId: string | null;
+    workflowRunId: string | null;
+    notes: string | null;
+    agendaItemsJson: Prisma.JsonValue;
+    decisionsJson: Prisma.JsonValue;
+    qapiSnapshotJson: Prisma.JsonValue | null;
+    createdBy: string;
+    createdAt: Date;
+    updatedAt: Date;
+    completedAt: Date | null;
+  }): CommitteeMeetingRecord {
+    return committeeMeetingRecordSchema.parse({
+      ...record,
+      scheduledFor: record.scheduledFor.toISOString(),
+      packetDocumentId: record.packetDocumentId ?? null,
+      workflowRunId: record.workflowRunId ?? null,
+      notes: record.notes ?? null,
+      agendaItems: record.agendaItemsJson,
+      decisions: record.decisionsJson,
+      qapiSnapshot: record.qapiSnapshotJson ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+      completedAt: record.completedAt?.toISOString() ?? null
     });
   }
 
@@ -1196,6 +1271,144 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
 
     return records.map((record) => this.mapPublicAssetRecord(record as any));
+  }
+
+  async createCommittee(record: CommitteeRecord): Promise<CommitteeRecord> {
+    const created = await this.client.committee.create({
+      data: {
+        id: record.id,
+        name: record.name,
+        category: record.category,
+        cadence: record.cadence,
+        chairRole: record.chairRole,
+        recorderRole: record.recorderRole,
+        scope: record.scope,
+        serviceLine: record.serviceLine,
+        qapiFocus: record.qapiFocus,
+        isActive: record.isActive,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt)
+      }
+    });
+
+    return this.mapCommitteeRecord(created);
+  }
+
+  async updateCommittee(id: string, patch: Partial<CommitteeRecord>): Promise<CommitteeRecord> {
+    const updated = await this.client.committee.update({
+      where: { id },
+      data: {
+        name: patch.name,
+        category: patch.category,
+        cadence: patch.cadence,
+        chairRole: patch.chairRole,
+        recorderRole: patch.recorderRole,
+        scope: patch.scope,
+        serviceLine: patch.serviceLine,
+        qapiFocus: patch.qapiFocus,
+        isActive: patch.isActive,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt)
+      }
+    });
+
+    return this.mapCommitteeRecord(updated);
+  }
+
+  async getCommittee(id: string): Promise<CommitteeRecord | null> {
+    const record = await this.client.committee.findUnique({ where: { id } });
+    return record ? this.mapCommitteeRecord(record) : null;
+  }
+
+  async listCommittees(filters?: {
+    category?: string;
+    isActive?: boolean;
+    qapiFocus?: boolean;
+    serviceLine?: string;
+  }): Promise<CommitteeRecord[]> {
+    const records = await this.client.committee.findMany({
+      where: {
+        category: filters?.category,
+        isActive: filters?.isActive,
+        qapiFocus: filters?.qapiFocus,
+        serviceLine: filters?.serviceLine
+      },
+      orderBy: { name: "asc" }
+    });
+
+    return records.map((record) => this.mapCommitteeRecord(record));
+  }
+
+  async createCommitteeMeeting(record: CommitteeMeetingRecord): Promise<CommitteeMeetingRecord> {
+    const created = await this.client.committeeMeeting.create({
+      data: {
+        id: record.id,
+        committeeId: record.committeeId,
+        title: record.title,
+        scheduledFor: new Date(record.scheduledFor),
+        status: record.status,
+        packetDocumentId: record.packetDocumentId,
+        workflowRunId: record.workflowRunId,
+        notes: record.notes,
+        agendaItemsJson: asJsonValue(record.agendaItems),
+        decisionsJson: asJsonValue(record.decisions),
+        qapiSnapshotJson: asNullableJsonValue(record.qapiSnapshot),
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt),
+        completedAt: isoToDate(record.completedAt)
+      }
+    });
+
+    return this.mapCommitteeMeetingRecord(created);
+  }
+
+  async updateCommitteeMeeting(id: string, patch: Partial<CommitteeMeetingRecord>): Promise<CommitteeMeetingRecord> {
+    const updated = await this.client.committeeMeeting.update({
+      where: { id },
+      data: {
+        committeeId: patch.committeeId,
+        title: patch.title,
+        scheduledFor: isoToRequiredDate(patch.scheduledFor),
+        status: patch.status,
+        packetDocumentId: patch.packetDocumentId,
+        workflowRunId: patch.workflowRunId,
+        notes: patch.notes,
+        agendaItemsJson: patch.agendaItems ? asJsonValue(patch.agendaItems) : undefined,
+        decisionsJson: patch.decisions ? asJsonValue(patch.decisions) : undefined,
+        qapiSnapshotJson: asNullableJsonValue(patch.qapiSnapshot),
+        createdBy: patch.createdBy,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt),
+        completedAt: isoToDate(patch.completedAt)
+      }
+    });
+
+    return this.mapCommitteeMeetingRecord(updated);
+  }
+
+  async getCommitteeMeeting(id: string): Promise<CommitteeMeetingRecord | null> {
+    const record = await this.client.committeeMeeting.findUnique({ where: { id } });
+    return record ? this.mapCommitteeMeetingRecord(record) : null;
+  }
+
+  async getCommitteeMeetingByPacketDocumentId(packetDocumentId: string): Promise<CommitteeMeetingRecord | null> {
+    const record = await this.client.committeeMeeting.findFirst({
+      where: { packetDocumentId }
+    });
+    return record ? this.mapCommitteeMeetingRecord(record) : null;
+  }
+
+  async listCommitteeMeetings(filters?: {
+    committeeId?: string;
+    status?: string;
+  }): Promise<CommitteeMeetingRecord[]> {
+    const records = await this.client.committeeMeeting.findMany({
+      where: mapListFilters(filters),
+      orderBy: { scheduledFor: "desc" }
+    });
+
+    return records.map((record) => this.mapCommitteeMeetingRecord(record));
   }
 
   async createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate> {

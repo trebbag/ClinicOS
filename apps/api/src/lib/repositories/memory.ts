@@ -6,6 +6,8 @@ import type {
   ChecklistItemRecord,
   ChecklistRun,
   ChecklistTemplate,
+  CommitteeMeetingRecord,
+  CommitteeRecord,
   DeviceAllowedProfile,
   DeviceEnrollmentCode,
   DeviceSession,
@@ -39,6 +41,8 @@ export class MemoryClinicRepository implements ClinicRepository {
   public readonly incidents: IncidentRecord[] = [];
   public readonly capas: CapaRecord[] = [];
   public readonly publicAssets: PublicAssetRecord[] = [];
+  public readonly committees: CommitteeRecord[] = [];
+  public readonly committeeMeetings: CommitteeMeetingRecord[] = [];
   public readonly checklistTemplates: ChecklistTemplate[] = [];
   public readonly checklistRuns: ChecklistRun[] = [];
   public readonly checklistItems: ChecklistItemRecord[] = [];
@@ -211,6 +215,61 @@ export class MemoryClinicRepository implements ClinicRepository {
     serviceLine?: string;
   }): Promise<PublicAssetRecord[]> {
     return this.publicAssets.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createCommittee(record: CommitteeRecord): Promise<CommitteeRecord> {
+    this.committees.unshift(record);
+    return record;
+  }
+
+  async updateCommittee(id: string, patch: Partial<CommitteeRecord>): Promise<CommitteeRecord> {
+    const index = this.committees.findIndex((record) => record.id === id);
+    this.committees[index] = { ...this.committees[index], ...patch };
+    return this.committees[index];
+  }
+
+  async getCommittee(id: string): Promise<CommitteeRecord | null> {
+    return this.committees.find((record) => record.id === id) ?? null;
+  }
+
+  async listCommittees(filters?: {
+    category?: string;
+    isActive?: boolean;
+    qapiFocus?: boolean;
+    serviceLine?: string;
+  }): Promise<CommitteeRecord[]> {
+    return this.committees.filter((record) =>
+      (filters?.category === undefined || record.category === filters.category)
+      && (filters?.isActive === undefined || record.isActive === filters.isActive)
+      && (filters?.qapiFocus === undefined || record.qapiFocus === filters.qapiFocus)
+      && (filters?.serviceLine === undefined || record.serviceLine === filters.serviceLine)
+    );
+  }
+
+  async createCommitteeMeeting(record: CommitteeMeetingRecord): Promise<CommitteeMeetingRecord> {
+    this.committeeMeetings.unshift(record);
+    return record;
+  }
+
+  async updateCommitteeMeeting(id: string, patch: Partial<CommitteeMeetingRecord>): Promise<CommitteeMeetingRecord> {
+    const index = this.committeeMeetings.findIndex((record) => record.id === id);
+    this.committeeMeetings[index] = { ...this.committeeMeetings[index], ...patch };
+    return this.committeeMeetings[index];
+  }
+
+  async getCommitteeMeeting(id: string): Promise<CommitteeMeetingRecord | null> {
+    return this.committeeMeetings.find((record) => record.id === id) ?? null;
+  }
+
+  async getCommitteeMeetingByPacketDocumentId(packetDocumentId: string): Promise<CommitteeMeetingRecord | null> {
+    return this.committeeMeetings.find((record) => record.packetDocumentId === packetDocumentId) ?? null;
+  }
+
+  async listCommitteeMeetings(filters?: {
+    committeeId?: string;
+    status?: string;
+  }): Promise<CommitteeMeetingRecord[]> {
+    return this.committeeMeetings.filter((record) => matchesFilters(record, filters));
   }
 
   async createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate> {
