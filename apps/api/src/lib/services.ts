@@ -44,6 +44,8 @@ import {
   type MicrosoftIntegrationStatus,
   type MicrosoftIntegrationValidationRecord,
   type DocumentRecord,
+  type OpsAlert,
+  type OpsAlertSummary,
   type OpsCleanupResult,
   type OpsCleanupTarget,
   type OpsMaintenanceSummary,
@@ -1027,6 +1029,170 @@ export class ClinicApiService {
         mode: microsoft.mode,
         readyForLive: microsoft.readyForLive
       }
+    };
+  }
+
+  async getOpsAlertSummary(input?: {
+    nodeEnv?: string;
+    publicAppOrigin?: string | null;
+    databaseReady?: boolean;
+  }): Promise<OpsAlertSummary> {
+    const checkedAt = new Date().toISOString();
+    const [runtime, maintenance, overview, authEvents] = await Promise.all([
+      this.getRuntimeConfigStatus({
+        nodeEnv: input?.nodeEnv ?? process.env.NODE_ENV ?? "development",
+        publicAppOrigin: input?.publicAppOrigin ?? process.env.PUBLIC_APP_ORIGIN ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? null,
+        databaseReady: input?.databaseReady ?? true
+      }),
+      this.getOpsMaintenanceSummary({ now: checkedAt }),
+      this.getOverviewStats(),
+      this.listAuditEvents({ eventTypePrefix: "auth." })
+    ]);
+
+    const alerts: OpsAlert[] = [];
+
+    const pushAlert = (alert: Omit<OpsAlert, "createdAt">): void => {
+      alerts.push({
+        ...alert,
+        createdAt: checkedAt
+      });
+    };
+
+    if (runtime.blockingIssues.length > 0) {
+      pushAlert({
+        key: "runtime.blocking_issues",
+        scope: "runtime",
+        severity: "critical",
+        title: "Runtime configuration is blocking pilot use",
+        detail: runtime.blockingIssues.join(" "),
+        action: "Review deployment env and readiness blockers before continuing pilot operations.",
+        count: runtime.blockingIssues.length
+      });
+    }
+
+    if (runtime.integrationMode === "live" && !runtime.microsoft.readyForLive) {
+      pushAlert({
+        key: "microsoft.live_not_ready",
+        scope: "microsoft",
+        severity: "critical",
+        title: "Microsoft live mode is not validated",
+        detail: "The deployment is configured for Microsoft live mode but the latest validation is not ready for live use.",
+        action: "Run Microsoft validation and resolve any failing surfaces before relying on publish or sync operations.",
+        count: null
+      });
+    }
+
+    if (maintenance.worker.failed + maintenance.worker.deadLetter > 0) {
+      pushAlert({
+        key: "worker.failed_jobs",
+        scope: "worker",
+        severity: "critical",
+        title: "Worker jobs need operator attention",
+        detail: `${maintenance.worker.failed} failed and ${maintenance.worker.deadLetter} dead-letter jobs are waiting.`,
+        action: "Review worker jobs, retry recoverable items, and use cleanup only after understanding the underlying failures.",
+        count: maintenance.worker.failed + maintenance.worker.deadLetter
+      });
+    }
+
+    if (maintenance.worker.staleProcessing > 0) {
+      pushAlert({
+        key: "worker.stale_processing",
+        scope: "worker",
+        severity: "warning",
+        title: "Worker jobs are stuck in processing",
+        detail: `${maintenance.worker.staleProcessing} processing jobs are older than the stale-processing threshold.`,
+        action: "Run pilot cleanup or retry after confirming the worker is healthy.",
+        count: maintenance.worker.staleProcessing
+      });
+    }
+
+    if (maintenance.auth.lockedProfileAssignments > 0) {
+      pushAlert({
+        key: "auth.locked_profiles",
+        scope: "auth",
+        severity: "warning",
+        title: "Profiles are currently locked on enrolled devices",
+        detail: `${maintenance.auth.lockedProfileAssignments} device/profile assignments are locked due to recent failed PIN attempts.`,
+        action: "Check recent auth events for failed PIN attempts and confirm the right user is on the right enrolled device.",
+        count: maintenance.auth.lockedProfileAssignments
+      });
+    }
+
+    if (maintenance.auth.expiredActiveSessions > 0) {
+      pushAlert({
+        key: "auth.expired_sessions",
+        scope: "auth",
+        severity: "info",
+        title: "Expired sessions can be cleaned up",
+        detail: `${maintenance.auth.expiredActiveSessions} active sessions are now beyond their expiry window.`,
+        action: "Run pilot cleanup to revoke expired sessions and keep auth state tidy.",
+        count: maintenance.auth.expiredActiveSessions
+      });
+    }
+
+    if (overview.overdueActionItems > 0) {
+      pushAlert({
+        key: "office_ops.overdue_action_items",
+        scope: "office_ops",
+        severity: "warning",
+        title: "Action items are overdue",
+        detail: `${overview.overdueActionItems} action items are overdue across office operations and follow-through work.`,
+        action: "Review the action item queue and reconcile the most overdue operational commitments.",
+        count: overview.overdueActionItems
+      });
+    }
+
+    if (overview.overdueScorecardReviews > 0) {
+      pushAlert({
+        key: "scorecards.overdue_reviews",
+        scope: "scorecards",
+        severity: "warning",
+        title: "Scorecard reviews are overdue",
+        detail: `${overview.overdueScorecardReviews} scorecard reviews are past due and still waiting for human action.`,
+        action: "Use the scorecards queue to resolve HR or medical-director reviews before they age further.",
+        count: overview.overdueScorecardReviews
+      });
+    }
+
+    if (overview.openIssues > 0) {
+      pushAlert({
+        key: "office_ops.open_issues",
+        scope: "office_ops",
+        severity: "info",
+        title: "Open office issues remain in the queue",
+        detail: `${overview.openIssues} operational issues are still open.`,
+        action: "Use the office manager cockpit to review open issues and escalate anything blocking closeout or patient operations.",
+        count: overview.openIssues
+      });
+    }
+
+    const recentFailedPins = authEvents.filter((event) =>
+      event.eventType === "auth.pin_failed"
+      && new Date(event.createdAt).getTime() >= Date.now() - 24 * 60 * 60 * 1000
+    );
+    if (recentFailedPins.length > 0) {
+      pushAlert({
+        key: "auth.recent_pin_failures",
+        scope: "auth",
+        severity: "warning",
+        title: "Recent failed PIN attempts were detected",
+        detail: `${recentFailedPins.length} failed PIN attempts were recorded in the last 24 hours.`,
+        action: "Review recent auth events, confirm profile assignments, and rotate or reset PINs if the attempts were unexpected.",
+        count: recentFailedPins.length
+      });
+    }
+
+    const sortedAlerts = alerts.sort((left, right) => {
+      const severityRank = { critical: 0, warning: 1, info: 2 } as const;
+      return severityRank[left.severity] - severityRank[right.severity] || left.title.localeCompare(right.title);
+    });
+
+    return {
+      checkedAt,
+      criticalCount: sortedAlerts.filter((alert) => alert.severity === "critical").length,
+      warningCount: sortedAlerts.filter((alert) => alert.severity === "warning").length,
+      infoCount: sortedAlerts.filter((alert) => alert.severity === "info").length,
+      alerts: sortedAlerts
     };
   }
 

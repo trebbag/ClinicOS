@@ -86,10 +86,23 @@ That command is documented in [pilot-ops-runbook.md](/Users/gregorygabbert/Githu
 - Teams notification delivery
 - optional document publish when both office-manager and medical-director profiles are available on the test device
 
+For a broader multi-role pilot validation pass, also run:
+
+```bash
+npm run validate:pilot-roles -- https://your-pilot-url.example.com
+```
+
+That command:
+- runs the deeper smoke harness
+- validates synthetic office-manager, quality-lead, and HR-lead device flows
+- cleans up synthetic auth fixtures by default
+
+Use `GET /ops/alerts` or the Pilot Ops page to review the resulting operator alerts after either smoke command.
+
 ## First-pilot recommendation
 
 Use:
 - `AUTH_MODE=device_profiles`
 - `MICROSOFT_INTEGRATION_MODE=live` once your Render database and same-origin deployment are in place
 
-Your tenant validation is already green, so the remaining blockers are deployment, database, and device enrollment rather than Microsoft setup.
+Your local tenant validation is already green. If the deployed Render Microsoft validation regresses while local preflight is still green, treat that as a Render env alignment issue first and compare the deployed API/worker Microsoft values against the working local `.env`.

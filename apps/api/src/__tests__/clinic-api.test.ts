@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import {
+  createAuditEvent,
   createDeviceEnrollmentCode,
   createDeviceSession,
   createEnrolledDevice,
@@ -1050,6 +1051,18 @@ describe("Clinic API", () => {
         updatedAt: "2026-03-01T00:00:00.000Z"
       }
     );
+    cleanupRepository.auditEvents.push(createAuditEvent({
+      eventType: "auth.pin_failed",
+      entityType: "device_profile_assignment",
+      entityId: "assignment_test",
+      actorId: profile.id,
+      actorRole: profile.role,
+      actorName: profile.displayName,
+      payload: {
+        deviceId: cleanupRepository.enrolledDevices[0].id,
+        profileId: profile.id
+      }
+    }));
 
     const summary = await cleanupApp.inject({
       method: "GET",
@@ -1061,6 +1074,21 @@ describe("Clinic API", () => {
     expect(summary.json<{ auth: { expiredActiveSessions: number; purgeableEnrollmentCodes: number }; worker: { staleProcessing: number; purgeableSucceeded: number } }>().auth.purgeableEnrollmentCodes).toBe(1);
     expect(summary.json<{ auth: { expiredActiveSessions: number; purgeableEnrollmentCodes: number }; worker: { staleProcessing: number; purgeableSucceeded: number } }>().worker.staleProcessing).toBe(1);
     expect(summary.json<{ auth: { expiredActiveSessions: number; purgeableEnrollmentCodes: number }; worker: { staleProcessing: number; purgeableSucceeded: number } }>().worker.purgeableSucceeded).toBe(1);
+
+    const alerts = await cleanupApp.inject({
+      method: "GET",
+      url: "/ops/alerts",
+      headers: headers("medical_director")
+    });
+    expect(alerts.statusCode).toBe(200);
+    const alertBody = alerts.json<{ criticalCount: number; warningCount: number; alerts: Array<{ key: string }> }>();
+    expect(alertBody.criticalCount).toBeGreaterThan(0);
+    expect(alertBody.warningCount).toBeGreaterThan(0);
+    expect(alertBody.alerts.map((alert) => alert.key)).toEqual(expect.arrayContaining([
+      "runtime.blocking_issues",
+      "worker.stale_processing",
+      "auth.recent_pin_failures"
+    ]));
 
     const dryRun = await cleanupApp.inject({
       method: "POST",

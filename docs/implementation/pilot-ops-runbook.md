@@ -10,6 +10,7 @@ This runbook covers the first-pilot hardening loop now built into Clinic OS:
 ## Core operator surfaces
 
 - `GET /ops/config-status`
+- `GET /ops/alerts`
 - `GET /ops/maintenance-summary`
 - `POST /ops/cleanup`
 - `GET /ops/role-capabilities`
@@ -18,6 +19,15 @@ This runbook covers the first-pilot hardening loop now built into Clinic OS:
 - `GET /audit-events?eventTypePrefix=auth.`
 
 The Pilot Ops page now exposes the same information for normal admin use.
+
+The alert surface is intentionally opinionated. It highlights:
+
+- blocking runtime configuration issues
+- Microsoft live degradation
+- failed or dead-letter worker jobs
+- stale processing locks
+- recent failed PIN attempts and locked profiles
+- overdue action items and scorecard reviews
 
 ## Capability model
 
@@ -132,6 +142,34 @@ That optional publish sequence:
 - approves the medical-director review
 - requests publication and waits for the published state
 
+## Multi-role pilot validation
+
+The repo now also ships a broader validation command for the first pilot:
+
+```bash
+npm run validate:pilot-roles -- https://your-pilot-url.example.com
+```
+
+This command:
+
+- creates or reactivates clearly labeled temporary validation profiles for:
+  - medical director
+  - office manager
+  - quality lead
+  - HR lead
+- mints temporary enrollment codes
+- runs the live smoke harness against a synthetic validation device
+- validates separate office-manager, quality-lead, and HR-lead device flows through the deployed app
+- revokes synthetic validation devices and deactivates those temporary validation profiles by default
+
+The command intentionally keeps business-domain smoke artifacts labeled in the tenant and database, because those artifacts are the proof that publication, lists, Planner, and notification flows were exercised.
+
+If you intentionally want to keep the temporary validation auth fixtures active for a follow-up debugging session, set:
+
+```bash
+PILOT_ROLE_VALIDATION_KEEP_AUTH_FIXTURES=true
+```
+
 ## Render release / promotion checklist
 
 Before promoting a new pilot build:
@@ -150,8 +188,11 @@ Before promoting a new pilot build:
    - `npm run smoke:render -- https://your-pilot-url.example.com`
 8. Run:
    - `npm run smoke:pilot-live -- https://your-pilot-url.example.com`
-9. Review Pilot Ops for:
+9. Run:
+   - `npm run validate:pilot-roles -- https://your-pilot-url.example.com`
+10. Review Pilot Ops for:
    - no blocking runtime issues
+   - no critical alerts on `/ops/alerts`
    - no stale processing jobs
    - no failed or dead-letter jobs that need intervention
 

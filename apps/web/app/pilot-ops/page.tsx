@@ -91,6 +91,25 @@ type MaintenanceSummary = {
   };
 };
 
+type OpsAlert = {
+  key: string;
+  scope: "runtime" | "microsoft" | "worker" | "auth" | "office_ops" | "scorecards";
+  severity: "info" | "warning" | "critical";
+  title: string;
+  detail: string;
+  action: string | null;
+  count: number | null;
+  createdAt: string;
+};
+
+type OpsAlertSummary = {
+  checkedAt: string;
+  criticalCount: number;
+  warningCount: number;
+  infoCount: number;
+  alerts: OpsAlert[];
+};
+
 type CleanupResult = {
   checkedAt: string;
   dryRun: boolean;
@@ -178,6 +197,7 @@ export default function PilotOpsPage(): JSX.Element {
   const [integrationStatus, setIntegrationStatus] = useState<MicrosoftStatus | null>(null);
   const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
   const [maintenanceSummary, setMaintenanceSummary] = useState<MaintenanceSummary | null>(null);
+  const [opsAlerts, setOpsAlerts] = useState<OpsAlertSummary | null>(null);
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null);
   const [roleCapabilities, setRoleCapabilities] = useState<RoleCapabilityRecord[]>([]);
   const [overview, setOverview] = useState<OverviewStats | null>(null);
@@ -207,11 +227,12 @@ export default function PilotOpsPage(): JSX.Element {
     }
 
     try {
-      const [currentUser, microsoft, runtimeStatus, maintenance, capabilityRows, overviewStats, profileRows, deviceRows, authAudit] = await Promise.all([
+      const [currentUser, microsoft, runtimeStatus, maintenance, alerts, capabilityRows, overviewStats, profileRows, deviceRows, authAudit] = await Promise.all([
         apiRequest<WhoAmI>("/auth/whoami", actor),
         apiRequest<MicrosoftStatus>("/integrations/microsoft/status", actor),
         apiRequest<ConfigStatus>("/ops/config-status", actor),
         apiRequest<MaintenanceSummary>("/ops/maintenance-summary", actor),
+        apiRequest<OpsAlertSummary>("/ops/alerts", actor),
         apiRequest<RoleCapabilityRecord[]>("/ops/role-capabilities", actor),
         apiRequest<OverviewStats>("/dashboard/overview", actor),
         apiRequest<UserProfile[]>("/user-profiles", actor),
@@ -222,6 +243,7 @@ export default function PilotOpsPage(): JSX.Element {
       setIntegrationStatus(microsoft);
       setConfigStatus(runtimeStatus);
       setMaintenanceSummary(maintenance);
+      setOpsAlerts(alerts);
       setRoleCapabilities(capabilityRows);
       setOverview(overviewStats);
       setAuthEvents(authAudit.slice(0, 12));
@@ -525,6 +547,47 @@ export default function PilotOpsPage(): JSX.Element {
             Failed/dead-letter: {(configStatus?.worker.failed ?? 0) + (configStatus?.worker.deadLetter ?? 0)}
           </div>
         </div>
+      </div>
+
+      <div className="grid cols-3">
+        <div className="card">
+          <div className="muted">Critical alerts</div>
+          <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>{opsAlerts?.criticalCount ?? 0}</div>
+        </div>
+        <div className="card">
+          <div className="muted">Warnings</div>
+          <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>{opsAlerts?.warningCount ?? 0}</div>
+        </div>
+        <div className="card">
+          <div className="muted">Info alerts</div>
+          <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>{opsAlerts?.infoCount ?? 0}</div>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2>Operator alerts</h2>
+        {opsAlerts?.alerts.length ? (
+          <div className="table">
+            <div className="table-row table-head">
+              <span>Severity</span>
+              <span>Scope</span>
+              <span>Title</span>
+              <span>Detail</span>
+              <span>Action</span>
+            </div>
+            {opsAlerts.alerts.map((alert) => (
+              <div key={alert.key} className="table-row">
+                <span><span className={`badge badge-${alert.severity}`}>{alert.severity}</span></span>
+                <span>{alert.scope.replaceAll("_", " ")}</span>
+                <span>{alert.title}{typeof alert.count === "number" ? ` (${alert.count})` : ""}</span>
+                <span>{alert.detail}</span>
+                <span>{alert.action ?? "No action recommended."}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="muted">No active operator alerts are currently reported.</div>
+        )}
       </div>
 
       <div className="grid cols-3">

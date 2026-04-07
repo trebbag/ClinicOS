@@ -25,6 +25,16 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
     return app.clinicService.getOpsMaintenanceSummary();
   });
 
+  app.get("/ops/alerts", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "ops.view_config");
+    return app.clinicService.getOpsAlertSummary({
+      nodeEnv: env.nodeEnv,
+      publicAppOrigin: env.publicAppOrigin || null,
+      databaseReady: await app.databaseReadyCheck()
+    });
+  });
+
   app.post("/ops/cleanup", async (request) => {
     const actor = actorFromRequest(request);
     requireCapability(actor, "ops.run_cleanup");

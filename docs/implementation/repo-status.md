@@ -13,6 +13,7 @@ The repository now has a working pilot backbone for:
 - operational visibility for worker jobs across overview, quality, office-manager, and scorecard screens
 - persisted Microsoft preflight validation records and pilot-ops status endpoints
 - a pilot-ops admin page for auth, worker, and Microsoft readiness checks
+- a first-class pilot-ops alert summary for runtime, Microsoft, worker, auth, office-ops, and scorecard risks
 - office-ops dashboard reads, daily closeout artifacts, overdue maintenance sweeps, and scorecard history views
 - room-readiness checklist templates/runs/items with closeout gating and office-manager inline updates
 - Planner task reconciliation back into Clinic OS action-item status and sync health
@@ -28,6 +29,7 @@ The repository now has a working pilot backbone for:
 - a shared role-to-capability matrix for pilot-ops/admin surfaces, instead of scattered hardcoded route-role lists
 - maintenance summary and cleanup actions for stale enrollment codes, expired sessions, and stale worker processing locks
 - a repeatable live pilot smoke harness that can exercise device auth, Lists sync, Planner sync, Teams delivery, and optional publish flows
+- a broader live role-validation command that can exercise synthetic office-manager, quality-lead, and HR-lead device flows against the deployed pilot
 - a pilot ops runbook with Render promotion, rollback, cleanup, and smoke instructions
 - real prompt loading groundwork for runtime agents is still partial, but the repo now has deployment-safe feature-flag scaffolding for a later pass
 - live Microsoft validation now distinguishes between Graph-probed surfaces and config-only Teams webhook checks
@@ -36,8 +38,15 @@ The repository now has a working pilot backbone for:
 
 The following areas are still placeholders or partial:
 - production identity integration beyond enrolled-browser trust and the optional trusted-proxy groundwork
-- richer alert routing and operational dashboards beyond the new cleanup/runbook baseline
+- richer alert delivery integrations beyond the new cleanup/runbook/dashboard baseline
 - multi-room office master data, richer checklist analytics, and fuller Planner reconciliation breadth
 - broader HR/training workflows beyond manual requirements/completions and longer-range scorecard analytics
 - runtime agent structured tool execution loop and full eval-backed feature flag rollout
 - deeper deployment, observability, and environment promotion workflows
+
+Operational note from the latest live validation:
+
+- local Microsoft live validation is still green
+- the deployed Render Microsoft validation is currently degraded on the SharePoint policy folder path
+- synthetic office-manager, quality-lead, and HR-lead device flows succeeded
+- queued jobs can still be processed against the live database, but the deployed worker needs a Render-side health/config review because the queue did not drain on its own during the latest smoke pass
