@@ -16,6 +16,8 @@ export const appCapabilities = [
   "service_lines.manage",
   "practice_agreements.view",
   "practice_agreements.manage",
+  "telehealth.view",
+  "telehealth.manage",
   "delegation.view",
   "delegation.manage",
   "public_assets.view",
@@ -59,6 +61,8 @@ const roleCapabilityMatrix = {
     "service_lines.manage",
     "practice_agreements.view",
     "practice_agreements.manage",
+    "telehealth.view",
+    "telehealth.manage",
     "delegation.view",
     "delegation.manage",
     "public_assets.view",
@@ -83,6 +87,7 @@ const roleCapabilityMatrix = {
     "service_lines.view",
     "service_lines.manage",
     "practice_agreements.view",
+    "telehealth.view",
     "delegation.view",
     "approvals.view",
     "public_assets.view",
@@ -144,6 +149,8 @@ const roleCapabilityMatrix = {
     "service_lines.manage",
     "practice_agreements.view",
     "practice_agreements.manage",
+    "telehealth.view",
+    "telehealth.manage",
     "delegation.view",
     "delegation.manage",
     "public_assets.view",
@@ -163,6 +170,8 @@ const roleCapabilityMatrix = {
   patient_care_team_physician: [
     "practice_agreements.view",
     "practice_agreements.manage",
+    "telehealth.view",
+    "telehealth.manage",
     "delegation.view"
   ],
   nurse_practitioner: [

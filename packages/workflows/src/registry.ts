@@ -10,6 +10,7 @@ import { publicAssetClaimsReviewDefinition } from "./definitions/public-asset-cl
 import { qapiMonthlyReviewDefinition } from "./definitions/qapi-monthly-review";
 import { serviceLinePackReviewDefinition } from "./definitions/service-line-pack-review";
 import { staffScorecardDefinition } from "./definitions/staff-scorecard";
+import { telehealthStewardshipReviewDefinition } from "./definitions/telehealth-stewardship-review";
 
 export type RegisteredWorkflowDefinition = WorkflowDefinition & {
   inputSchema: ZodTypeAny;
@@ -25,5 +26,6 @@ export const workflowRegistry = new Map<string, RegisteredWorkflowDefinition>([
   [qapiMonthlyReviewDefinition.id, qapiMonthlyReviewDefinition],
   [serviceLinePackReviewDefinition.id, serviceLinePackReviewDefinition],
   [practiceAgreementReviewDefinition.id, practiceAgreementReviewDefinition],
-  [publicAssetClaimsReviewDefinition.id, publicAssetClaimsReviewDefinition]
+  [publicAssetClaimsReviewDefinition.id, publicAssetClaimsReviewDefinition],
+  [telehealthStewardshipReviewDefinition.id, telehealthStewardshipReviewDefinition]
 ]);

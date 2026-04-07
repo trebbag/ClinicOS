@@ -51,11 +51,14 @@ import {
   publicAssetUpdateSchema,
   claimsReviewDecisionCommandSchema,
   createPracticeAgreementRecord,
+  createTelehealthStewardshipRecord,
   serviceLineCreateSchema,
   serviceLinePackCreateSchema,
   serviceLineUpdateSchema,
   practiceAgreementCreateSchema,
   practiceAgreementUpdateSchema,
+  telehealthStewardshipCreateSchema,
+  telehealthStewardshipUpdateSchema,
   scorecardImportJobSchema,
   scorecardReviewDecisionCommandSchema,
   trainingCompletionCreateSchema,
@@ -97,6 +100,7 @@ import {
   type RoleCapabilityRecord,
   type ServiceLinePackRecord,
   type ServiceLineRecord,
+  type TelehealthStewardshipRecord,
   type TrainingDashboard,
   type TrainingGapItem,
   type TrainingGapStatus,
@@ -195,6 +199,33 @@ function derivePracticeAgreementStatus(input: {
       return "published";
     case "rejected":
       return "sent_back";
+    case "draft":
+    default:
+      return "draft";
+  }
+}
+
+function deriveTelehealthStewardshipStatus(input: {
+  documentStatus: DocumentRecord["status"];
+  currentStatus: TelehealthStewardshipRecord["status"];
+}): TelehealthStewardshipRecord["status"] {
+  if (input.currentStatus === "archived") {
+    return input.currentStatus;
+  }
+
+  switch (input.documentStatus) {
+    case "in_review":
+      return "approval_pending";
+    case "approved":
+      return "approved";
+    case "publish_pending":
+      return "publish_pending";
+    case "published":
+      return "published";
+    case "rejected":
+      return "sent_back";
+    case "archived":
+      return "archived";
     case "draft":
     default:
       return "draft";
@@ -1009,6 +1040,7 @@ export class ClinicApiService {
 
     await this.syncPublicAssetFromDocument(updatedDocument);
     await this.syncPracticeAgreementFromDocument(updatedDocument);
+    await this.syncTelehealthStewardshipFromDocument(updatedDocument);
     await this.syncCommitteeMeetingFromDocument(updatedDocument);
     await this.syncServiceLinePackFromDocument(updatedDocument);
 
@@ -1051,6 +1083,7 @@ export class ClinicApiService {
 
     await this.syncPublicAssetFromDocument(updatedDocument);
     await this.syncPracticeAgreementFromDocument(updatedDocument);
+    await this.syncTelehealthStewardshipFromDocument(updatedDocument);
     await this.syncCommitteeMeetingFromDocument(updatedDocument);
     await this.syncServiceLinePackFromDocument(updatedDocument);
 
@@ -2221,6 +2254,264 @@ export class ClinicApiService {
 
     return {
       practiceAgreement: synced ?? practiceAgreement,
+      document
+    };
+  }
+
+  async listTelehealthStewardship(filters?: {
+    status?: string;
+    ownerRole?: string;
+    supervisingPhysicianRole?: string;
+  }): Promise<TelehealthStewardshipRecord[]> {
+    return this.repository.listTelehealthStewardship(filters);
+  }
+
+  async createTelehealthStewardship(actor: ActorContext, input: unknown): Promise<{
+    stewardship: TelehealthStewardshipRecord;
+    document: DocumentRecord;
+  }> {
+    const command = telehealthStewardshipCreateSchema.parse(input);
+    const linkedPracticeAgreement = command.linkedPracticeAgreementId
+      ? await this.repository.getPracticeAgreement(command.linkedPracticeAgreementId)
+      : null;
+    if (command.linkedPracticeAgreementId && !linkedPracticeAgreement) {
+      notFound(`Linked practice agreement not found: ${command.linkedPracticeAgreementId}`);
+    }
+
+    const workflow = await this.createWorkflowRun(actor, {
+      workflowId: "telehealth_stewardship_review",
+      input: {
+        title: command.title,
+        ownerRole: command.ownerRole,
+        supervisingPhysicianRole: command.supervisingPhysicianRole,
+        linkedPracticeAgreementId: command.linkedPracticeAgreementId ?? null,
+        delegatedTaskCodes: command.delegatedTaskCodes,
+        requestedBy: actor.actorId,
+        reviewCadenceDays: command.reviewCadenceDays ?? 60
+      }
+    });
+
+    await this.advanceWorkflowIfPossible(actor, workflow.id, ["scoped", "drafted"], "Telehealth stewardship packet drafted.");
+
+    const document = await this.createDocument(actor, {
+      title: command.title,
+      ownerRole: command.ownerRole,
+      approvalClass: "clinical_governance",
+      artifactType: "telehealth_stewardship_packet",
+      summary: "Telehealth stewardship packet covering scope, identity, consent, documentation, QA, and emergency redirects.",
+      workflowRunId: workflow.id,
+      serviceLines: ["telehealth"],
+      body: this.buildTelehealthStewardshipBody(command)
+    });
+
+    const stewardship = await this.repository.createTelehealthStewardship(createTelehealthStewardshipRecord({
+      ...command,
+      linkedPracticeAgreementId: command.linkedPracticeAgreementId ?? null,
+      delegatedTaskCodes: command.delegatedTaskCodes,
+      reviewCadenceDays: command.reviewCadenceDays ?? 60,
+      notes: command.notes ?? null,
+      documentId: document.id,
+      workflowRunId: workflow.id,
+      createdBy: actor.actorId
+    }));
+
+    await this.recordAudit(actor, "telehealth_stewardship.created", "telehealth_stewardship", stewardship.id, {
+      documentId: document.id,
+      workflowRunId: workflow.id,
+      linkedPracticeAgreementId: stewardship.linkedPracticeAgreementId,
+      delegatedTaskCodeCount: stewardship.delegatedTaskCodes.length
+    });
+
+    return {
+      stewardship,
+      document
+    };
+  }
+
+  async bootstrapTelehealthStewardship(actor: ActorContext): Promise<{
+    created: TelehealthStewardshipRecord[];
+    existing: TelehealthStewardshipRecord[];
+  }> {
+    const existing = await this.repository.listTelehealthStewardship();
+    if (existing.length > 0) {
+      return {
+        created: [],
+        existing
+      };
+    }
+
+    const [serviceLine, practiceAgreements, delegationRules] = await Promise.all([
+      this.repository.getServiceLine("telehealth"),
+      this.repository.listPracticeAgreements({ ownerRole: "medical_director" }),
+      this.repository.listDelegationRules({ serviceLineId: "telehealth", status: "active" })
+    ]);
+
+    const linkedPracticeAgreement = practiceAgreements.find((agreement) => agreement.serviceLineIds.includes("telehealth"))
+      ?? null;
+    const ownerRole = serviceLine?.ownerRole ?? linkedPracticeAgreement?.ownerRole ?? "medical_director";
+    const supervisingPhysicianRole = linkedPracticeAgreement?.supervisingPhysicianRole ?? "patient_care_team_physician";
+    const delegatedTaskCodes = delegationRules.length > 0
+      ? delegationRules.map((rule) => rule.taskCode)
+      : ["virtual_triage", "refill_review", "asynchronous_follow_up"];
+
+    const created = await this.createTelehealthStewardship(actor, {
+      title: "Telehealth stewardship packet",
+      ownerRole,
+      supervisingPhysicianRole,
+      linkedPracticeAgreementId: linkedPracticeAgreement?.id ?? null,
+      delegatedTaskCodes,
+      modalityScopeSummary: "Cover synchronous visits, asynchronous refill review, secure messaging follow-up, and after-hours escalation boundaries for telehealth care.",
+      stateCoverageSummary: "Maintain a current licensure-and-service-state matrix, route out-of-state requests through approved escalation, and pause scheduling when coverage assumptions change.",
+      patientIdentitySummary: "Verify patient identity, current location, callback number, and emergency contact before clinical decision-making or medication changes.",
+      consentWorkflowSummary: "Capture telehealth consent at intake, reaffirm on material workflow changes, and document interpreter or caregiver participation when present.",
+      documentationStandardSummary: "Document modality, patient location, supervising availability, escalation decision points, and any protocol deviations in every telehealth encounter note.",
+      emergencyRedirectSummary: "Escalate emergent symptoms to local EMS or urgent in-person evaluation immediately, with documented warm handoff and same-day physician notification.",
+      qaReviewSummary: "Review telehealth charts monthly for documentation completeness, consent capture, protocol adherence, and escalation timeliness.",
+      reviewCadenceDays: serviceLine?.reviewCadenceDays ?? linkedPracticeAgreement?.reviewCadenceDays ?? 60,
+      effectiveDate: linkedPracticeAgreement?.effectiveDate ?? null,
+      notes: "Pair this packet with the current telehealth service-line pack, practice agreement, and delegation matrix."
+    });
+
+    return {
+      created: [created.stewardship],
+      existing: []
+    };
+  }
+
+  async updateTelehealthStewardship(actor: ActorContext, stewardshipId: string, input: unknown): Promise<{
+    stewardship: TelehealthStewardshipRecord;
+    document: DocumentRecord | null;
+  }> {
+    const command = telehealthStewardshipUpdateSchema.parse(input);
+    const stewardship = await this.repository.getTelehealthStewardship(stewardshipId);
+    if (!stewardship) {
+      notFound(`Telehealth stewardship packet not found: ${stewardshipId}`);
+    }
+    if (!["draft", "sent_back"].includes(stewardship.status)) {
+      badRequest("Only draft or sent-back telehealth stewardship packets can be edited.");
+    }
+
+    const linkedPracticeAgreement = command.linkedPracticeAgreementId
+      ? await this.repository.getPracticeAgreement(command.linkedPracticeAgreementId)
+      : null;
+    if (command.linkedPracticeAgreementId && !linkedPracticeAgreement) {
+      notFound(`Linked practice agreement not found: ${command.linkedPracticeAgreementId}`);
+    }
+
+    const updated = await this.repository.updateTelehealthStewardship(stewardship.id, {
+      title: command.title ?? stewardship.title,
+      ownerRole: command.ownerRole ?? stewardship.ownerRole,
+      supervisingPhysicianRole: command.supervisingPhysicianRole ?? stewardship.supervisingPhysicianRole,
+      linkedPracticeAgreementId: command.linkedPracticeAgreementId !== undefined
+        ? command.linkedPracticeAgreementId
+        : stewardship.linkedPracticeAgreementId,
+      delegatedTaskCodes: command.delegatedTaskCodes ?? stewardship.delegatedTaskCodes,
+      modalityScopeSummary: command.modalityScopeSummary ?? stewardship.modalityScopeSummary,
+      stateCoverageSummary: command.stateCoverageSummary ?? stewardship.stateCoverageSummary,
+      patientIdentitySummary: command.patientIdentitySummary ?? stewardship.patientIdentitySummary,
+      consentWorkflowSummary: command.consentWorkflowSummary ?? stewardship.consentWorkflowSummary,
+      documentationStandardSummary: command.documentationStandardSummary ?? stewardship.documentationStandardSummary,
+      emergencyRedirectSummary: command.emergencyRedirectSummary ?? stewardship.emergencyRedirectSummary,
+      qaReviewSummary: command.qaReviewSummary ?? stewardship.qaReviewSummary,
+      reviewCadenceDays: command.reviewCadenceDays ?? stewardship.reviewCadenceDays,
+      effectiveDate: command.effectiveDate !== undefined ? command.effectiveDate : stewardship.effectiveDate,
+      notes: command.notes !== undefined ? command.notes : stewardship.notes,
+      status: command.status ?? stewardship.status,
+      updatedAt: new Date().toISOString()
+    });
+
+    let updatedDocument: DocumentRecord | null = null;
+    if (stewardship.documentId) {
+      const draftDocument = await this.repository.getDocument(stewardship.documentId);
+      if (!draftDocument) {
+        notFound(`Telehealth stewardship document not found: ${stewardship.documentId}`);
+      }
+      if (!["draft", "rejected"].includes(draftDocument.status)) {
+        badRequest("Telehealth stewardship draft is already under review or published.");
+      }
+
+      updatedDocument = await this.repository.updateDocument(draftDocument.id, {
+        title: updated.title,
+        ownerRole: updated.ownerRole,
+        summary: "Telehealth stewardship packet covering scope, identity, consent, documentation, QA, and emergency redirects.",
+        body: this.buildTelehealthStewardshipBody(updated),
+        serviceLines: ["telehealth"],
+        status: "draft",
+        updatedAt: updated.updatedAt,
+        version: draftDocument.version + 1
+      });
+    }
+
+    await this.recordAudit(actor, "telehealth_stewardship.updated", "telehealth_stewardship", updated.id, {
+      documentId: stewardship.documentId,
+      linkedPracticeAgreementId: updated.linkedPracticeAgreementId
+    });
+
+    return {
+      stewardship: updated,
+      document: updatedDocument
+    };
+  }
+
+  async submitTelehealthStewardship(actor: ActorContext, stewardshipId: string): Promise<{
+    stewardship: TelehealthStewardshipRecord;
+    document: DocumentRecord;
+    approvals: ApprovalTask[];
+  }> {
+    const stewardship = await this.repository.getTelehealthStewardship(stewardshipId);
+    if (!stewardship) {
+      notFound(`Telehealth stewardship packet not found: ${stewardshipId}`);
+    }
+    if (!stewardship.documentId) {
+      badRequest("Create a telehealth stewardship draft before routing it for approval.");
+    }
+    if (!["draft", "sent_back"].includes(stewardship.status)) {
+      badRequest("Telehealth stewardship packet is not ready for approval routing.");
+    }
+
+    await this.advanceWorkflowIfPossible(
+      actor,
+      stewardship.workflowRunId,
+      ["drafted", "quality_checked", "awaiting_human_review"],
+      "Telehealth stewardship packet routed for human review."
+    );
+
+    const result = await this.submitDocument(actor, stewardship.documentId);
+    const synced = await this.syncTelehealthStewardshipFromDocument(result.document);
+
+    await this.recordAudit(actor, "telehealth_stewardship.submitted", "telehealth_stewardship", stewardship.id, {
+      documentId: stewardship.documentId,
+      approvalCount: result.approvals.length
+    });
+
+    return {
+      stewardship: synced ?? stewardship,
+      document: result.document,
+      approvals: result.approvals
+    };
+  }
+
+  async publishTelehealthStewardship(actor: ActorContext, stewardshipId: string): Promise<{
+    stewardship: TelehealthStewardshipRecord;
+    document: DocumentRecord;
+  }> {
+    const stewardship = await this.repository.getTelehealthStewardship(stewardshipId);
+    if (!stewardship) {
+      notFound(`Telehealth stewardship packet not found: ${stewardshipId}`);
+    }
+    if (!stewardship.documentId) {
+      badRequest("Telehealth stewardship packet is not available for publication.");
+    }
+
+    const document = await this.publishDocument(actor, stewardship.documentId);
+    const synced = await this.syncTelehealthStewardshipFromDocument(document);
+
+    await this.recordAudit(actor, "telehealth_stewardship.publish_requested", "telehealth_stewardship", stewardship.id, {
+      documentId: stewardship.documentId
+    });
+
+    return {
+      stewardship: synced ?? stewardship,
       document
     };
   }
@@ -4334,6 +4625,55 @@ export class ClinicApiService {
     ].filter((line): line is string => line !== null).join("\n");
   }
 
+  private buildTelehealthStewardshipBody(
+    input:
+      | z.infer<typeof telehealthStewardshipCreateSchema>
+      | TelehealthStewardshipRecord
+  ): string {
+    return [
+      `# ${input.title}`,
+      "",
+      "Service line: telehealth",
+      `Owner role: ${input.ownerRole}`,
+      `Supervising physician role: ${input.supervisingPhysicianRole.replaceAll("_", " ")}`,
+      `Linked practice agreement: ${input.linkedPracticeAgreementId ?? "None linked"}`,
+      "",
+      "## Delegated task coverage",
+      ...(input.delegatedTaskCodes.length > 0
+        ? input.delegatedTaskCodes.map((taskCode) => `- ${taskCode}`)
+        : ["- No delegated telehealth tasks are currently linked."]),
+      "",
+      "## Modality scope",
+      input.modalityScopeSummary,
+      "",
+      "## State coverage",
+      input.stateCoverageSummary,
+      "",
+      "## Patient identity and location verification",
+      input.patientIdentitySummary,
+      "",
+      "## Consent workflow",
+      input.consentWorkflowSummary,
+      "",
+      "## Documentation standards",
+      input.documentationStandardSummary,
+      "",
+      "## Emergency redirect workflow",
+      input.emergencyRedirectSummary,
+      "",
+      "## QA review expectations",
+      input.qaReviewSummary,
+      "",
+      "## Review cadence",
+      `Review every ${input.reviewCadenceDays ?? 60} days.`,
+      input.effectiveDate ? "" : null,
+      input.effectiveDate ? `Effective date: ${input.effectiveDate}` : null,
+      input.notes ? "" : null,
+      input.notes ? "## Notes" : null,
+      input.notes ?? null
+    ].filter((line): line is string => line !== null).join("\n");
+  }
+
   private async syncPublicAssetFromDocument(document: DocumentRecord): Promise<PublicAssetRecord | null> {
     const asset = await this.repository.getPublicAssetByDocumentId(document.id);
     if (!asset) {
@@ -4375,6 +4715,28 @@ export class ClinicApiService {
       }),
       effectiveDate: document.publishedAt ?? agreement.effectiveDate,
       reviewDueAt: document.publishedAt ? addDays(document.publishedAt, agreement.reviewCadenceDays) : agreement.reviewDueAt,
+      publishedAt: document.publishedAt,
+      publishedPath: document.publishedPath,
+      updatedAt: now
+    });
+  }
+
+  private async syncTelehealthStewardshipFromDocument(document: DocumentRecord): Promise<TelehealthStewardshipRecord | null> {
+    const stewardship = await this.repository.getTelehealthStewardshipByDocumentId(document.id);
+    if (!stewardship) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    return this.repository.updateTelehealthStewardship(stewardship.id, {
+      title: document.title,
+      ownerRole: document.ownerRole as TelehealthStewardshipRecord["ownerRole"],
+      status: deriveTelehealthStewardshipStatus({
+        documentStatus: document.status,
+        currentStatus: stewardship.status
+      }),
+      effectiveDate: document.publishedAt ?? stewardship.effectiveDate,
+      reviewDueAt: document.publishedAt ? addDays(document.publishedAt, stewardship.reviewCadenceDays) : stewardship.reviewDueAt,
       publishedAt: document.publishedAt,
       publishedPath: document.publishedPath,
       updatedAt: now

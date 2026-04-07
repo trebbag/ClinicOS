@@ -25,6 +25,7 @@ The repository now has a working pilot backbone for:
 - first-class service-line registry and governance packs with default bootstrap, pack drafting, approval routing, controlled publication, and publish-sync back into service-line review status
 - first-class delegation-matrix rules with service-line/task-role matching, deterministic allowed/not-allowed evaluation, bootstrap defaults, API management, and a dedicated governance UI
 - first-class physician-oversight / practice-agreement records with default bootstrap, controlled clinical-governance review, publication sync, and a dedicated oversight UI
+- first-class telehealth stewardship packets tied to telehealth service-line governance, practice-agreement linkage, delegation coverage, controlled clinical-governance review, publication sync, and a dedicated telehealth UI
 - device-bound profile auth with enrollment codes, trusted device/session cookies, pilot-ops profile/device management, and a simple login flow
 - same-origin deployment plumbing for a public web origin that proxies browser API requests through `/clinic-api/*`
 - Render-first blueprint, startup/readiness validation, and a deploy smoke script for stub-mode pilots
@@ -58,4 +59,5 @@ Operational note from the latest live validation:
 - the deployed Render Microsoft validation is green again for the scoped pilot surfaces
 - synthetic office-manager, quality-lead, and HR-lead device flows succeeded
 - the redeployed delegation slice was smoke-tested live through bootstrap, evaluation, retirement, and blocked re-evaluation
-- the deployed worker is healthy, though steady-state queue behavior should still be watched during broader pilot usage
+- a live practice-agreement smoke run reached `publish_pending` and then sat queued until a one-off local worker batch against the same live DB drained it successfully
+- that means the document publish logic is healthy, but the deployed worker's steady-state queue leasing still deserves monitoring during broader pilot usage

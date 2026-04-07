@@ -30,6 +30,10 @@ import {
   practiceAgreementUpdateSchema
 } from "./practiceAgreement";
 import {
+  telehealthStewardshipCreateSchema,
+  telehealthStewardshipUpdateSchema
+} from "./telehealthStewardship";
+import {
   serviceLineCreateSchema,
   serviceLinePackCreateSchema,
   serviceLineUpdateSchema
@@ -141,6 +145,8 @@ export {
   claimsReviewDecisionCommandSchema,
   practiceAgreementCreateSchema,
   practiceAgreementUpdateSchema,
+  telehealthStewardshipCreateSchema,
+  telehealthStewardshipUpdateSchema,
   serviceLineCreateSchema,
   serviceLineUpdateSchema,
   serviceLinePackCreateSchema,

@@ -757,6 +757,18 @@ export class WorkerJobRunner {
       });
     }
 
+    const linkedTelehealthStewardship = await this.repository.getTelehealthStewardshipByDocumentId(document.id);
+    if (linkedTelehealthStewardship) {
+      await this.repository.updateTelehealthStewardship(linkedTelehealthStewardship.id, {
+        status: "published",
+        effectiveDate: linkedTelehealthStewardship.effectiveDate ?? now,
+        reviewDueAt: addDays(now, linkedTelehealthStewardship.reviewCadenceDays),
+        publishedAt: now,
+        publishedPath: publishResult.path,
+        updatedAt: now
+      });
+    }
+
     await this.recordAudit(payload.actor, "artifact.published", "document", document.id, {
       publishedPath: publishResult.path,
       externalId: publishResult.externalId,

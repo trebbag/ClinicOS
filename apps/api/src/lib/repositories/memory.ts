@@ -22,6 +22,7 @@ import type {
   ScorecardReviewRecord,
   ServiceLinePackRecord,
   ServiceLineRecord,
+  TelehealthStewardshipRecord,
   TrainingCompletionRecord,
   TrainingRequirement,
   UserProfile,
@@ -46,6 +47,7 @@ export class MemoryClinicRepository implements ClinicRepository {
   public readonly capas: CapaRecord[] = [];
   public readonly publicAssets: PublicAssetRecord[] = [];
   public readonly practiceAgreements: PracticeAgreementRecord[] = [];
+  public readonly telehealthStewardshipRecords: TelehealthStewardshipRecord[] = [];
   public readonly committees: CommitteeRecord[] = [];
   public readonly committeeMeetings: CommitteeMeetingRecord[] = [];
   public readonly serviceLines: ServiceLineRecord[] = [];
@@ -252,6 +254,33 @@ export class MemoryClinicRepository implements ClinicRepository {
     agreementType?: string;
   }): Promise<PracticeAgreementRecord[]> {
     return this.practiceAgreements.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createTelehealthStewardship(record: TelehealthStewardshipRecord): Promise<TelehealthStewardshipRecord> {
+    this.telehealthStewardshipRecords.unshift(record);
+    return record;
+  }
+
+  async updateTelehealthStewardship(id: string, patch: Partial<TelehealthStewardshipRecord>): Promise<TelehealthStewardshipRecord> {
+    const index = this.telehealthStewardshipRecords.findIndex((record) => record.id === id);
+    this.telehealthStewardshipRecords[index] = { ...this.telehealthStewardshipRecords[index], ...patch };
+    return this.telehealthStewardshipRecords[index];
+  }
+
+  async getTelehealthStewardship(id: string): Promise<TelehealthStewardshipRecord | null> {
+    return this.telehealthStewardshipRecords.find((record) => record.id === id) ?? null;
+  }
+
+  async getTelehealthStewardshipByDocumentId(documentId: string): Promise<TelehealthStewardshipRecord | null> {
+    return this.telehealthStewardshipRecords.find((record) => record.documentId === documentId) ?? null;
+  }
+
+  async listTelehealthStewardship(filters?: {
+    status?: string;
+    ownerRole?: string;
+    supervisingPhysicianRole?: string;
+  }): Promise<TelehealthStewardshipRecord[]> {
+    return this.telehealthStewardshipRecords.filter((record) => matchesFilters(record, filters));
   }
 
   async createCommittee(record: CommitteeRecord): Promise<CommitteeRecord> {

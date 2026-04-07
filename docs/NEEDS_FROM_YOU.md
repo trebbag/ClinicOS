@@ -48,6 +48,11 @@ Using the current local `.env` and repo code:
   - deterministic allowed/not-allowed evaluation
   - default bootstrap templates for high-risk service lines
   - dedicated delegation management UI and API routes
+- the telehealth-stewardship slice is now implemented in the repo
+  - telehealth stewardship packet registry and default bootstrap
+  - linkage to the telehealth practice agreement and delegated task coverage
+  - explicit clinical-governance approval routing and controlled publication
+  - publish-sync back into the telehealth stewardship record and a dedicated UI
 
 That means the remaining pilot blockers are now mostly broader pilot validation, Render deployment consistency, and operations hardening.
 
@@ -129,7 +134,7 @@ The deployed Render stack is now healthy and pilot-usable, but there is still on
    - up to two backup profiles if needed
    - named office manager / quality lead / HR lead profiles when you want them added
 
-3. Redeploy the latest web, API, and worker services when you want the new practice-agreement slice available in Render
+3. Redeploy the latest web, API, and worker services when you want the new telehealth-stewardship slice available in Render
    - no new secrets or Microsoft tenant setup are required for the repo-side implementation
    - the external Postgres schema has already been updated locally from this machine
    - if you later want additional Microsoft-backed governance registers beyond the current pilot surfaces, we can add those as separate follow-up integrations
@@ -143,6 +148,6 @@ Postgres is still required even though Microsoft is now ready, because Clinic OS
 
 ## The next command I am waiting to run
 
-The next step is no longer physician-oversight implementation. The next major engineering step after the new practice-agreement slice is:
+The next major engineering step after the new telehealth-stewardship slice is:
 
-- deeper clinic-specific governance modules such as controlled-substance stewardship, telehealth stewardship details, or standards/evidence-binder tooling
+- deeper clinic-specific governance modules such as controlled-substance stewardship or standards/evidence-binder tooling

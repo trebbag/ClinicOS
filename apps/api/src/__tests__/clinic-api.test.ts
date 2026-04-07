@@ -2109,4 +2109,108 @@ describe("Clinic API", () => {
     expect(published?.status).toBe("published");
     expect(published?.publishedPath).toContain(submitted.document.id);
   });
+
+  it("bootstraps telehealth stewardship, routes it through approval, and publishes it", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/service-lines/bootstrap-defaults",
+      headers: headers("medical_director")
+    });
+    await app.inject({
+      method: "POST",
+      url: "/practice-agreements/bootstrap-defaults",
+      headers: headers("medical_director")
+    });
+    await app.inject({
+      method: "POST",
+      url: "/delegation-rules/bootstrap-defaults",
+      headers: headers("medical_director")
+    });
+
+    const bootstrapResponse = await app.inject({
+      method: "POST",
+      url: "/telehealth-stewardship/bootstrap-defaults",
+      headers: headers("medical_director")
+    });
+    expect(bootstrapResponse.statusCode).toBe(200);
+    const bootstrap = bootstrapResponse.json<{ created: Array<{ id: string; title: string }>; existing: Array<{ id: string; title: string }> }>();
+    expect(bootstrap.created.length + bootstrap.existing.length).toBeGreaterThan(0);
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/telehealth-stewardship",
+      headers: headers("patient_care_team_physician")
+    });
+    expect(listResponse.statusCode).toBe(200);
+    const stewardship = listResponse
+      .json<Array<{ id: string; title: string; status: string; documentId: string | null; delegatedTaskCodes: string[] }>>()
+      .find((record) => record.title === "Telehealth stewardship packet");
+    expect(stewardship).toBeTruthy();
+    expect(stewardship?.status).toBe("draft");
+    expect(stewardship?.delegatedTaskCodes.length).toBeGreaterThan(0);
+
+    const updateResponse = await app.inject({
+      method: "PATCH",
+      url: `/telehealth-stewardship/${stewardship!.id}`,
+      headers: headers("medical_director"),
+      payload: {
+        qaReviewSummary: "Updated during telehealth API test.",
+        notes: "Telehealth test notes."
+      }
+    });
+    expect(updateResponse.statusCode).toBe(200);
+    expect(updateResponse.json<{ stewardship: { qaReviewSummary: string } }>().stewardship.qaReviewSummary).toBe("Updated during telehealth API test.");
+
+    const submitResponse = await app.inject({
+      method: "POST",
+      url: `/telehealth-stewardship/${stewardship!.id}/submit`,
+      headers: headers("medical_director")
+    });
+    expect(submitResponse.statusCode).toBe(200);
+    const submitted = submitResponse.json<{
+      stewardship: { status: string };
+      document: { id: string; status: string };
+      approvals: Array<{ id: string; reviewerRole: string }>;
+    }>();
+    expect(submitted.stewardship.status).toBe("approval_pending");
+    expect(submitted.document.status).toBe("in_review");
+    expect(submitted.approvals.map((approval) => approval.reviewerRole).sort()).toEqual([
+      "medical_director",
+      "patient_care_team_physician"
+    ]);
+
+    for (const approval of submitted.approvals) {
+      const decision = await app.inject({
+        method: "POST",
+        url: `/approvals/${approval.id}/decide`,
+        headers: headers(approval.reviewerRole as Parameters<typeof headers>[0]),
+        payload: { decision: "approved" }
+      });
+      expect(decision.statusCode).toBe(200);
+    }
+
+    const publishResponse = await app.inject({
+      method: "POST",
+      url: `/telehealth-stewardship/${stewardship!.id}/publish`,
+      headers: headers("medical_director")
+    });
+    expect(publishResponse.statusCode).toBe(200);
+    expect(publishResponse.json<{ stewardship: { status: string } }>().stewardship.status).toBe("publish_pending");
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const summary = await runner.runOnce();
+    expect(summary.succeeded).toBeGreaterThanOrEqual(1);
+
+    const publishedResponse = await app.inject({
+      method: "GET",
+      url: "/telehealth-stewardship",
+      headers: headers("medical_director")
+    });
+    expect(publishedResponse.statusCode).toBe(200);
+    const published = publishedResponse
+      .json<Array<{ id: string; status: string; publishedPath: string | null }>>()
+      .find((record) => record.id === stewardship!.id);
+    expect(published?.status).toBe("published");
+    expect(published?.publishedPath).toContain(submitted.document.id);
+  });
 });

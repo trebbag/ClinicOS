@@ -22,6 +22,7 @@ import type {
   ScorecardReviewRecord,
   ServiceLinePackRecord,
   ServiceLineRecord,
+  TelehealthStewardshipRecord,
   TrainingCompletionRecord,
   TrainingRequirement,
   UserProfile,
@@ -52,6 +53,7 @@ import {
   scorecardReviewRecordSchema,
   serviceLinePackRecordSchema,
   serviceLineRecordSchema,
+  telehealthStewardshipRecordSchema,
   trainingCompletionRecordSchema,
   trainingRequirementSchema,
   userProfileSchema,
@@ -152,6 +154,34 @@ type DelegationRuleRow = {
   createdAt: Date;
   updatedAt: Date;
 };
+type TelehealthStewardshipRow = {
+  id: string;
+  serviceLineId: string;
+  title: string;
+  ownerRole: string;
+  supervisingPhysicianRole: string;
+  status: string;
+  linkedPracticeAgreementId: string | null;
+  delegatedTaskCodesJson: Prisma.JsonValue;
+  modalityScopeSummary: string;
+  stateCoverageSummary: string;
+  patientIdentitySummary: string;
+  consentWorkflowSummary: string;
+  documentationStandardSummary: string;
+  emergencyRedirectSummary: string;
+  qaReviewSummary: string;
+  reviewCadenceDays: number;
+  effectiveDate: Date | null;
+  reviewDueAt: Date | null;
+  notes: string | null;
+  documentId: string | null;
+  workflowRunId: string | null;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+  publishedAt: Date | null;
+  publishedPath: string | null;
+};
 
 export type ClinicRepository = {
   createWorkflowRun(run: WorkflowRun): Promise<WorkflowRun>;
@@ -247,6 +277,15 @@ export type ClinicRepository = {
     supervisedRole?: string;
     agreementType?: string;
   }): Promise<PracticeAgreementRecord[]>;
+  createTelehealthStewardship(record: TelehealthStewardshipRecord): Promise<TelehealthStewardshipRecord>;
+  updateTelehealthStewardship(id: string, patch: Partial<TelehealthStewardshipRecord>): Promise<TelehealthStewardshipRecord>;
+  getTelehealthStewardship(id: string): Promise<TelehealthStewardshipRecord | null>;
+  getTelehealthStewardshipByDocumentId(documentId: string): Promise<TelehealthStewardshipRecord | null>;
+  listTelehealthStewardship(filters?: {
+    status?: string;
+    ownerRole?: string;
+    supervisingPhysicianRole?: string;
+  }): Promise<TelehealthStewardshipRecord[]>;
   createDelegationRule(record: DelegationRuleRecord): Promise<DelegationRuleRecord>;
   updateDelegationRule(id: string, patch: Partial<DelegationRuleRecord>): Promise<DelegationRuleRecord>;
   getDelegationRule(id: string): Promise<DelegationRuleRecord | null>;
@@ -393,6 +432,10 @@ export class PrismaClinicRepository implements ClinicRepository {
 
   private get practiceAgreementClient(): UntypedPrismaDelegate {
     return (this.client as unknown as { practiceAgreement: UntypedPrismaDelegate }).practiceAgreement;
+  }
+
+  private get telehealthStewardshipClient(): UntypedPrismaDelegate {
+    return (this.client as unknown as { telehealthStewardship: UntypedPrismaDelegate }).telehealthStewardship;
   }
 
   private get delegationRuleClient(): UntypedPrismaDelegate {
@@ -749,6 +792,23 @@ export class PrismaClinicRepository implements ClinicRepository {
       notes: record.notes ?? null,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString()
+    });
+  }
+
+  private mapTelehealthStewardshipRecord(record: TelehealthStewardshipRow): TelehealthStewardshipRecord {
+    return telehealthStewardshipRecordSchema.parse({
+      ...record,
+      linkedPracticeAgreementId: record.linkedPracticeAgreementId ?? null,
+      delegatedTaskCodes: record.delegatedTaskCodesJson,
+      effectiveDate: record.effectiveDate?.toISOString() ?? null,
+      reviewDueAt: record.reviewDueAt?.toISOString() ?? null,
+      notes: record.notes ?? null,
+      documentId: record.documentId ?? null,
+      workflowRunId: record.workflowRunId ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+      publishedAt: record.publishedAt?.toISOString() ?? null,
+      publishedPath: record.publishedPath ?? null
     });
   }
 
@@ -1847,6 +1907,99 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
 
     return (records as PracticeAgreementRow[]).map((record) => this.mapPracticeAgreementRecord(record));
+  }
+
+  async createTelehealthStewardship(record: TelehealthStewardshipRecord): Promise<TelehealthStewardshipRecord> {
+    const created = await this.telehealthStewardshipClient.create({
+      data: {
+        id: record.id,
+        serviceLineId: record.serviceLineId,
+        title: record.title,
+        ownerRole: record.ownerRole,
+        supervisingPhysicianRole: record.supervisingPhysicianRole,
+        status: record.status,
+        linkedPracticeAgreementId: record.linkedPracticeAgreementId,
+        delegatedTaskCodesJson: asJsonValue(record.delegatedTaskCodes),
+        modalityScopeSummary: record.modalityScopeSummary,
+        stateCoverageSummary: record.stateCoverageSummary,
+        patientIdentitySummary: record.patientIdentitySummary,
+        consentWorkflowSummary: record.consentWorkflowSummary,
+        documentationStandardSummary: record.documentationStandardSummary,
+        emergencyRedirectSummary: record.emergencyRedirectSummary,
+        qaReviewSummary: record.qaReviewSummary,
+        reviewCadenceDays: record.reviewCadenceDays,
+        effectiveDate: isoToDate(record.effectiveDate),
+        reviewDueAt: isoToDate(record.reviewDueAt),
+        notes: record.notes,
+        documentId: record.documentId,
+        workflowRunId: record.workflowRunId,
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt),
+        publishedAt: isoToDate(record.publishedAt),
+        publishedPath: record.publishedPath
+      }
+    });
+
+    return this.mapTelehealthStewardshipRecord(created as TelehealthStewardshipRow);
+  }
+
+  async updateTelehealthStewardship(id: string, patch: Partial<TelehealthStewardshipRecord>): Promise<TelehealthStewardshipRecord> {
+    const updated = await this.telehealthStewardshipClient.update({
+      where: { id },
+      data: {
+        serviceLineId: patch.serviceLineId,
+        title: patch.title,
+        ownerRole: patch.ownerRole,
+        supervisingPhysicianRole: patch.supervisingPhysicianRole,
+        status: patch.status,
+        linkedPracticeAgreementId: patch.linkedPracticeAgreementId,
+        delegatedTaskCodesJson: patch.delegatedTaskCodes ? asJsonValue(patch.delegatedTaskCodes) : undefined,
+        modalityScopeSummary: patch.modalityScopeSummary,
+        stateCoverageSummary: patch.stateCoverageSummary,
+        patientIdentitySummary: patch.patientIdentitySummary,
+        consentWorkflowSummary: patch.consentWorkflowSummary,
+        documentationStandardSummary: patch.documentationStandardSummary,
+        emergencyRedirectSummary: patch.emergencyRedirectSummary,
+        qaReviewSummary: patch.qaReviewSummary,
+        reviewCadenceDays: patch.reviewCadenceDays,
+        effectiveDate: isoToDate(patch.effectiveDate),
+        reviewDueAt: isoToDate(patch.reviewDueAt),
+        notes: patch.notes,
+        documentId: patch.documentId,
+        workflowRunId: patch.workflowRunId,
+        createdBy: patch.createdBy,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt),
+        publishedAt: isoToDate(patch.publishedAt),
+        publishedPath: patch.publishedPath
+      }
+    });
+
+    return this.mapTelehealthStewardshipRecord(updated as TelehealthStewardshipRow);
+  }
+
+  async getTelehealthStewardship(id: string): Promise<TelehealthStewardshipRecord | null> {
+    const record = await this.telehealthStewardshipClient.findUnique({ where: { id } });
+    return record ? this.mapTelehealthStewardshipRecord(record as TelehealthStewardshipRow) : null;
+  }
+
+  async getTelehealthStewardshipByDocumentId(documentId: string): Promise<TelehealthStewardshipRecord | null> {
+    const record = await this.telehealthStewardshipClient.findFirst?.({ where: { documentId } });
+    return record ? this.mapTelehealthStewardshipRecord(record as TelehealthStewardshipRow) : null;
+  }
+
+  async listTelehealthStewardship(filters?: {
+    status?: string;
+    ownerRole?: string;
+    supervisingPhysicianRole?: string;
+  }): Promise<TelehealthStewardshipRecord[]> {
+    const records = await this.telehealthStewardshipClient.findMany({
+      where: mapListFilters(filters),
+      orderBy: { createdAt: "desc" }
+    });
+
+    return (records as TelehealthStewardshipRow[]).map((record) => this.mapTelehealthStewardshipRecord(record));
   }
 
   async createDelegationRule(record: DelegationRuleRecord): Promise<DelegationRuleRecord> {

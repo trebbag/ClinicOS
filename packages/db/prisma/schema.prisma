@@ -257,6 +257,39 @@ model PracticeAgreement {
   @@index([supervisingPhysicianRole, status])
 }
 
+model TelehealthStewardship {
+  id                           String   @id
+  serviceLineId                String
+  title                        String
+  ownerRole                    String
+  supervisingPhysicianRole     String
+  status                       String
+  linkedPracticeAgreementId    String?
+  delegatedTaskCodesJson       Json
+  modalityScopeSummary         String
+  stateCoverageSummary         String
+  patientIdentitySummary       String
+  consentWorkflowSummary       String
+  documentationStandardSummary String
+  emergencyRedirectSummary     String
+  qaReviewSummary              String
+  reviewCadenceDays            Int
+  effectiveDate                DateTime?
+  reviewDueAt                  DateTime?
+  notes                        String?
+  documentId                   String?  @unique
+  workflowRunId                String?  @unique
+  createdBy                    String
+  createdAt                    DateTime
+  updatedAt                    DateTime
+  publishedAt                  DateTime?
+  publishedPath                String?
+
+  @@index([serviceLineId, status])
+  @@index([ownerRole, status])
+  @@index([linkedPracticeAgreementId])
+}
+
 model DelegationRule {
   id                         String   @id
   serviceLineId              String

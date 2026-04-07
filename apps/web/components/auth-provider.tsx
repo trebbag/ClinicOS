@@ -37,6 +37,8 @@ export type AppCapability =
   | "service_lines.manage"
   | "practice_agreements.view"
   | "practice_agreements.manage"
+  | "telehealth.view"
+  | "telehealth.manage"
   | "delegation.view"
   | "delegation.manage"
   | "public_assets.view"
@@ -126,7 +128,7 @@ export const devProfiles: ActorIdentity[] = [
 ];
 
 type NavigationLink = {
-  href: "/" | "/medical-director" | "/office-manager" | "/pilot-ops" | "/quality" | "/committees" | "/service-lines" | "/practice-agreements" | "/delegation" | "/scorecards" | "/public-assets";
+  href: "/" | "/medical-director" | "/office-manager" | "/pilot-ops" | "/quality" | "/committees" | "/service-lines" | "/practice-agreements" | "/telehealth" | "/delegation" | "/scorecards" | "/public-assets";
   label: string;
   allowedRoles: ActorRole[];
   requiredCapability?: AppCapability;
@@ -176,6 +178,12 @@ export const navigationLinks: NavigationLink[] = [
     label: "Practice Agreements",
     allowedRoles: ["medical_director", "quality_lead", "patient_care_team_physician", "hr_lead"] as ActorRole[],
     requiredCapability: "practice_agreements.view" as const
+  },
+  {
+    href: "/telehealth" as const,
+    label: "Telehealth",
+    allowedRoles: ["medical_director", "quality_lead", "patient_care_team_physician"] as ActorRole[],
+    requiredCapability: "telehealth.view" as const
   },
   {
     href: "/delegation" as const,

@@ -11,6 +11,7 @@ import {
   createServiceLinePackRecord,
   createServiceLineRecord,
   createScorecardReviewRecord,
+  createTelehealthStewardshipRecord,
   createTrainingRequirement,
   createWorkerJob
 } from "@clinic-os/domain";
@@ -593,6 +594,69 @@ describe("WorkerJobRunner", () => {
     expect(await repository.getPracticeAgreement(practiceAgreement.id)).toMatchObject({
       status: "published",
       publishedPath: expect.stringContaining("doc_practice_agreement")
+    });
+  });
+
+  it("keeps linked telehealth stewardship packets in sync when publication completes", async () => {
+    const repository = new MemoryClinicRepository();
+    await repository.createDocument({
+      id: "doc_telehealth_stewardship",
+      title: "Telehealth stewardship packet",
+      ownerRole: "medical_director",
+      approvalClass: "clinical_governance",
+      artifactType: "telehealth_stewardship_packet",
+      summary: "Approved telehealth stewardship packet",
+      workflowRunId: "workflow_telehealth_stewardship",
+      serviceLines: ["telehealth"],
+      createdBy: "medical-director",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: "approved",
+      body: "# Telehealth stewardship",
+      version: 1,
+      publishedAt: null,
+      publishedPath: null,
+      reviewDueAt: null
+    });
+    const stewardship = createTelehealthStewardshipRecord({
+      title: "Telehealth stewardship packet",
+      ownerRole: "medical_director",
+      supervisingPhysicianRole: "patient_care_team_physician",
+      linkedPracticeAgreementId: "practice_agreement_telehealth",
+      delegatedTaskCodes: ["virtual_triage", "refill_review"],
+      modalityScopeSummary: "Synchronous and asynchronous telehealth follow-up scope.",
+      stateCoverageSummary: "State coverage and licensure verification summary.",
+      patientIdentitySummary: "Verify patient identity and location before treatment decisions.",
+      consentWorkflowSummary: "Capture and reaffirm telehealth consent.",
+      documentationStandardSummary: "Document modality, location, and escalation decisions.",
+      emergencyRedirectSummary: "Redirect emergent symptoms to local in-person care.",
+      qaReviewSummary: "Monthly chart review and protocol audit expectations.",
+      createdBy: "medical-director",
+      documentId: "doc_telehealth_stewardship",
+      workflowRunId: "workflow_telehealth_stewardship"
+    });
+    await repository.createTelehealthStewardship(stewardship);
+    await repository.enqueueWorkerJob(createWorkerJob({
+      type: "document.publish",
+      payload: {
+        actor: {
+          actorId: "medical-director",
+          role: "medical_director",
+          name: "Medical Director"
+        },
+        documentId: "doc_telehealth_stewardship"
+      },
+      sourceEntityType: "document",
+      sourceEntityId: "doc_telehealth_stewardship"
+    }));
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const summary = await runner.runOnce();
+
+    expect(summary.succeeded).toBeGreaterThanOrEqual(1);
+    expect(await repository.getTelehealthStewardship(stewardship.id)).toMatchObject({
+      status: "published",
+      publishedPath: expect.stringContaining("doc_telehealth_stewardship")
     });
   });
 });
