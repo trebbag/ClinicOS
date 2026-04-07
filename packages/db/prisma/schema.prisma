@@ -225,6 +225,30 @@ model ServiceLinePack {
   @@index([serviceLineId, status])
 }
 
+model DelegationRule {
+  id                         String   @id
+  serviceLineId              String
+  taskCode                   String
+  taskLabel                  String
+  performerRole              String
+  supervisingRole            String?
+  status                     String
+  supervisionLevel           String
+  requiresCompetencyEvidence Boolean
+  requiresDocumentedOrder    Boolean
+  requiresCosign             Boolean
+  patientFacing              Boolean
+  evidenceRequired           String
+  notes                      String?
+  createdBy                  String
+  createdAt                  DateTime
+  updatedAt                  DateTime
+
+  @@unique([serviceLineId, taskCode, performerRole])
+  @@index([serviceLineId, status])
+  @@index([performerRole, status])
+}
+
 model AuditEvent {
   id         String   @id
   eventType  String

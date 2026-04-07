@@ -8,6 +8,7 @@ import type {
   ChecklistTemplate,
   CommitteeMeetingRecord,
   CommitteeRecord,
+  DelegationRuleRecord,
   DeviceAllowedProfile,
   DeviceEnrollmentCode,
   DeviceSession,
@@ -47,6 +48,7 @@ export class MemoryClinicRepository implements ClinicRepository {
   public readonly committeeMeetings: CommitteeMeetingRecord[] = [];
   public readonly serviceLines: ServiceLineRecord[] = [];
   public readonly serviceLinePacks: ServiceLinePackRecord[] = [];
+  public readonly delegationRules: DelegationRuleRecord[] = [];
   public readonly checklistTemplates: ChecklistTemplate[] = [];
   public readonly checklistRuns: ChecklistRun[] = [];
   public readonly checklistItems: ChecklistItemRecord[] = [];
@@ -322,6 +324,30 @@ export class MemoryClinicRepository implements ClinicRepository {
     status?: string;
   }): Promise<ServiceLinePackRecord[]> {
     return this.serviceLinePacks.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createDelegationRule(record: DelegationRuleRecord): Promise<DelegationRuleRecord> {
+    this.delegationRules.unshift(record);
+    return record;
+  }
+
+  async updateDelegationRule(id: string, patch: Partial<DelegationRuleRecord>): Promise<DelegationRuleRecord> {
+    const index = this.delegationRules.findIndex((record) => record.id === id);
+    this.delegationRules[index] = { ...this.delegationRules[index], ...patch };
+    return this.delegationRules[index];
+  }
+
+  async getDelegationRule(id: string): Promise<DelegationRuleRecord | null> {
+    return this.delegationRules.find((record) => record.id === id) ?? null;
+  }
+
+  async listDelegationRules(filters?: {
+    serviceLineId?: string;
+    performerRole?: string;
+    status?: string;
+    taskCode?: string;
+  }): Promise<DelegationRuleRecord[]> {
+    return this.delegationRules.filter((record) => matchesFilters(record, filters));
   }
 
   async createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate> {

@@ -21,6 +21,7 @@ import {
   createChecklistItemRecord,
   createChecklistRun,
   createChecklistTemplate,
+  createDelegationRuleRecord,
   createIncidentRecord,
   createMicrosoftIntegrationValidationRecord,
   createPublicAssetRecord,
@@ -35,7 +36,11 @@ import {
   createServiceLinePackRecord,
   createServiceLineRecord,
   deidentifiedOperationalRowSchema,
+  delegationEvaluationQuerySchema,
+  delegationRuleCreateSchema,
+  delegationRuleUpdateSchema,
   documentMetadataSchema,
+  evaluateDelegationRule,
   incidentCreateSchema,
   incidentReviewDecisionCommandSchema,
   incidentUpdateSchema,
@@ -62,6 +67,8 @@ import {
   type AuditEvent,
   type CapaRecord,
   type CapaStatus,
+  type DelegationEvaluationResult,
+  type DelegationRuleRecord,
   type AuthMode,
   type ChecklistItemRecord,
   type ChecklistRun,
@@ -300,6 +307,121 @@ const defaultOfficeOpsChecklistItems = [
     label: "Staffing and huddle checklist",
     areaLabel: "Huddle",
     required: true
+  }
+] as const;
+
+const defaultDelegationRuleTemplates = [
+  {
+    serviceLineId: "weight_management" as const,
+    taskCode: "weigh_in_and_screen",
+    taskLabel: "Weigh-in, vitals capture, and scripted intake screening",
+    performerRole: "medical_assistant" as const,
+    supervisingRole: "nurse_practitioner" as const,
+    supervisionLevel: "protocol" as const,
+    requiresCompetencyEvidence: true,
+    requiresDocumentedOrder: false,
+    requiresCosign: false,
+    patientFacing: true,
+    evidenceRequired: "Current intake and vital-sign competency checklist plus the service-line onboarding attestation.",
+    notes: "Draft clinic template only; confirm state delegation rules before live use."
+  },
+  {
+    serviceLineId: "weight_management" as const,
+    taskCode: "initiate_medication_protocol",
+    taskLabel: "Initiate or adjust protocol-based weight-management medication plan",
+    performerRole: "nurse_practitioner" as const,
+    supervisingRole: "patient_care_team_physician" as const,
+    supervisionLevel: "cosign" as const,
+    requiresCompetencyEvidence: true,
+    requiresDocumentedOrder: true,
+    requiresCosign: true,
+    patientFacing: true,
+    evidenceRequired: "Prescribing competency, protocol sign-off, and supervising physician review requirements.",
+    notes: "Keep tied to the active practice agreement and approved medication protocol."
+  },
+  {
+    serviceLineId: "hrt" as const,
+    taskCode: "injection_visit_support",
+    taskLabel: "Support scheduled HRT injection visit under approved protocol",
+    performerRole: "medical_assistant" as const,
+    supervisingRole: "nurse_practitioner" as const,
+    supervisionLevel: "protocol" as const,
+    requiresCompetencyEvidence: true,
+    requiresDocumentedOrder: true,
+    requiresCosign: false,
+    patientFacing: true,
+    evidenceRequired: "Current injection competency validation and standing-order acknowledgement.",
+    notes: "Verify route, medication, and standing-order requirements against the current service-line SOP."
+  },
+  {
+    serviceLineId: "vaccines" as const,
+    taskCode: "administer_vaccine",
+    taskLabel: "Administer vaccine under approved standing order",
+    performerRole: "medical_assistant" as const,
+    supervisingRole: "nurse_practitioner" as const,
+    supervisionLevel: "protocol" as const,
+    requiresCompetencyEvidence: true,
+    requiresDocumentedOrder: true,
+    requiresCosign: false,
+    patientFacing: true,
+    evidenceRequired: "Current vaccine competency validation, emergency-response drill completion, and standing-order acknowledgment.",
+    notes: "Use only with active standing orders and current vaccine storage/readiness controls."
+  },
+  {
+    serviceLineId: "waived_testing" as const,
+    taskCode: "perform_waived_test",
+    taskLabel: "Perform approved waived test and document result in the approved workflow",
+    performerRole: "medical_assistant" as const,
+    supervisingRole: "nurse_practitioner" as const,
+    supervisionLevel: "protocol" as const,
+    requiresCompetencyEvidence: true,
+    requiresDocumentedOrder: true,
+    requiresCosign: false,
+    patientFacing: true,
+    evidenceRequired: "Current waived-testing competency evidence and signed acknowledgement of the quality-control procedure.",
+    notes: "Retain QC evidence and escalation instructions with the service-line materials."
+  },
+  {
+    serviceLineId: "iv_hydration" as const,
+    taskCode: "start_iv_infusion",
+    taskLabel: "Start IV hydration infusion after clinician assessment and order",
+    performerRole: "nurse_practitioner" as const,
+    supervisingRole: "medical_director" as const,
+    supervisionLevel: "direct" as const,
+    requiresCompetencyEvidence: true,
+    requiresDocumentedOrder: true,
+    requiresCosign: false,
+    patientFacing: true,
+    evidenceRequired: "Current IV competency sign-off, emergency escalation drill, and documented order for the specific visit.",
+    notes: "Escalate any abnormal presentation or adverse symptom immediately."
+  },
+  {
+    serviceLineId: "aesthetics" as const,
+    taskCode: "cosmetic_injection",
+    taskLabel: "Perform cosmetic injection visit under approved privilege set",
+    performerRole: "nurse_practitioner" as const,
+    supervisingRole: "patient_care_team_physician" as const,
+    supervisionLevel: "cosign" as const,
+    requiresCompetencyEvidence: true,
+    requiresDocumentedOrder: true,
+    requiresCosign: true,
+    patientFacing: true,
+    evidenceRequired: "Documented privilege approval, product-specific competency sign-off, and physician review expectations.",
+    notes: "Tie scope to the current privilege grid and adverse-event escalation workflow."
+  },
+  {
+    serviceLineId: "aesthetics" as const,
+    taskCode: "cosmetic_injection",
+    taskLabel: "Perform cosmetic injection visit under approved privilege set",
+    performerRole: "medical_assistant" as const,
+    supervisingRole: "medical_director" as const,
+    supervisionLevel: "not_allowed" as const,
+    requiresCompetencyEvidence: true,
+    requiresDocumentedOrder: true,
+    requiresCosign: true,
+    patientFacing: true,
+    evidenceRequired: "Task reserved for licensed clinicians with approved privileges; do not delegate to MA role.",
+    notes: "Use this explicit block rule so schedule-builders and review packets show the restriction clearly."
   }
 ] as const;
 
@@ -1791,6 +1913,108 @@ export class ClinicApiService {
       serviceLine: updatedServiceLine,
       pack: syncedPack ?? pack
     };
+  }
+
+  async listDelegationRules(filters?: {
+    serviceLineId?: string;
+    performerRole?: string;
+    status?: string;
+    taskCode?: string;
+  }): Promise<DelegationRuleRecord[]> {
+    return this.repository.listDelegationRules(filters);
+  }
+
+  async createDelegationRule(actor: ActorContext, input: unknown): Promise<DelegationRuleRecord> {
+    const command = delegationRuleCreateSchema.parse(input);
+    const existing = await this.repository.listDelegationRules({
+      serviceLineId: command.serviceLineId,
+      performerRole: command.performerRole,
+      taskCode: command.taskCode
+    });
+    if (existing.some((rule) => rule.status !== "retired")) {
+      badRequest("A delegation rule already exists for this service line, task, and performer role.");
+    }
+
+    const created = await this.repository.createDelegationRule(createDelegationRuleRecord({
+      ...command,
+      createdBy: actor.actorId
+    }));
+
+    await this.recordAudit(actor, "delegation_rule.created", "delegation_rule", created.id, {
+      serviceLineId: created.serviceLineId,
+      taskCode: created.taskCode,
+      performerRole: created.performerRole,
+      supervisionLevel: created.supervisionLevel
+    });
+
+    return created;
+  }
+
+  async bootstrapDelegationRules(actor: ActorContext): Promise<{
+    created: DelegationRuleRecord[];
+    existing: DelegationRuleRecord[];
+  }> {
+    const created: DelegationRuleRecord[] = [];
+    const existing: DelegationRuleRecord[] = [];
+
+    for (const entry of defaultDelegationRuleTemplates) {
+      const matches = await this.repository.listDelegationRules({
+        serviceLineId: entry.serviceLineId,
+        performerRole: entry.performerRole,
+        taskCode: entry.taskCode
+      });
+      const match = matches[0];
+      if (match) {
+        existing.push(match);
+        continue;
+      }
+      created.push(await this.createDelegationRule(actor, entry));
+    }
+
+    return {
+      created,
+      existing
+    };
+  }
+
+  async updateDelegationRule(actor: ActorContext, delegationRuleId: string, input: unknown): Promise<DelegationRuleRecord> {
+    const command = delegationRuleUpdateSchema.parse(input);
+    const rule = await this.repository.getDelegationRule(delegationRuleId);
+    if (!rule) {
+      notFound(`Delegation rule not found: ${delegationRuleId}`);
+    }
+
+    const updated = await this.repository.updateDelegationRule(rule.id, {
+      taskLabel: command.taskLabel ?? rule.taskLabel,
+      supervisingRole: command.supervisingRole !== undefined ? command.supervisingRole : rule.supervisingRole,
+      status: command.status ?? rule.status,
+      supervisionLevel: command.supervisionLevel ?? rule.supervisionLevel,
+      requiresCompetencyEvidence: command.requiresCompetencyEvidence ?? rule.requiresCompetencyEvidence,
+      requiresDocumentedOrder: command.requiresDocumentedOrder ?? rule.requiresDocumentedOrder,
+      requiresCosign: command.requiresCosign ?? rule.requiresCosign,
+      patientFacing: command.patientFacing ?? rule.patientFacing,
+      evidenceRequired: command.evidenceRequired ?? rule.evidenceRequired,
+      notes: command.notes !== undefined ? command.notes : rule.notes,
+      updatedAt: new Date().toISOString()
+    });
+
+    await this.recordAudit(actor, "delegation_rule.updated", "delegation_rule", updated.id, {
+      status: updated.status,
+      supervisionLevel: updated.supervisionLevel,
+      performerRole: updated.performerRole
+    });
+
+    return updated;
+  }
+
+  async evaluateDelegation(input: unknown): Promise<DelegationEvaluationResult> {
+    const query = delegationEvaluationQuerySchema.parse(input);
+    const matches = await this.repository.listDelegationRules({
+      serviceLineId: query.serviceLineId,
+      performerRole: query.performerRole,
+      taskCode: query.taskCode
+    });
+    return evaluateDelegationRule(matches[0] ?? null);
   }
 
   async createActionItem(actor: ActorContext, input: unknown) {

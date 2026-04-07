@@ -43,6 +43,11 @@ Using the current local `.env` and repo code:
   - governance-pack drafting with charter, competency, audit, pricing, and claims-governance sections
   - linked `clinical_governance` approval routing and controlled publication
   - publish-sync back into service-line governance status and next-review scheduling
+- the delegation-matrix slice is now implemented in the repo
+  - service-line/task/role delegation-rule registry
+  - deterministic allowed/not-allowed evaluation
+  - default bootstrap templates for high-risk service lines
+  - dedicated delegation management UI and API routes
 
 That means the remaining pilot blockers are now mostly broader pilot validation, Render deployment consistency, and operations hardening.
 
@@ -124,7 +129,7 @@ The deployed Render stack is now healthy and pilot-usable, but there is still on
    - up to two backup profiles if needed
    - named office manager / quality lead / HR lead profiles when you want them added
 
-3. Redeploy the latest web, API, and worker services when you want the new service-line governance slice available in Render
+3. Redeploy the latest web, API, and worker services when you want the new delegation-matrix slice available in Render
    - no new secrets or Microsoft tenant setup are required for the repo-side implementation
    - the external Postgres schema has already been updated locally from this machine
    - if you later want additional Microsoft-backed governance registers beyond the current pilot surfaces, we can add those as separate follow-up integrations
@@ -138,6 +143,6 @@ Postgres is still required even though Microsoft is now ready, because Clinic OS
 
 ## The next command I am waiting to run
 
-The next step is no longer additional named-role setup. The next major engineering step after the new service-line governance slice is:
+The next step is no longer additional named-role setup. The next major engineering step after the new delegation-matrix slice is:
 
-- clinic-specific governance modules
+- physician-oversight / practice-agreement operations

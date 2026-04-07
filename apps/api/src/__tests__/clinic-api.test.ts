@@ -1926,4 +1926,99 @@ describe("Clinic API", () => {
     expect(publishedLine?.latestPack?.status).toBe("published");
     expect(publishedLine?.latestPack?.publishedPath).toContain(generated.document.id);
   });
+
+  it("bootstraps delegation rules, evaluates task permissions, and lets managers retire a rule", async () => {
+    const serviceLineBootstrap = await app.inject({
+      method: "POST",
+      url: "/service-lines/bootstrap-defaults",
+      headers: headers("medical_director")
+    });
+    expect(serviceLineBootstrap.statusCode).toBe(200);
+
+    const bootstrapResponse = await app.inject({
+      method: "POST",
+      url: "/delegation-rules/bootstrap-defaults",
+      headers: headers("medical_director")
+    });
+    expect(bootstrapResponse.statusCode).toBe(200);
+    const bootstrap = bootstrapResponse.json<{
+      created: Array<{ id: string }>;
+      existing: Array<{ id: string }>;
+    }>();
+    expect(bootstrap.created.length + bootstrap.existing.length).toBeGreaterThanOrEqual(8);
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/delegation-rules?serviceLineId=weight_management",
+      headers: headers("office_manager")
+    });
+    expect(listResponse.statusCode).toBe(200);
+    const weightManagementRules = listResponse.json<Array<{
+      id: string;
+      taskCode: string;
+      performerRole: string;
+      status: string;
+    }>>();
+    const intakeRule = weightManagementRules.find((rule) => rule.taskCode === "weigh_in_and_screen" && rule.performerRole === "medical_assistant");
+    expect(intakeRule).toBeTruthy();
+
+    const allowedEvaluation = await app.inject({
+      method: "POST",
+      url: "/delegation-rules/evaluate",
+      headers: headers("medical_assistant"),
+      payload: {
+        serviceLineId: "weight_management",
+        taskCode: "weigh_in_and_screen",
+        performerRole: "medical_assistant"
+      }
+    });
+    expect(allowedEvaluation.statusCode).toBe(200);
+    expect(allowedEvaluation.json<{ allowed: boolean; matchedRule: { id: string } | null }>().allowed).toBe(true);
+    expect(allowedEvaluation.json<{ allowed: boolean; matchedRule: { id: string } | null }>().matchedRule?.id).toBe(intakeRule?.id);
+
+    const retireResponse = await app.inject({
+      method: "PATCH",
+      url: `/delegation-rules/${intakeRule!.id}`,
+      headers: headers("quality_lead"),
+      payload: {
+        status: "retired",
+        notes: "Paused pending physician review."
+      }
+    });
+    expect(retireResponse.statusCode).toBe(200);
+    expect(retireResponse.json<{ status: string }>().status).toBe("retired");
+
+    const blockedEvaluation = await app.inject({
+      method: "POST",
+      url: "/delegation-rules/evaluate",
+      headers: headers("medical_assistant"),
+      payload: {
+        serviceLineId: "weight_management",
+        taskCode: "weigh_in_and_screen",
+        performerRole: "medical_assistant"
+      }
+    });
+    expect(blockedEvaluation.statusCode).toBe(200);
+    expect(blockedEvaluation.json<{ allowed: boolean }>().allowed).toBe(false);
+
+    const deniedCreate = await app.inject({
+      method: "POST",
+      url: "/delegation-rules",
+      headers: headers("office_manager"),
+      payload: {
+        serviceLineId: "telehealth",
+        taskCode: "virtual_triage",
+        taskLabel: "Virtual triage script",
+        performerRole: "front_desk",
+        supervisingRole: "nurse_practitioner",
+        supervisionLevel: "protocol",
+        requiresCompetencyEvidence: true,
+        requiresDocumentedOrder: false,
+        requiresCosign: false,
+        patientFacing: true,
+        evidenceRequired: "Current call-flow competency."
+      }
+    });
+    expect(deniedCreate.statusCode).toBe(403);
+  });
 });

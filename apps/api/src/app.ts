@@ -12,6 +12,7 @@ import { registerDashboardRoutes } from "./routes/dashboard";
 import { registerCapaRoutes } from "./routes/capas";
 import { registerCommitteeMeetingRoutes } from "./routes/committee-meetings";
 import { registerCommitteeRoutes } from "./routes/committees";
+import { registerDelegationRuleRoutes } from "./routes/delegation-rules";
 import { registerDeviceRoutes } from "./routes/devices";
 import { registerDocumentRoutes } from "./routes/documents";
 import { registerHealthRoutes } from "./routes/health";
@@ -165,6 +166,7 @@ export function buildApp(options?: {
   registerCommitteeRoutes(app);
   registerCommitteeMeetingRoutes(app);
   registerServiceLineRoutes(app);
+  registerDelegationRuleRoutes(app);
   registerPublicAssetRoutes(app);
   registerOfficeOpsRoutes(app);
   registerAuditRoutes(app);

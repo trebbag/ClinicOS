@@ -8,6 +8,7 @@ import type {
   ChecklistTemplate,
   CommitteeMeetingRecord,
   CommitteeRecord,
+  DelegationRuleRecord,
   DeviceAllowedProfile,
   DeviceEnrollmentCode,
   DeviceSession,
@@ -36,6 +37,7 @@ import {
   checklistTemplateSchema,
   committeeMeetingRecordSchema,
   committeeRecordSchema,
+  delegationRuleRecordSchema,
   deviceAllowedProfileSchema,
   deviceEnrollmentCodeSchema,
   deviceSessionSchema,
@@ -101,6 +103,25 @@ type ServiceLinePackRow = {
   updatedAt: Date;
   publishedAt: Date | null;
   publishedPath: string | null;
+};
+type DelegationRuleRow = {
+  id: string;
+  serviceLineId: string;
+  taskCode: string;
+  taskLabel: string;
+  performerRole: string;
+  supervisingRole: string | null;
+  status: string;
+  supervisionLevel: string;
+  requiresCompetencyEvidence: boolean;
+  requiresDocumentedOrder: boolean;
+  requiresCosign: boolean;
+  patientFacing: boolean;
+  evidenceRequired: string;
+  notes: string | null;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
 };
 
 export type ClinicRepository = {
@@ -186,6 +207,15 @@ export type ClinicRepository = {
     serviceLineId?: string;
     status?: string;
   }): Promise<ServiceLinePackRecord[]>;
+  createDelegationRule(record: DelegationRuleRecord): Promise<DelegationRuleRecord>;
+  updateDelegationRule(id: string, patch: Partial<DelegationRuleRecord>): Promise<DelegationRuleRecord>;
+  getDelegationRule(id: string): Promise<DelegationRuleRecord | null>;
+  listDelegationRules(filters?: {
+    serviceLineId?: string;
+    performerRole?: string;
+    status?: string;
+    taskCode?: string;
+  }): Promise<DelegationRuleRecord[]>;
   createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate>;
   updateChecklistTemplate(id: string, patch: Partial<ChecklistTemplate>): Promise<ChecklistTemplate>;
   getChecklistTemplate(id: string): Promise<ChecklistTemplate | null>;
@@ -319,6 +349,10 @@ export class PrismaClinicRepository implements ClinicRepository {
 
   private get serviceLinePackClient(): UntypedPrismaDelegate {
     return (this.client as unknown as { serviceLinePack: UntypedPrismaDelegate }).serviceLinePack;
+  }
+
+  private get delegationRuleClient(): UntypedPrismaDelegate {
+    return (this.client as unknown as { delegationRule: UntypedPrismaDelegate }).delegationRule;
   }
 
   private mapUserProfile(record: {
@@ -644,6 +678,16 @@ export class PrismaClinicRepository implements ClinicRepository {
       updatedAt: record.updatedAt.toISOString(),
       publishedAt: record.publishedAt?.toISOString() ?? null,
       publishedPath: record.publishedPath ?? null
+    });
+  }
+
+  private mapDelegationRuleRecord(record: DelegationRuleRow): DelegationRuleRecord {
+    return delegationRuleRecordSchema.parse({
+      ...record,
+      supervisingRole: record.supervisingRole ?? null,
+      notes: record.notes ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString()
     });
   }
 
@@ -1649,6 +1693,81 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
 
     return (records as ServiceLinePackRow[]).map((record) => this.mapServiceLinePackRecord(record));
+  }
+
+  async createDelegationRule(record: DelegationRuleRecord): Promise<DelegationRuleRecord> {
+    const created = await this.delegationRuleClient.create({
+      data: {
+        id: record.id,
+        serviceLineId: record.serviceLineId,
+        taskCode: record.taskCode,
+        taskLabel: record.taskLabel,
+        performerRole: record.performerRole,
+        supervisingRole: record.supervisingRole,
+        status: record.status,
+        supervisionLevel: record.supervisionLevel,
+        requiresCompetencyEvidence: record.requiresCompetencyEvidence,
+        requiresDocumentedOrder: record.requiresDocumentedOrder,
+        requiresCosign: record.requiresCosign,
+        patientFacing: record.patientFacing,
+        evidenceRequired: record.evidenceRequired,
+        notes: record.notes,
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt)
+      }
+    });
+
+    return this.mapDelegationRuleRecord(created as DelegationRuleRow);
+  }
+
+  async updateDelegationRule(id: string, patch: Partial<DelegationRuleRecord>): Promise<DelegationRuleRecord> {
+    const updated = await this.delegationRuleClient.update({
+      where: { id },
+      data: {
+        serviceLineId: patch.serviceLineId,
+        taskCode: patch.taskCode,
+        taskLabel: patch.taskLabel,
+        performerRole: patch.performerRole,
+        supervisingRole: patch.supervisingRole,
+        status: patch.status,
+        supervisionLevel: patch.supervisionLevel,
+        requiresCompetencyEvidence: patch.requiresCompetencyEvidence,
+        requiresDocumentedOrder: patch.requiresDocumentedOrder,
+        requiresCosign: patch.requiresCosign,
+        patientFacing: patch.patientFacing,
+        evidenceRequired: patch.evidenceRequired,
+        notes: patch.notes,
+        createdBy: patch.createdBy,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt)
+      }
+    });
+
+    return this.mapDelegationRuleRecord(updated as DelegationRuleRow);
+  }
+
+  async getDelegationRule(id: string): Promise<DelegationRuleRecord | null> {
+    const record = await this.delegationRuleClient.findUnique({ where: { id } });
+    return record ? this.mapDelegationRuleRecord(record as DelegationRuleRow) : null;
+  }
+
+  async listDelegationRules(filters?: {
+    serviceLineId?: string;
+    performerRole?: string;
+    status?: string;
+    taskCode?: string;
+  }): Promise<DelegationRuleRecord[]> {
+    const records = await this.delegationRuleClient.findMany({
+      where: mapListFilters(filters),
+      orderBy: [
+        { serviceLineId: "asc" },
+        { taskCode: "asc" },
+        { performerRole: "asc" }
+      ]
+    });
+
+    return (records as DelegationRuleRow[]).map((record) => this.mapDelegationRuleRecord(record));
   }
 
   async createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate> {

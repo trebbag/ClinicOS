@@ -11,6 +11,11 @@ import {
   committeeUpdateSchema
 } from "./committee";
 import {
+  delegationEvaluationQuerySchema,
+  delegationRuleCreateSchema,
+  delegationRuleUpdateSchema
+} from "./delegation";
+import {
   incidentCreateSchema,
   incidentReviewDecisionCommandSchema,
   incidentUpdateSchema
@@ -133,6 +138,9 @@ export {
   serviceLineCreateSchema,
   serviceLineUpdateSchema,
   serviceLinePackCreateSchema,
+  delegationRuleCreateSchema,
+  delegationRuleUpdateSchema,
+  delegationEvaluationQuerySchema,
   trainingRequirementCreateSchema,
   trainingCompletionCreateSchema
 };

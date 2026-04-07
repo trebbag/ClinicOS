@@ -14,6 +14,8 @@ export const appCapabilities = [
   "committees.manage",
   "service_lines.view",
   "service_lines.manage",
+  "delegation.view",
+  "delegation.manage",
   "public_assets.view",
   "public_assets.manage",
   "scorecards.view",
@@ -53,6 +55,8 @@ const roleCapabilityMatrix = {
     "committees.manage",
     "service_lines.view",
     "service_lines.manage",
+    "delegation.view",
+    "delegation.manage",
     "public_assets.view",
     "public_assets.manage",
     "scorecards.view",
@@ -74,6 +78,7 @@ const roleCapabilityMatrix = {
     "committees.manage",
     "service_lines.view",
     "service_lines.manage",
+    "delegation.view",
     "approvals.view",
     "public_assets.view",
     "public_assets.manage",
@@ -92,6 +97,7 @@ const roleCapabilityMatrix = {
   office_manager: [
     "dashboard.view",
     "service_lines.view",
+    "delegation.view",
     "office_ops.view",
     "office_ops.manage",
     "office_ops.reconcile_planner",
@@ -130,6 +136,8 @@ const roleCapabilityMatrix = {
     "committees.manage",
     "service_lines.view",
     "service_lines.manage",
+    "delegation.view",
+    "delegation.manage",
     "public_assets.view",
     "public_assets.manage",
     "pilot_ops.view",
@@ -144,9 +152,15 @@ const roleCapabilityMatrix = {
     "auth.mint_enrollment_codes",
     "audit.view_auth_events"
   ],
-  patient_care_team_physician: [],
-  nurse_practitioner: [],
-  medical_assistant: [],
+  patient_care_team_physician: [
+    "delegation.view"
+  ],
+  nurse_practitioner: [
+    "delegation.view"
+  ],
+  medical_assistant: [
+    "delegation.view"
+  ],
   front_desk: []
 } as const satisfies Record<Role, readonly AppCapability[]>;
 
