@@ -14,6 +14,7 @@ import type {
   IncidentRecord,
   MetricRun,
   MicrosoftIntegrationValidationRecord,
+  PublicAssetRecord,
   ScorecardReviewRecord,
   TrainingCompletionRecord,
   TrainingRequirement,
@@ -37,6 +38,7 @@ import {
   incidentRecordSchema,
   metricRunSchema,
   microsoftIntegrationValidationRecordSchema,
+  publicAssetRecordSchema,
   scorecardReviewRecordSchema,
   trainingCompletionRecordSchema,
   trainingRequirementSchema,
@@ -89,6 +91,16 @@ export type ClinicRepository = {
     ownerRole?: string;
     incidentId?: string;
   }): Promise<CapaRecord[]>;
+  createPublicAsset(record: PublicAssetRecord): Promise<PublicAssetRecord>;
+  updatePublicAsset(id: string, patch: Partial<PublicAssetRecord>): Promise<PublicAssetRecord>;
+  getPublicAsset(id: string): Promise<PublicAssetRecord | null>;
+  getPublicAssetByDocumentId(documentId: string): Promise<PublicAssetRecord | null>;
+  listPublicAssets(filters?: {
+    status?: string;
+    ownerRole?: string;
+    assetType?: string;
+    serviceLine?: string;
+  }): Promise<PublicAssetRecord[]>;
   createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate>;
   updateChecklistTemplate(id: string, patch: Partial<ChecklistTemplate>): Promise<ChecklistTemplate>;
   getChecklistTemplate(id: string): Promise<ChecklistTemplate | null>;
@@ -420,6 +432,44 @@ export class PrismaClinicRepository implements ClinicRepository {
       workflowRunId: record.workflowRunId ?? null,
       actionItemId: record.actionItemId ?? null,
       closedAt: record.closedAt?.toISOString() ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString()
+    });
+  }
+
+  private mapPublicAssetRecord(record: {
+    id: string;
+    assetType: string;
+    title: string;
+    status: string;
+    ownerRole: string;
+    serviceLine: string | null;
+    audience: string | null;
+    channelLabel: string | null;
+    summary: string;
+    body: string;
+    claimsReviewed: boolean;
+    claimsJson: Prisma.JsonValue;
+    claimsReviewStatus: string;
+    claimsReviewNotes: string | null;
+    claimsReviewedAt: Date | null;
+    claimsReviewedByRole: string | null;
+    documentId: string | null;
+    workflowRunId: string | null;
+    createdBy: string;
+    createdAt: Date;
+    updatedAt: Date;
+    publishedAt: Date | null;
+    publishedPath: string | null;
+  }): PublicAssetRecord {
+    return publicAssetRecordSchema.parse({
+      ...record,
+      claims: record.claimsJson,
+      claimsReviewedAt: record.claimsReviewedAt?.toISOString() ?? null,
+      documentId: record.documentId ?? null,
+      workflowRunId: record.workflowRunId ?? null,
+      publishedAt: record.publishedAt?.toISOString() ?? null,
+      publishedPath: record.publishedPath ?? null,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString()
     });
@@ -1059,6 +1109,93 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
 
     return records.map((record) => this.mapCapaRecord(record));
+  }
+
+  async createPublicAsset(record: PublicAssetRecord): Promise<PublicAssetRecord> {
+    const created = await this.client.publicAsset.create({
+      data: {
+        id: record.id,
+        assetType: record.assetType,
+        title: record.title,
+        status: record.status,
+        ownerRole: record.ownerRole,
+        serviceLine: record.serviceLine,
+        audience: record.audience,
+        channelLabel: record.channelLabel,
+        summary: record.summary,
+        body: record.body,
+        claimsReviewed: record.claimsReviewed,
+        claimsJson: asJsonValue(record.claims),
+        claimsReviewStatus: record.claimsReviewStatus,
+        claimsReviewNotes: record.claimsReviewNotes,
+        claimsReviewedAt: isoToDate(record.claimsReviewedAt),
+        claimsReviewedByRole: record.claimsReviewedByRole,
+        documentId: record.documentId,
+        workflowRunId: record.workflowRunId,
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt),
+        publishedAt: isoToDate(record.publishedAt),
+        publishedPath: record.publishedPath
+      } as any
+    });
+
+    return this.mapPublicAssetRecord(created as any);
+  }
+
+  async updatePublicAsset(id: string, patch: Partial<PublicAssetRecord>): Promise<PublicAssetRecord> {
+    const updated = await this.client.publicAsset.update({
+      where: { id },
+      data: {
+        assetType: patch.assetType,
+        title: patch.title,
+        status: patch.status,
+        ownerRole: patch.ownerRole,
+        serviceLine: patch.serviceLine,
+        audience: patch.audience,
+        channelLabel: patch.channelLabel,
+        summary: patch.summary,
+        body: patch.body,
+        claimsReviewed: patch.claimsReviewed,
+        claimsJson: patch.claims ? asJsonValue(patch.claims) : undefined,
+        claimsReviewStatus: patch.claimsReviewStatus,
+        claimsReviewNotes: patch.claimsReviewNotes,
+        claimsReviewedAt: isoToDate(patch.claimsReviewedAt),
+        claimsReviewedByRole: patch.claimsReviewedByRole,
+        documentId: patch.documentId,
+        workflowRunId: patch.workflowRunId,
+        createdBy: patch.createdBy,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt),
+        publishedAt: isoToDate(patch.publishedAt),
+        publishedPath: patch.publishedPath
+      } as any
+    });
+
+    return this.mapPublicAssetRecord(updated as any);
+  }
+
+  async getPublicAsset(id: string): Promise<PublicAssetRecord | null> {
+    const record = await this.client.publicAsset.findUnique({ where: { id } });
+    return record ? this.mapPublicAssetRecord(record as any) : null;
+  }
+
+  async getPublicAssetByDocumentId(documentId: string): Promise<PublicAssetRecord | null> {
+    const record = await this.client.publicAsset.findFirst({ where: { documentId } });
+    return record ? this.mapPublicAssetRecord(record as any) : null;
+  }
+
+  async listPublicAssets(filters?: {
+    status?: string;
+    ownerRole?: string;
+    assetType?: string;
+    serviceLine?: string;
+  }): Promise<PublicAssetRecord[]> {
+    const records = await this.client.publicAsset.findMany({
+      where: mapListFilters(filters) as any
+    });
+
+    return records.map((record) => this.mapPublicAssetRecord(record as any));
   }
 
   async createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate> {

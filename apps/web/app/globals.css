@@ -159,6 +159,7 @@ pre {
 
 .badge-approved,
 .badge-published,
+.badge-claims_reviewed,
 .badge-done,
 .badge-signed_off,
 .badge-succeeded,
@@ -176,6 +177,8 @@ pre {
 }
 
 .badge-in_review,
+.badge-claims_in_review,
+.badge-approval_pending,
 .badge-requested,
 .badge-in_progress,
 .badge-blocked,
@@ -191,8 +194,15 @@ pre {
 }
 
 .badge-queued,
-.badge-missing_config {
+.badge-missing_config,
+.badge-archived {
   background: rgba(39, 67, 121, 0.4);
+}
+
+.badge-sent_back,
+.badge-needs_revision,
+.badge-unsupported {
+  background: rgba(124, 37, 55, 0.4);
 }
 
 .error {

@@ -212,6 +212,105 @@ describe("Clinic API", () => {
     expect(approvedContext.json<{ context: string }>().context).toContain("# Policy draft");
   });
 
+  it("routes a public asset through claims review, human approval, and controlled publication", async () => {
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/public-assets",
+      headers: headers("quality_lead"),
+      payload: {
+        title: "Weight-management landing page refresh",
+        assetType: "landing_page",
+        ownerRole: "quality_lead",
+        serviceLine: "weight_management",
+        audience: "Prospective patients",
+        channelLabel: "Website",
+        summary: "Refresh the service-line landing page and route every claim through review.",
+        body: "# Draft\n\nA physician-led weight-management program with individualized plans.",
+        claims: [
+          { claimText: "Physician-led weight-management program" },
+          { claimText: "Individualized plans" }
+        ]
+      }
+    });
+
+    expect(createResponse.statusCode).toBe(200);
+    const created = createResponse.json<{ id: string; documentId: string | null }>();
+    expect(created.documentId).toBeTruthy();
+
+    const createdAsset = repository.publicAssets.find((asset) => asset.id === created.id);
+    expect(createdAsset?.claims).toHaveLength(2);
+
+    const claimsReview = await app.inject({
+      method: "POST",
+      url: `/public-assets/${created.id}/review-claims`,
+      headers: headers("quality_lead"),
+      payload: {
+        claimDecisions: createdAsset!.claims.map((claim) => ({
+          claimId: claim.id,
+          decision: "approved"
+        })),
+        overallNotes: "Claims match approved service descriptions."
+      }
+    });
+
+    expect(claimsReview.statusCode).toBe(200);
+    expect(claimsReview.json<{ claimsReviewStatus: string; status: string }>().claimsReviewStatus).toBe("completed");
+    expect(claimsReview.json<{ claimsReviewStatus: string; status: string }>().status).toBe("claims_reviewed");
+
+    const submit = await app.inject({
+      method: "POST",
+      url: `/public-assets/${created.id}/submit`,
+      headers: headers("quality_lead")
+    });
+
+    expect(submit.statusCode).toBe(200);
+    expect(submit.json<{ approvals: Array<{ reviewerRole: string }> }>().approvals).toHaveLength(2);
+    expect(repository.publicAssets.find((asset) => asset.id === created.id)?.status).toBe("approval_pending");
+
+    const medApproval = repository.approvals.find((approval) =>
+      approval.targetId === created.documentId && approval.reviewerRole === "medical_director"
+    );
+    const cfoApproval = repository.approvals.find((approval) =>
+      approval.targetId === created.documentId && approval.reviewerRole === "cfo"
+    );
+
+    expect(medApproval).toBeDefined();
+    expect(cfoApproval).toBeDefined();
+
+    const firstDecision = await app.inject({
+      method: "POST",
+      url: `/approvals/${medApproval!.id}/decide`,
+      headers: headers("medical_director"),
+      payload: { decision: "approved" }
+    });
+    expect(firstDecision.statusCode).toBe(200);
+
+    const secondDecision = await app.inject({
+      method: "POST",
+      url: `/approvals/${cfoApproval!.id}/decide`,
+      headers: headers("cfo"),
+      payload: { decision: "approved" }
+    });
+    expect(secondDecision.statusCode).toBe(200);
+    expect(repository.publicAssets.find((asset) => asset.id === created.id)?.status).toBe("approved");
+
+    const publish = await app.inject({
+      method: "POST",
+      url: `/public-assets/${created.id}/publish`,
+      headers: headers("medical_director")
+    });
+    expect(publish.statusCode).toBe(200);
+    expect(publish.json<{ status: string }>().status).toBe("publish_pending");
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const summary = await runner.runOnce();
+    expect(summary.succeeded).toBeGreaterThanOrEqual(1);
+
+    const published = repository.publicAssets.find((asset) => asset.id === created.id);
+    expect(published?.status).toBe("published");
+    expect(published?.publishedPath).toBeTruthy();
+  });
+
   it("rejects workflow creation for a role outside the workflow owner set", async () => {
     const response = await app.inject({
       method: "POST",

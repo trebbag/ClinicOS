@@ -6,6 +6,7 @@ import {
   createChecklistRun,
   createChecklistTemplate,
   createIncidentRecord,
+  createPublicAssetRecord,
   createScorecardReviewRecord,
   createTrainingRequirement,
   createWorkerJob
@@ -132,6 +133,66 @@ describe("WorkerJobRunner", () => {
     const finalFailure = await repository.getWorkerJob(job.id);
     expect(finalFailure?.status).toBe("dead_letter");
     expect(finalFailure?.attempts).toBe(2);
+  });
+
+  it("keeps linked public assets in sync when publication completes", async () => {
+    const repository = new MemoryClinicRepository();
+    await repository.createDocument({
+      id: "doc_public_asset",
+      title: "Public landing page",
+      ownerRole: "quality_lead",
+      approvalClass: "public_facing",
+      artifactType: "public_asset",
+      summary: "Approved public asset",
+      workflowRunId: "workflow_public_asset",
+      serviceLines: ["weight_management"],
+      createdBy: "quality-user",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: "approved",
+      body: "# Public draft",
+      version: 1,
+      publishedAt: null,
+      publishedPath: null,
+      reviewDueAt: null
+    });
+    await repository.createPublicAsset(createPublicAssetRecord({
+      assetType: "landing_page",
+      title: "Public landing page",
+      ownerRole: "quality_lead",
+      serviceLine: "weight_management",
+      summary: "Approved public asset",
+      body: "# Public draft",
+      claims: [{ claimText: "Physician-led program" }],
+      createdBy: "quality-user",
+      documentId: "doc_public_asset",
+      workflowRunId: "workflow_public_asset"
+    }));
+    await repository.updatePublicAsset(repository.publicAssets[0]!.id, {
+      claimsReviewed: true,
+      claimsReviewStatus: "completed",
+      status: "approved",
+      updatedAt: new Date().toISOString()
+    });
+    await repository.enqueueWorkerJob(createWorkerJob({
+      type: "document.publish",
+      payload: {
+        actor: {
+          actorId: "medical-director",
+          role: "medical_director",
+          name: "Medical Director"
+        },
+        documentId: "doc_public_asset"
+      },
+      sourceEntityType: "document",
+      sourceEntityId: "doc_public_asset"
+    }));
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const summary = await runner.runOnce();
+    expect(summary.succeeded).toBeGreaterThanOrEqual(1);
+    expect(repository.publicAssets[0]?.status).toBe("published");
+    expect(repository.publicAssets[0]?.publishedPath).toContain("doc_public_asset");
   });
 
   it("runs maintenance for overdue office ops and scorecard reviews", async () => {

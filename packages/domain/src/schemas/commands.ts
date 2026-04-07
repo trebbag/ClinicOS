@@ -8,6 +8,11 @@ import {
   incidentReviewDecisionCommandSchema,
   incidentUpdateSchema
 } from "./incident";
+import {
+  claimsReviewDecisionCommandSchema,
+  publicAssetCreateSchema,
+  publicAssetUpdateSchema
+} from "./publicAsset";
 import { trainingCompletionCreateSchema, trainingRequirementCreateSchema } from "./training";
 
 export const workflowTransitionCommandSchema = z.object({
@@ -97,6 +102,9 @@ export {
   capaCreateSchema,
   capaUpdateSchema,
   capaResolutionCommandSchema,
+  publicAssetCreateSchema,
+  publicAssetUpdateSchema,
+  claimsReviewDecisionCommandSchema,
   trainingRequirementCreateSchema,
   trainingCompletionCreateSchema
 };

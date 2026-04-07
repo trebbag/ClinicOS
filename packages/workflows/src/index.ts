@@ -5,3 +5,4 @@ export * from "./definitions/office-manager-daily";
 export * from "./definitions/staff-scorecard";
 export * from "./definitions/incident-review";
 export * from "./definitions/capa-lifecycle";
+export * from "./definitions/public-asset-claims-review";

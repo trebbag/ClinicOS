@@ -27,6 +27,11 @@ Using the current local `.env` and repo code:
   - CAPA lifecycle endpoints and quality UI
   - linked workflow/action-item/audit behavior
   - optional Microsoft List sync hooks for incident and CAPA registers when those list IDs are provided
+- the public asset + claims review slice is now implemented in the repo
+  - public asset inventory endpoints and dedicated UI
+  - explicit structured claim records and claims-review commands
+  - linked `public_facing` document approvals and controlled publication path
+  - approved archive visibility through the same SharePoint-backed publish pipeline
 
 That means the remaining pilot blockers are now mostly broader pilot validation, Render deployment consistency, and operations hardening.
 
@@ -108,13 +113,10 @@ The deployed Render stack is now healthy and pilot-usable, but there is still on
    - up to two backup profiles if needed
    - named office manager / quality lead / HR lead profiles when you want them added
 
-3. Optional future Microsoft list-sync inputs for the new governance slice
-   - `MICROSOFT_LIST_INCIDENTS_ID`
-   - `MICROSOFT_LIST_CAPA_ID`
-   - only needed when you want live incident/CAPA register sync into Microsoft Lists
-   - if you enable those later, the target lists will need matching columns for:
-     - incidents: `Title`, `Severity`, `Status`, `Category`, `OwnerRole`, `Summary`, `ImmediateResponse`, `ResolutionNote`, `DetectedAt`, `DetectedByRole`, `LinkedCapaId`, `DueDate`
-     - CAPAs: `Title`, `Status`, `SourceType`, `SourceId`, `IncidentId`, `OwnerRole`, `DueDate`, `Summary`, `CorrectiveAction`, `PreventiveAction`, `VerificationPlan`, `ResolutionNote`
+3. Redeploy the latest web, API, and worker services when you want the new public-asset slice available in Render
+   - no new secrets or Microsoft tenant setup are required for the repo-side implementation
+   - the external Postgres schema has already been updated locally from this machine
+   - if you later want additional Microsoft-backed governance registers beyond the current pilot surfaces, we can add those as separate follow-up integrations
 
 ## Database rule
 
@@ -125,6 +127,6 @@ Postgres is still required even though Microsoft is now ready, because Clinic OS
 
 ## The next command I am waiting to run
 
-The next step is no longer additional named-role setup. The next major engineering step after the new incident + CAPA slice is:
+The next step is no longer additional named-role setup. The next major engineering step after the new public-asset + claims-review slice is:
 
 - committee + QAPI parity

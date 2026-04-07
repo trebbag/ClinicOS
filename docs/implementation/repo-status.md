@@ -20,6 +20,7 @@ The repository now has a working pilot backbone for:
 - manual HR/training requirement tracking with gap summaries and follow-up task creation from scorecard reviews
 - scorecard history enrichment with rolling averages and open training-gap counts
 - first-class incident and CAPA records with deterministic review/resolution commands, linked workflow runs, audit events, and quality UI management
+- first-class public-asset inventory with explicit structured claims, claims-review commands, linked `public_facing` document approvals, and approved archive visibility
 - device-bound profile auth with enrollment codes, trusted device/session cookies, pilot-ops profile/device management, and a simple login flow
 - same-origin deployment plumbing for a public web origin that proxies browser API requests through `/clinic-api/*`
 - Render-first blueprint, startup/readiness validation, and a deploy smoke script for stub-mode pilots
@@ -43,6 +44,7 @@ The following areas are still placeholders or partial:
 - multi-room office master data, richer checklist analytics, and fuller Planner reconciliation breadth
 - broader HR/training workflows beyond manual requirements/completions and longer-range scorecard analytics
 - committee/QAPI workflow parity and standards mapping depth beyond the new incident/CAPA slice
+- service-line governance packs and deeper commercial claims-governance breadth beyond the new public-asset slice
 - runtime agent structured tool execution loop and full eval-backed feature flag rollout
 - deeper deployment, observability, and environment promotion workflows
 

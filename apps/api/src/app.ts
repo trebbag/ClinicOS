@@ -18,6 +18,7 @@ import { registerMetricRoutes } from "./routes/metrics";
 import { registerOfficeOpsRoutes } from "./routes/office-ops";
 import { registerOpsRoutes } from "./routes/ops";
 import { registerIncidentRoutes } from "./routes/incidents";
+import { registerPublicAssetRoutes } from "./routes/public-assets";
 import { registerScorecardReviewRoutes } from "./routes/scorecard-reviews";
 import { registerTrainingRoutes } from "./routes/training";
 import { registerUserProfileRoutes } from "./routes/user-profiles";
@@ -158,6 +159,7 @@ export function buildApp(options?: {
   registerActionItemRoutes(app);
   registerIncidentRoutes(app);
   registerCapaRoutes(app);
+  registerPublicAssetRoutes(app);
   registerOfficeOpsRoutes(app);
   registerAuditRoutes(app);
   registerMetricRoutes(app);

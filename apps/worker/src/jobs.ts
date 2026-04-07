@@ -715,6 +715,16 @@ export class WorkerJobRunner {
       }
     }
 
+    const linkedPublicAsset = await this.repository.getPublicAssetByDocumentId(document.id);
+    if (linkedPublicAsset) {
+      await this.repository.updatePublicAsset(linkedPublicAsset.id, {
+        status: "published",
+        publishedAt: now,
+        publishedPath: publishResult.path,
+        updatedAt: now
+      });
+    }
+
     await this.recordAudit(payload.actor, "artifact.published", "document", document.id, {
       publishedPath: publishResult.path,
       externalId: publishResult.externalId,

@@ -31,6 +31,8 @@ export type AppCapability =
   | "office_ops.reconcile_planner"
   | "quality.view"
   | "quality.manage"
+  | "public_assets.view"
+  | "public_assets.manage"
   | "scorecards.view"
   | "pilot_ops.view"
   | "ops.view_config"
@@ -116,7 +118,7 @@ export const devProfiles: ActorIdentity[] = [
 ];
 
 type NavigationLink = {
-  href: "/" | "/medical-director" | "/office-manager" | "/pilot-ops" | "/quality" | "/scorecards";
+  href: "/" | "/medical-director" | "/office-manager" | "/pilot-ops" | "/quality" | "/scorecards" | "/public-assets";
   label: string;
   allowedRoles: ActorRole[];
   requiredCapability?: AppCapability;
@@ -148,6 +150,12 @@ export const navigationLinks: NavigationLink[] = [
     href: "/quality" as const,
     label: "Quality",
     allowedRoles: ["quality_lead"] as ActorRole[]
+  },
+  {
+    href: "/public-assets" as const,
+    label: "Public Assets",
+    allowedRoles: ["medical_director", "quality_lead", "cfo"] as ActorRole[],
+    requiredCapability: "public_assets.view" as const
   },
   {
     href: "/scorecards" as const,

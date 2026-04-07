@@ -114,13 +114,32 @@ model CAPA {
 }
 
 model PublicAsset {
-  id            String   @id
-  assetType     String
-  title         String
-  status        String
-  ownerRole     String
-  body          String
-  claimsReviewed Boolean
+  id                 String   @id
+  assetType          String
+  title              String
+  status             String
+  ownerRole          String
+  serviceLine        String?
+  audience           String?
+  channelLabel       String?
+  summary            String
+  body               String
+  claimsReviewed     Boolean
+  claimsJson         Json
+  claimsReviewStatus String
+  claimsReviewNotes  String?
+  claimsReviewedAt   DateTime?
+  claimsReviewedByRole String?
+  documentId         String?  @unique
+  workflowRunId      String?  @unique
+  createdBy          String
+  createdAt          DateTime
+  updatedAt          DateTime
+  publishedAt        DateTime?
+  publishedPath      String?
+
+  @@index([status, ownerRole])
+  @@index([serviceLine])
 }
 
 model AuditEvent {

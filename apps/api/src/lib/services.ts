@@ -16,6 +16,7 @@ import {
   createChecklistTemplate,
   createIncidentRecord,
   createMicrosoftIntegrationValidationRecord,
+  createPublicAssetRecord,
   createActionItemRecord,
   createAuditEvent,
   createDraftDocument,
@@ -32,6 +33,9 @@ import {
   listRoleCapabilities,
   opsCleanupCommandSchema,
   opsCleanupResultSchema,
+  publicAssetCreateSchema,
+  publicAssetUpdateSchema,
+  claimsReviewDecisionCommandSchema,
   scorecardImportJobSchema,
   scorecardReviewDecisionCommandSchema,
   trainingCompletionCreateSchema,
@@ -62,6 +66,7 @@ import {
   type OpsMaintenanceSummary,
   type OfficeOpsDailyStatus,
   type PublicationMode,
+  type PublicAssetRecord,
   type RoleCapabilityRecord,
   type TrainingDashboard,
   type TrainingGapItem,
@@ -113,6 +118,33 @@ function subtractDays(input: string, days: number): string {
 
 function subtractMinutes(input: string, minutes: number): string {
   return new Date(new Date(input).getTime() - minutes * 60_000).toISOString();
+}
+
+function derivePublicAssetStatus(input: {
+  documentStatus: DocumentRecord["status"];
+  claimsReviewStatus: PublicAssetRecord["claimsReviewStatus"];
+}): PublicAssetRecord["status"] {
+  switch (input.documentStatus) {
+    case "in_review":
+      return "approval_pending";
+    case "approved":
+      return "approved";
+    case "publish_pending":
+      return "publish_pending";
+    case "published":
+      return "published";
+    case "rejected":
+      return "sent_back";
+    case "draft":
+    default:
+      if (input.claimsReviewStatus === "completed") {
+        return "claims_reviewed";
+      }
+      if (input.claimsReviewStatus === "in_review" || input.claimsReviewStatus === "needs_revision") {
+        return "claims_in_review";
+      }
+      return "draft";
+  }
 }
 
 function buildMetricRuns(scorecard: RoleScorecard): MetricRun[] {
@@ -760,6 +792,8 @@ export class ClinicApiService {
       targetId: approval.targetId
     });
 
+    await this.syncPublicAssetFromDocument(updatedDocument);
+
     return {
       approval: updatedApproval,
       document: updatedDocument
@@ -797,6 +831,8 @@ export class ClinicApiService {
       workflowRunId: document.workflowRunId
     });
 
+    await this.syncPublicAssetFromDocument(updatedDocument);
+
     return updatedDocument;
   }
 
@@ -810,6 +846,239 @@ export class ClinicApiService {
     }
 
     return `# ${document.title}\nstatus=${document.status}\nowner=${document.ownerRole}\n\n${document.body}`;
+  }
+
+  async createPublicAsset(actor: ActorContext, input: unknown): Promise<PublicAssetRecord> {
+    const command = publicAssetCreateSchema.parse(input);
+    const workflow = await this.createWorkflowRun(actor, {
+      workflowId: "public_asset_claims_review",
+      input: {
+        title: command.title,
+        ownerRole: command.ownerRole,
+        assetType: command.assetType,
+        serviceLine: command.serviceLine ?? null,
+        requestedBy: actor.actorId,
+        claimsCount: command.claims.length
+      }
+    });
+
+    await this.advanceWorkflowIfPossible(actor, workflow.id, ["scoped", "drafted"], "Public asset draft created.");
+
+    const document = await this.createDocument(actor, {
+      title: command.title,
+      ownerRole: command.ownerRole,
+      approvalClass: "public_facing",
+      artifactType: "public_asset",
+      summary: command.summary,
+      workflowRunId: workflow.id,
+      serviceLines: command.serviceLine ? [command.serviceLine] : [],
+      body: command.body
+    });
+
+    const asset = createPublicAssetRecord({
+      assetType: command.assetType,
+      title: command.title,
+      ownerRole: command.ownerRole,
+      serviceLine: command.serviceLine ?? null,
+      audience: command.audience ?? null,
+      channelLabel: command.channelLabel ?? null,
+      summary: command.summary,
+      body: command.body,
+      claims: command.claims,
+      createdBy: actor.actorId,
+      documentId: document.id,
+      workflowRunId: workflow.id
+    });
+
+    const created = await this.repository.createPublicAsset(asset);
+    await this.recordAudit(actor, "public_asset.created", "public_asset", created.id, {
+      documentId: created.documentId,
+      workflowRunId: created.workflowRunId,
+      claimsCount: created.claims.length,
+      assetType: created.assetType
+    });
+
+    return created;
+  }
+
+  async listPublicAssets(filters?: {
+    status?: string;
+    ownerRole?: string;
+    assetType?: string;
+    serviceLine?: string;
+  }): Promise<PublicAssetRecord[]> {
+    return this.repository.listPublicAssets(filters);
+  }
+
+  async updatePublicAsset(actor: ActorContext, publicAssetId: string, input: unknown): Promise<PublicAssetRecord> {
+    const command = publicAssetUpdateSchema.parse(input);
+    const asset = await this.repository.getPublicAsset(publicAssetId);
+    if (!asset) {
+      notFound(`Public asset not found: ${publicAssetId}`);
+    }
+    if (["approval_pending", "approved", "publish_pending", "published", "archived"].includes(asset.status)) {
+      badRequest("Public assets cannot be edited after approval routing begins.");
+    }
+
+    const document = asset.documentId ? await this.repository.getDocument(asset.documentId) : null;
+    const claims = command.claims
+      ? command.claims.map((claim) => ({
+        id: randomId("claim"),
+        claimText: claim.claimText,
+        evidenceNote: claim.evidenceNote ?? null,
+        reviewStatus: "pending" as const,
+        reviewerNotes: null
+      }))
+      : asset.claims;
+    const now = new Date().toISOString();
+    const nextClaimsReviewStatus = command.claims ? "not_started" : asset.claimsReviewStatus;
+    const nextClaimsReviewed = command.claims ? false : asset.claimsReviewed;
+
+    const updated = await this.repository.updatePublicAsset(asset.id, {
+      assetType: command.assetType ?? asset.assetType,
+      title: command.title ?? asset.title,
+      ownerRole: command.ownerRole ?? asset.ownerRole,
+      serviceLine: command.serviceLine !== undefined ? command.serviceLine : asset.serviceLine,
+      audience: command.audience !== undefined ? command.audience : asset.audience,
+      channelLabel: command.channelLabel !== undefined ? command.channelLabel : asset.channelLabel,
+      summary: command.summary ?? asset.summary,
+      body: command.body ?? asset.body,
+      claims,
+      claimsReviewed: nextClaimsReviewed,
+      claimsReviewStatus: nextClaimsReviewStatus,
+      claimsReviewNotes: command.claims ? null : asset.claimsReviewNotes,
+      claimsReviewedAt: command.claims ? null : asset.claimsReviewedAt,
+      claimsReviewedByRole: command.claims ? null : asset.claimsReviewedByRole,
+      status: command.claims ? "draft" : asset.status,
+      updatedAt: now
+    });
+
+    if (document) {
+      await this.repository.updateDocument(document.id, {
+        title: updated.title,
+        ownerRole: updated.ownerRole,
+        summary: updated.summary,
+        body: updated.body,
+        serviceLines: updated.serviceLine ? [updated.serviceLine] : [],
+        status: document.status === "rejected" ? "draft" : document.status,
+        updatedAt: now,
+        version: document.version + 1
+      });
+    }
+
+    await this.recordAudit(actor, "public_asset.updated", "public_asset", updated.id, {
+      documentId: updated.documentId,
+      claimsCount: updated.claims.length
+    });
+
+    return updated;
+  }
+
+  async reviewPublicAssetClaims(actor: ActorContext, publicAssetId: string, input: unknown): Promise<PublicAssetRecord> {
+    const command = claimsReviewDecisionCommandSchema.parse(input);
+    const asset = await this.repository.getPublicAsset(publicAssetId);
+    if (!asset) {
+      notFound(`Public asset not found: ${publicAssetId}`);
+    }
+    if (!["quality_lead", "medical_director"].includes(actor.role)) {
+      forbidden(`Role ${actor.role} cannot review public-asset claims.`);
+    }
+
+    const decisions = new Map(command.claimDecisions.map((entry) => [entry.claimId, entry]));
+    const claims = asset.claims.map((claim) => {
+      const decision = decisions.get(claim.id);
+      if (!decision) {
+        return claim;
+      }
+      return {
+        ...claim,
+        reviewStatus: decision.decision,
+        reviewerNotes: decision.notes ?? null
+      };
+    });
+
+    const allApproved = claims.length > 0 && claims.every((claim) => claim.reviewStatus === "approved");
+    const hasRevision = claims.some((claim) => claim.reviewStatus === "needs_revision" || claim.reviewStatus === "unsupported");
+    const now = new Date().toISOString();
+    const updated = await this.repository.updatePublicAsset(asset.id, {
+      claims,
+      claimsReviewed: allApproved,
+      claimsReviewStatus: allApproved ? "completed" : hasRevision ? "needs_revision" : "in_review",
+      claimsReviewNotes: command.overallNotes ?? null,
+      claimsReviewedAt: allApproved ? now : null,
+      claimsReviewedByRole: allApproved ? actor.role : null,
+      status: allApproved ? "claims_reviewed" : "claims_in_review",
+      updatedAt: now
+    });
+
+    if (allApproved) {
+      await this.advanceWorkflowIfPossible(actor, updated.workflowRunId, ["quality_checked"], "Claims review completed.");
+    }
+
+    await this.recordAudit(actor, "public_asset.claims_reviewed", "public_asset", updated.id, {
+      claimsReviewStatus: updated.claimsReviewStatus,
+      allApproved,
+      reviewedClaims: command.claimDecisions.length
+    });
+
+    return updated;
+  }
+
+  async submitPublicAsset(actor: ActorContext, publicAssetId: string): Promise<{
+    publicAsset: PublicAssetRecord;
+    document: DocumentRecord;
+    approvals: ApprovalTask[];
+  }> {
+    const asset = await this.repository.getPublicAsset(publicAssetId);
+    if (!asset) {
+      notFound(`Public asset not found: ${publicAssetId}`);
+    }
+    if (!asset.claimsReviewed || asset.claimsReviewStatus !== "completed") {
+      badRequest("All public-facing claims must be reviewed before approval routing.");
+    }
+    if (!asset.documentId) {
+      badRequest("Public asset is missing its linked document.");
+    }
+
+    await this.advanceWorkflowIfPossible(
+      actor,
+      asset.workflowRunId,
+      ["quality_checked", "awaiting_human_review"],
+      "Public asset routed for human approval."
+    );
+
+    const result = await this.submitDocument(actor, asset.documentId);
+    const synced = await this.syncPublicAssetFromDocument(result.document);
+
+    await this.recordAudit(actor, "public_asset.submitted", "public_asset", asset.id, {
+      documentId: asset.documentId,
+      approvalCount: result.approvals.length
+    });
+
+    return {
+      publicAsset: synced ?? asset,
+      document: result.document,
+      approvals: result.approvals
+    };
+  }
+
+  async publishPublicAsset(actor: ActorContext, publicAssetId: string): Promise<PublicAssetRecord> {
+    const asset = await this.repository.getPublicAsset(publicAssetId);
+    if (!asset) {
+      notFound(`Public asset not found: ${publicAssetId}`);
+    }
+    if (!asset.documentId) {
+      badRequest("Public asset is missing its linked document.");
+    }
+
+    const updatedDocument = await this.publishDocument(actor, asset.documentId);
+    const synced = await this.syncPublicAssetFromDocument(updatedDocument);
+
+    await this.recordAudit(actor, "public_asset.publish_requested", "public_asset", asset.id, {
+      documentId: asset.documentId
+    });
+
+    return synced ?? asset;
   }
 
   async createActionItem(actor: ActorContext, input: unknown) {
@@ -2642,6 +2911,28 @@ export class ClinicApiService {
         note
       });
     }
+  }
+
+  private async syncPublicAssetFromDocument(document: DocumentRecord): Promise<PublicAssetRecord | null> {
+    const asset = await this.repository.getPublicAssetByDocumentId(document.id);
+    if (!asset) {
+      return null;
+    }
+
+    return this.repository.updatePublicAsset(asset.id, {
+      title: document.title,
+      ownerRole: document.ownerRole as PublicAssetRecord["ownerRole"],
+      summary: document.summary,
+      body: document.body,
+      serviceLine: document.serviceLines[0] ?? null,
+      status: derivePublicAssetStatus({
+        documentStatus: document.status,
+        claimsReviewStatus: asset.claimsReviewStatus
+      }),
+      publishedAt: document.publishedAt,
+      publishedPath: document.publishedPath,
+      updatedAt: new Date().toISOString()
+    });
   }
 
   private async syncIncidentSideEffects(actor: ActorContext, incident: IncidentRecord): Promise<void> {

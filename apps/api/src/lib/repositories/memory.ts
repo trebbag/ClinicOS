@@ -14,6 +14,7 @@ import type {
   IncidentRecord,
   MetricRun,
   MicrosoftIntegrationValidationRecord,
+  PublicAssetRecord,
   ScorecardReviewRecord,
   TrainingCompletionRecord,
   TrainingRequirement,
@@ -37,6 +38,7 @@ export class MemoryClinicRepository implements ClinicRepository {
   public readonly actionItems: ActionItemRecord[] = [];
   public readonly incidents: IncidentRecord[] = [];
   public readonly capas: CapaRecord[] = [];
+  public readonly publicAssets: PublicAssetRecord[] = [];
   public readonly checklistTemplates: ChecklistTemplate[] = [];
   public readonly checklistRuns: ChecklistRun[] = [];
   public readonly checklistItems: ChecklistItemRecord[] = [];
@@ -181,6 +183,34 @@ export class MemoryClinicRepository implements ClinicRepository {
     incidentId?: string;
   }): Promise<CapaRecord[]> {
     return this.capas.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createPublicAsset(record: PublicAssetRecord): Promise<PublicAssetRecord> {
+    this.publicAssets.unshift(record);
+    return record;
+  }
+
+  async updatePublicAsset(id: string, patch: Partial<PublicAssetRecord>): Promise<PublicAssetRecord> {
+    const index = this.publicAssets.findIndex((record) => record.id === id);
+    this.publicAssets[index] = { ...this.publicAssets[index], ...patch };
+    return this.publicAssets[index];
+  }
+
+  async getPublicAsset(id: string): Promise<PublicAssetRecord | null> {
+    return this.publicAssets.find((record) => record.id === id) ?? null;
+  }
+
+  async getPublicAssetByDocumentId(documentId: string): Promise<PublicAssetRecord | null> {
+    return this.publicAssets.find((record) => record.documentId === documentId) ?? null;
+  }
+
+  async listPublicAssets(filters?: {
+    status?: string;
+    ownerRole?: string;
+    assetType?: string;
+    serviceLine?: string;
+  }): Promise<PublicAssetRecord[]> {
+    return this.publicAssets.filter((record) => matchesFilters(record, filters));
   }
 
   async createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate> {
