@@ -50,9 +50,12 @@ import {
   publicAssetCreateSchema,
   publicAssetUpdateSchema,
   claimsReviewDecisionCommandSchema,
+  createPracticeAgreementRecord,
   serviceLineCreateSchema,
   serviceLinePackCreateSchema,
   serviceLineUpdateSchema,
+  practiceAgreementCreateSchema,
+  practiceAgreementUpdateSchema,
   scorecardImportJobSchema,
   scorecardReviewDecisionCommandSchema,
   trainingCompletionCreateSchema,
@@ -90,6 +93,7 @@ import {
   type OfficeOpsDailyStatus,
   type PublicationMode,
   type PublicAssetRecord,
+  type PracticeAgreementRecord,
   type RoleCapabilityRecord,
   type ServiceLinePackRecord,
   type ServiceLineRecord,
@@ -168,6 +172,31 @@ function derivePublicAssetStatus(input: {
       if (input.claimsReviewStatus === "in_review" || input.claimsReviewStatus === "needs_revision") {
         return "claims_in_review";
       }
+      return "draft";
+  }
+}
+
+function derivePracticeAgreementStatus(input: {
+  documentStatus: DocumentRecord["status"];
+  currentStatus: PracticeAgreementRecord["status"];
+}): PracticeAgreementRecord["status"] {
+  if (["archived", "expired"].includes(input.currentStatus)) {
+    return input.currentStatus;
+  }
+
+  switch (input.documentStatus) {
+    case "in_review":
+      return "approval_pending";
+    case "approved":
+      return "approved";
+    case "publish_pending":
+      return "publish_pending";
+    case "published":
+      return "published";
+    case "rejected":
+      return "sent_back";
+    case "draft":
+    default:
       return "draft";
   }
 }
@@ -979,6 +1008,7 @@ export class ClinicApiService {
     });
 
     await this.syncPublicAssetFromDocument(updatedDocument);
+    await this.syncPracticeAgreementFromDocument(updatedDocument);
     await this.syncCommitteeMeetingFromDocument(updatedDocument);
     await this.syncServiceLinePackFromDocument(updatedDocument);
 
@@ -1020,6 +1050,7 @@ export class ClinicApiService {
     });
 
     await this.syncPublicAssetFromDocument(updatedDocument);
+    await this.syncPracticeAgreementFromDocument(updatedDocument);
     await this.syncCommitteeMeetingFromDocument(updatedDocument);
     await this.syncServiceLinePackFromDocument(updatedDocument);
 
@@ -1912,6 +1943,285 @@ export class ClinicApiService {
     return {
       serviceLine: updatedServiceLine,
       pack: syncedPack ?? pack
+    };
+  }
+
+  async listPracticeAgreements(filters?: {
+    status?: string;
+    ownerRole?: string;
+    supervisingPhysicianRole?: string;
+    supervisedRole?: string;
+    agreementType?: string;
+    serviceLineId?: string;
+  }): Promise<PracticeAgreementRecord[]> {
+    const { serviceLineId, ...repositoryFilters } = filters ?? {};
+    const agreements = await this.repository.listPracticeAgreements(repositoryFilters);
+    if (!serviceLineId) {
+      return agreements;
+    }
+    return agreements.filter((agreement) => agreement.serviceLineIds.includes(serviceLineId as PracticeAgreementRecord["serviceLineIds"][number]));
+  }
+
+  async createPracticeAgreement(actor: ActorContext, input: unknown): Promise<{
+    practiceAgreement: PracticeAgreementRecord;
+    document: DocumentRecord;
+  }> {
+    const command = practiceAgreementCreateSchema.parse(input);
+    const workflow = await this.createWorkflowRun(actor, {
+      workflowId: "practice_agreement_review",
+      input: {
+        title: command.title,
+        agreementType: command.agreementType,
+        ownerRole: command.ownerRole,
+        supervisingPhysicianRole: command.supervisingPhysicianRole,
+        supervisedRole: command.supervisedRole,
+        serviceLineIds: command.serviceLineIds,
+        requestedBy: actor.actorId,
+        reviewCadenceDays: command.reviewCadenceDays ?? 90
+      }
+    });
+
+    await this.advanceWorkflowIfPossible(actor, workflow.id, ["scoped", "drafted"], "Practice agreement drafted.");
+
+    const document = await this.createDocument(actor, {
+      title: command.title,
+      ownerRole: command.ownerRole,
+      approvalClass: "clinical_governance",
+      artifactType: command.agreementType,
+      summary: `Physician oversight agreement for ${command.supervisedRole.replaceAll("_", " ")} across ${command.serviceLineIds.map((serviceLineId) => serviceLineId.replaceAll("_", " ")).join(", ")}.`,
+      workflowRunId: workflow.id,
+      serviceLines: command.serviceLineIds,
+      body: this.buildPracticeAgreementBody(command)
+    });
+
+    const practiceAgreement = await this.repository.createPracticeAgreement(createPracticeAgreementRecord({
+      ...command,
+      reviewCadenceDays: command.reviewCadenceDays ?? 90,
+      notes: command.notes ?? null,
+      documentId: document.id,
+      workflowRunId: workflow.id,
+      createdBy: actor.actorId
+    }));
+
+    await this.recordAudit(actor, "practice_agreement.created", "practice_agreement", practiceAgreement.id, {
+      workflowRunId: workflow.id,
+      documentId: document.id,
+      supervisedRole: practiceAgreement.supervisedRole,
+      serviceLineIds: practiceAgreement.serviceLineIds
+    });
+
+    return {
+      practiceAgreement,
+      document
+    };
+  }
+
+  async bootstrapPracticeAgreements(actor: ActorContext): Promise<{
+    created: PracticeAgreementRecord[];
+    existing: PracticeAgreementRecord[];
+  }> {
+    const defaults: Array<z.infer<typeof practiceAgreementCreateSchema>> = [
+      {
+        title: "Telehealth physician oversight agreement",
+        agreementType: "physician_oversight_plan",
+        ownerRole: "medical_director",
+        supervisingPhysicianName: "Assigned supervising physician",
+        supervisingPhysicianRole: "patient_care_team_physician",
+        supervisedRole: "nurse_practitioner",
+        serviceLineIds: ["telehealth"],
+        scopeSummary: "Define synchronous and asynchronous telehealth oversight boundaries, escalation expectations, and chart-review cadence for advanced practice clinicians.",
+        delegatedActivitiesSummary: "Covers protocol-guided follow-up visits, refill review, escalation thresholds, and physician availability for higher-acuity telehealth findings.",
+        cosignExpectation: "Physician cosign is required for new treatment plans, protocol exceptions, and charts flagged through peer review or adverse-event monitoring.",
+        escalationProtocol: "Escalate same-day for unstable symptoms, unexpected treatment response, or any protocol exception requiring physician review.",
+        reviewCadenceDays: 60,
+        notes: "Pair with the active telehealth service-line pack and delegation matrix."
+      },
+      {
+        title: "Weight management NP practice agreement",
+        agreementType: "practice_agreement",
+        ownerRole: "medical_director",
+        supervisingPhysicianName: "Assigned supervising physician",
+        supervisingPhysicianRole: "patient_care_team_physician",
+        supervisedRole: "nurse_practitioner",
+        serviceLineIds: ["weight_management"],
+        scopeSummary: "Define the advanced practice scope, physician oversight cadence, and medication-protocol guardrails for the weight-management program.",
+        delegatedActivitiesSummary: "Covers intake review, protocol-based medication titration, follow-up documentation, escalation thresholds, and physician consultation triggers.",
+        cosignExpectation: "Cosign is required for new medication starts outside approved pathways, protocol deviations, and charts escalated for physician review.",
+        escalationProtocol: "Escalate immediately for contraindications, significant adverse effects, rapid deterioration, or any patient scenario outside the approved protocol.",
+        reviewCadenceDays: 60,
+        notes: "Keep aligned with the service-line governance pack and current delegation rules."
+      },
+      {
+        title: "HRT physician oversight agreement",
+        agreementType: "practice_agreement",
+        ownerRole: "medical_director",
+        supervisingPhysicianName: "Assigned supervising physician",
+        supervisingPhysicianRole: "patient_care_team_physician",
+        supervisedRole: "nurse_practitioner",
+        serviceLineIds: ["hrt"],
+        scopeSummary: "Define physician oversight boundaries for hormone-related evaluations, follow-up cadence, and documentation expectations in the HRT program.",
+        delegatedActivitiesSummary: "Covers standing follow-up care, refill review, lab follow-up under approved protocols, and required physician consultation scenarios.",
+        cosignExpectation: "Cosign is required for new-start treatment plans, exceptions to standing protocols, and any higher-risk chart selected for physician review.",
+        escalationProtocol: "Escalate same-day for red-flag symptoms, out-of-range clinical findings, protocol exceptions, or any uncertainty about treatment appropriateness.",
+        reviewCadenceDays: 60,
+        notes: "Review alongside the HRT service-line governance pack and any active public-claims constraints."
+      }
+    ];
+
+    const existingRecords = await this.repository.listPracticeAgreements();
+    const created: PracticeAgreementRecord[] = [];
+    const existing: PracticeAgreementRecord[] = [];
+
+    for (const entry of defaults) {
+      const match = existingRecords.find((record) =>
+        record.title === entry.title
+        && record.supervisedRole === entry.supervisedRole
+        && record.serviceLineIds.join("|") === entry.serviceLineIds.join("|")
+        && record.status !== "archived"
+      );
+      if (match) {
+        existing.push(match);
+        continue;
+      }
+      created.push((await this.createPracticeAgreement(actor, entry)).practiceAgreement);
+    }
+
+    return {
+      created,
+      existing
+    };
+  }
+
+  async updatePracticeAgreement(actor: ActorContext, practiceAgreementId: string, input: unknown): Promise<{
+    practiceAgreement: PracticeAgreementRecord;
+    document: DocumentRecord | null;
+  }> {
+    const command = practiceAgreementUpdateSchema.parse(input);
+    const practiceAgreement = await this.repository.getPracticeAgreement(practiceAgreementId);
+    if (!practiceAgreement) {
+      notFound(`Practice agreement not found: ${practiceAgreementId}`);
+    }
+    if (!["draft", "sent_back"].includes(practiceAgreement.status)) {
+      badRequest("Only draft or sent-back practice agreements can be edited.");
+    }
+
+    const nextServiceLineIds = command.serviceLineIds ?? practiceAgreement.serviceLineIds;
+    const nextOwnerRole = command.ownerRole ?? practiceAgreement.ownerRole;
+    const updatedAt = new Date().toISOString();
+    const updatedPracticeAgreement = await this.repository.updatePracticeAgreement(practiceAgreement.id, {
+      title: command.title ?? practiceAgreement.title,
+      agreementType: command.agreementType ?? practiceAgreement.agreementType,
+      status: command.status ?? practiceAgreement.status,
+      ownerRole: nextOwnerRole,
+      supervisingPhysicianName: command.supervisingPhysicianName ?? practiceAgreement.supervisingPhysicianName,
+      supervisingPhysicianRole: command.supervisingPhysicianRole ?? practiceAgreement.supervisingPhysicianRole,
+      supervisedRole: command.supervisedRole ?? practiceAgreement.supervisedRole,
+      serviceLineIds: nextServiceLineIds,
+      scopeSummary: command.scopeSummary ?? practiceAgreement.scopeSummary,
+      delegatedActivitiesSummary: command.delegatedActivitiesSummary ?? practiceAgreement.delegatedActivitiesSummary,
+      cosignExpectation: command.cosignExpectation ?? practiceAgreement.cosignExpectation,
+      escalationProtocol: command.escalationProtocol ?? practiceAgreement.escalationProtocol,
+      reviewCadenceDays: command.reviewCadenceDays ?? practiceAgreement.reviewCadenceDays,
+      effectiveDate: command.effectiveDate !== undefined ? command.effectiveDate : practiceAgreement.effectiveDate,
+      expiresAt: command.expiresAt !== undefined ? command.expiresAt : practiceAgreement.expiresAt,
+      notes: command.notes !== undefined ? command.notes : practiceAgreement.notes,
+      updatedAt
+    });
+
+    let document: DocumentRecord | null = null;
+    if (practiceAgreement.documentId) {
+      const draftDocument = await this.repository.getDocument(practiceAgreement.documentId);
+      if (!draftDocument) {
+        notFound(`Practice-agreement document not found: ${practiceAgreement.documentId}`);
+      }
+      if (!["draft", "rejected"].includes(draftDocument.status)) {
+        badRequest("Practice-agreement draft is already under review or published.");
+      }
+
+      document = await this.repository.updateDocument(draftDocument.id, {
+        title: updatedPracticeAgreement.title,
+        ownerRole: nextOwnerRole,
+        summary: `Physician oversight agreement for ${updatedPracticeAgreement.supervisedRole.replaceAll("_", " ")} across ${updatedPracticeAgreement.serviceLineIds.map((serviceLineId) => serviceLineId.replaceAll("_", " ")).join(", ")}.`,
+        body: this.buildPracticeAgreementBody(updatedPracticeAgreement),
+        serviceLines: updatedPracticeAgreement.serviceLineIds,
+        status: "draft",
+        updatedAt,
+        version: draftDocument.version + 1
+      });
+    }
+
+    await this.recordAudit(actor, "practice_agreement.updated", "practice_agreement", updatedPracticeAgreement.id, {
+      status: updatedPracticeAgreement.status,
+      supervisedRole: updatedPracticeAgreement.supervisedRole,
+      serviceLineIds: updatedPracticeAgreement.serviceLineIds
+    });
+
+    return {
+      practiceAgreement: updatedPracticeAgreement,
+      document
+    };
+  }
+
+  async submitPracticeAgreement(actor: ActorContext, practiceAgreementId: string): Promise<{
+    practiceAgreement: PracticeAgreementRecord;
+    document: DocumentRecord;
+    approvals: ApprovalTask[];
+  }> {
+    const practiceAgreement = await this.repository.getPracticeAgreement(practiceAgreementId);
+    if (!practiceAgreement) {
+      notFound(`Practice agreement not found: ${practiceAgreementId}`);
+    }
+    if (!practiceAgreement.documentId) {
+      badRequest("Create a practice-agreement draft before routing it for approval.");
+    }
+    if (!["draft", "sent_back"].includes(practiceAgreement.status)) {
+      badRequest("Practice agreement is not ready for approval routing.");
+    }
+
+    await this.advanceWorkflowIfPossible(
+      actor,
+      practiceAgreement.workflowRunId,
+      ["drafted", "quality_checked", "awaiting_human_review"],
+      "Practice agreement routed for human review."
+    );
+
+    const result = await this.submitDocument(actor, practiceAgreement.documentId);
+    const synced = await this.syncPracticeAgreementFromDocument(result.document);
+
+    await this.recordAudit(actor, "practice_agreement.submitted", "practice_agreement", practiceAgreement.id, {
+      approvalCount: result.approvals.length,
+      documentId: practiceAgreement.documentId
+    });
+
+    return {
+      practiceAgreement: synced ?? practiceAgreement,
+      document: result.document,
+      approvals: result.approvals
+    };
+  }
+
+  async publishPracticeAgreement(actor: ActorContext, practiceAgreementId: string): Promise<{
+    practiceAgreement: PracticeAgreementRecord;
+    document: DocumentRecord;
+  }> {
+    const practiceAgreement = await this.repository.getPracticeAgreement(practiceAgreementId);
+    if (!practiceAgreement) {
+      notFound(`Practice agreement not found: ${practiceAgreementId}`);
+    }
+    if (!practiceAgreement.documentId) {
+      badRequest("Practice agreement is not available for publication.");
+    }
+
+    const document = await this.publishDocument(actor, practiceAgreement.documentId);
+    const synced = await this.syncPracticeAgreementFromDocument(document);
+
+    await this.recordAudit(actor, "practice_agreement.publish_requested", "practice_agreement", practiceAgreement.id, {
+      documentId: practiceAgreement.documentId
+    });
+
+    return {
+      practiceAgreement: synced ?? practiceAgreement,
+      document
     };
   }
 
@@ -3985,6 +4295,45 @@ export class ClinicApiService {
     ].filter((line): line is string => line !== null).join("\n");
   }
 
+  private buildPracticeAgreementBody(
+    input:
+      | z.infer<typeof practiceAgreementCreateSchema>
+      | PracticeAgreementRecord
+  ): string {
+    return [
+      `# ${input.title}`,
+      "",
+      `Agreement type: ${input.agreementType.replaceAll("_", " ")}`,
+      `Owner role: ${input.ownerRole}`,
+      `Supervising physician: ${input.supervisingPhysicianName} (${input.supervisingPhysicianRole.replaceAll("_", " ")})`,
+      `Supervised role: ${input.supervisedRole.replaceAll("_", " ")}`,
+      "",
+      "## Service lines",
+      ...input.serviceLineIds.map((serviceLineId) => `- ${serviceLineId.replaceAll("_", " ")}`),
+      "",
+      "## Scope summary",
+      input.scopeSummary,
+      "",
+      "## Delegated activities",
+      input.delegatedActivitiesSummary,
+      "",
+      "## Cosign expectation",
+      input.cosignExpectation,
+      "",
+      "## Escalation protocol",
+      input.escalationProtocol,
+      "",
+      "## Review cadence",
+      `Review every ${input.reviewCadenceDays ?? 90} days.`,
+      input.effectiveDate ? "" : null,
+      input.effectiveDate ? `Effective date: ${input.effectiveDate}` : null,
+      input.expiresAt ? `Expiration date: ${input.expiresAt}` : null,
+      input.notes ? "" : null,
+      input.notes ? "## Notes" : null,
+      input.notes ?? null
+    ].filter((line): line is string => line !== null).join("\n");
+  }
+
   private async syncPublicAssetFromDocument(document: DocumentRecord): Promise<PublicAssetRecord | null> {
     const asset = await this.repository.getPublicAssetByDocumentId(document.id);
     if (!asset) {
@@ -4004,6 +4353,31 @@ export class ClinicApiService {
       publishedAt: document.publishedAt,
       publishedPath: document.publishedPath,
       updatedAt: new Date().toISOString()
+    });
+  }
+
+  private async syncPracticeAgreementFromDocument(document: DocumentRecord): Promise<PracticeAgreementRecord | null> {
+    const agreement = await this.repository.getPracticeAgreementByDocumentId(document.id);
+    if (!agreement) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    return this.repository.updatePracticeAgreement(agreement.id, {
+      title: document.title,
+      ownerRole: document.ownerRole as PracticeAgreementRecord["ownerRole"],
+      serviceLineIds: document.serviceLines.length > 0
+        ? document.serviceLines as PracticeAgreementRecord["serviceLineIds"]
+        : agreement.serviceLineIds,
+      status: derivePracticeAgreementStatus({
+        documentStatus: document.status,
+        currentStatus: agreement.status
+      }),
+      effectiveDate: document.publishedAt ?? agreement.effectiveDate,
+      reviewDueAt: document.publishedAt ? addDays(document.publishedAt, agreement.reviewCadenceDays) : agreement.reviewDueAt,
+      publishedAt: document.publishedAt,
+      publishedPath: document.publishedPath,
+      updatedAt: now
     });
   }
 

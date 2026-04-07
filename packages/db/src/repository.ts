@@ -18,6 +18,7 @@ import type {
   MetricRun,
   MicrosoftIntegrationValidationRecord,
   PublicAssetRecord,
+  PracticeAgreementRecord,
   ScorecardReviewRecord,
   ServiceLinePackRecord,
   ServiceLineRecord,
@@ -47,6 +48,7 @@ import {
   metricRunSchema,
   microsoftIntegrationValidationRecordSchema,
   publicAssetRecordSchema,
+  practiceAgreementRecordSchema,
   scorecardReviewRecordSchema,
   serviceLinePackRecordSchema,
   serviceLineRecordSchema,
@@ -95,6 +97,33 @@ type ServiceLinePackRow = {
   emergencyEscalation: string;
   pricingModelSummary: string;
   claimsGovernanceSummary: string;
+  notes: string | null;
+  documentId: string | null;
+  workflowRunId: string | null;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+  publishedAt: Date | null;
+  publishedPath: string | null;
+};
+type PracticeAgreementRow = {
+  id: string;
+  title: string;
+  agreementType: string;
+  status: string;
+  ownerRole: string;
+  supervisingPhysicianName: string;
+  supervisingPhysicianRole: string;
+  supervisedRole: string;
+  serviceLineIdsJson: Prisma.JsonValue;
+  scopeSummary: string;
+  delegatedActivitiesSummary: string;
+  cosignExpectation: string;
+  escalationProtocol: string;
+  reviewCadenceDays: number;
+  effectiveDate: Date | null;
+  reviewDueAt: Date | null;
+  expiresAt: Date | null;
   notes: string | null;
   documentId: string | null;
   workflowRunId: string | null;
@@ -207,6 +236,17 @@ export type ClinicRepository = {
     serviceLineId?: string;
     status?: string;
   }): Promise<ServiceLinePackRecord[]>;
+  createPracticeAgreement(record: PracticeAgreementRecord): Promise<PracticeAgreementRecord>;
+  updatePracticeAgreement(id: string, patch: Partial<PracticeAgreementRecord>): Promise<PracticeAgreementRecord>;
+  getPracticeAgreement(id: string): Promise<PracticeAgreementRecord | null>;
+  getPracticeAgreementByDocumentId(documentId: string): Promise<PracticeAgreementRecord | null>;
+  listPracticeAgreements(filters?: {
+    status?: string;
+    ownerRole?: string;
+    supervisingPhysicianRole?: string;
+    supervisedRole?: string;
+    agreementType?: string;
+  }): Promise<PracticeAgreementRecord[]>;
   createDelegationRule(record: DelegationRuleRecord): Promise<DelegationRuleRecord>;
   updateDelegationRule(id: string, patch: Partial<DelegationRuleRecord>): Promise<DelegationRuleRecord>;
   getDelegationRule(id: string): Promise<DelegationRuleRecord | null>;
@@ -349,6 +389,10 @@ export class PrismaClinicRepository implements ClinicRepository {
 
   private get serviceLinePackClient(): UntypedPrismaDelegate {
     return (this.client as unknown as { serviceLinePack: UntypedPrismaDelegate }).serviceLinePack;
+  }
+
+  private get practiceAgreementClient(): UntypedPrismaDelegate {
+    return (this.client as unknown as { practiceAgreement: UntypedPrismaDelegate }).practiceAgreement;
   }
 
   private get delegationRuleClient(): UntypedPrismaDelegate {
@@ -671,6 +715,23 @@ export class PrismaClinicRepository implements ClinicRepository {
   private mapServiceLinePackRecord(record: ServiceLinePackRow): ServiceLinePackRecord {
     return serviceLinePackRecordSchema.parse({
       ...record,
+      notes: record.notes ?? null,
+      documentId: record.documentId ?? null,
+      workflowRunId: record.workflowRunId ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+      publishedAt: record.publishedAt?.toISOString() ?? null,
+      publishedPath: record.publishedPath ?? null
+    });
+  }
+
+  private mapPracticeAgreementRecord(record: PracticeAgreementRow): PracticeAgreementRecord {
+    return practiceAgreementRecordSchema.parse({
+      ...record,
+      serviceLineIds: record.serviceLineIdsJson,
+      effectiveDate: record.effectiveDate?.toISOString() ?? null,
+      reviewDueAt: record.reviewDueAt?.toISOString() ?? null,
+      expiresAt: record.expiresAt?.toISOString() ?? null,
       notes: record.notes ?? null,
       documentId: record.documentId ?? null,
       workflowRunId: record.workflowRunId ?? null,
@@ -1693,6 +1754,99 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
 
     return (records as ServiceLinePackRow[]).map((record) => this.mapServiceLinePackRecord(record));
+  }
+
+  async createPracticeAgreement(record: PracticeAgreementRecord): Promise<PracticeAgreementRecord> {
+    const created = await this.practiceAgreementClient.create({
+      data: {
+        id: record.id,
+        title: record.title,
+        agreementType: record.agreementType,
+        status: record.status,
+        ownerRole: record.ownerRole,
+        supervisingPhysicianName: record.supervisingPhysicianName,
+        supervisingPhysicianRole: record.supervisingPhysicianRole,
+        supervisedRole: record.supervisedRole,
+        serviceLineIdsJson: asJsonValue(record.serviceLineIds),
+        scopeSummary: record.scopeSummary,
+        delegatedActivitiesSummary: record.delegatedActivitiesSummary,
+        cosignExpectation: record.cosignExpectation,
+        escalationProtocol: record.escalationProtocol,
+        reviewCadenceDays: record.reviewCadenceDays,
+        effectiveDate: isoToDate(record.effectiveDate),
+        reviewDueAt: isoToDate(record.reviewDueAt),
+        expiresAt: isoToDate(record.expiresAt),
+        notes: record.notes,
+        documentId: record.documentId,
+        workflowRunId: record.workflowRunId,
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt),
+        publishedAt: isoToDate(record.publishedAt),
+        publishedPath: record.publishedPath
+      }
+    });
+
+    return this.mapPracticeAgreementRecord(created as PracticeAgreementRow);
+  }
+
+  async updatePracticeAgreement(id: string, patch: Partial<PracticeAgreementRecord>): Promise<PracticeAgreementRecord> {
+    const updated = await this.practiceAgreementClient.update({
+      where: { id },
+      data: {
+        title: patch.title,
+        agreementType: patch.agreementType,
+        status: patch.status,
+        ownerRole: patch.ownerRole,
+        supervisingPhysicianName: patch.supervisingPhysicianName,
+        supervisingPhysicianRole: patch.supervisingPhysicianRole,
+        supervisedRole: patch.supervisedRole,
+        serviceLineIdsJson: patch.serviceLineIds ? asJsonValue(patch.serviceLineIds) : undefined,
+        scopeSummary: patch.scopeSummary,
+        delegatedActivitiesSummary: patch.delegatedActivitiesSummary,
+        cosignExpectation: patch.cosignExpectation,
+        escalationProtocol: patch.escalationProtocol,
+        reviewCadenceDays: patch.reviewCadenceDays,
+        effectiveDate: isoToDate(patch.effectiveDate),
+        reviewDueAt: isoToDate(patch.reviewDueAt),
+        expiresAt: isoToDate(patch.expiresAt),
+        notes: patch.notes,
+        documentId: patch.documentId,
+        workflowRunId: patch.workflowRunId,
+        createdBy: patch.createdBy,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt),
+        publishedAt: isoToDate(patch.publishedAt),
+        publishedPath: patch.publishedPath
+      }
+    });
+
+    return this.mapPracticeAgreementRecord(updated as PracticeAgreementRow);
+  }
+
+  async getPracticeAgreement(id: string): Promise<PracticeAgreementRecord | null> {
+    const record = await this.practiceAgreementClient.findUnique({ where: { id } });
+    return record ? this.mapPracticeAgreementRecord(record as PracticeAgreementRow) : null;
+  }
+
+  async getPracticeAgreementByDocumentId(documentId: string): Promise<PracticeAgreementRecord | null> {
+    const record = await this.practiceAgreementClient.findFirst?.({ where: { documentId } });
+    return record ? this.mapPracticeAgreementRecord(record as PracticeAgreementRow) : null;
+  }
+
+  async listPracticeAgreements(filters?: {
+    status?: string;
+    ownerRole?: string;
+    supervisingPhysicianRole?: string;
+    supervisedRole?: string;
+    agreementType?: string;
+  }): Promise<PracticeAgreementRecord[]> {
+    const records = await this.practiceAgreementClient.findMany({
+      where: mapListFilters(filters),
+      orderBy: { createdAt: "desc" }
+    });
+
+    return (records as PracticeAgreementRow[]).map((record) => this.mapPracticeAgreementRecord(record));
   }
 
   async createDelegationRule(record: DelegationRuleRecord): Promise<DelegationRuleRecord> {

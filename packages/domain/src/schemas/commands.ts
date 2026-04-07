@@ -26,6 +26,10 @@ import {
   publicAssetUpdateSchema
 } from "./publicAsset";
 import {
+  practiceAgreementCreateSchema,
+  practiceAgreementUpdateSchema
+} from "./practiceAgreement";
+import {
   serviceLineCreateSchema,
   serviceLinePackCreateSchema,
   serviceLineUpdateSchema
@@ -135,6 +139,8 @@ export {
   publicAssetCreateSchema,
   publicAssetUpdateSchema,
   claimsReviewDecisionCommandSchema,
+  practiceAgreementCreateSchema,
+  practiceAgreementUpdateSchema,
   serviceLineCreateSchema,
   serviceLineUpdateSchema,
   serviceLinePackCreateSchema,

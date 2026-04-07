@@ -6,6 +6,7 @@ import {
   createChecklistRun,
   createChecklistTemplate,
   createIncidentRecord,
+  createPracticeAgreementRecord,
   createPublicAssetRecord,
   createServiceLinePackRecord,
   createServiceLineRecord,
@@ -530,6 +531,68 @@ describe("WorkerJobRunner", () => {
     expect(await repository.getServiceLine(serviceLine.id)).toMatchObject({
       governanceStatus: "published",
       latestPackId: pack.id
+    });
+  });
+
+  it("keeps linked practice agreements in sync when publication completes", async () => {
+    const repository = new MemoryClinicRepository();
+    await repository.createDocument({
+      id: "doc_practice_agreement",
+      title: "Telehealth physician oversight agreement",
+      ownerRole: "medical_director",
+      approvalClass: "clinical_governance",
+      artifactType: "physician_oversight_plan",
+      summary: "Approved oversight agreement",
+      workflowRunId: "workflow_practice_agreement",
+      serviceLines: ["telehealth"],
+      createdBy: "medical-director",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: "approved",
+      body: "# Oversight agreement",
+      version: 1,
+      publishedAt: null,
+      publishedPath: null,
+      reviewDueAt: null
+    });
+    const practiceAgreement = createPracticeAgreementRecord({
+      title: "Telehealth physician oversight agreement",
+      agreementType: "physician_oversight_plan",
+      ownerRole: "medical_director",
+      supervisingPhysicianName: "Assigned supervising physician",
+      supervisingPhysicianRole: "patient_care_team_physician",
+      supervisedRole: "nurse_practitioner",
+      serviceLineIds: ["telehealth"],
+      scopeSummary: "Telehealth scope summary for advanced practice oversight.",
+      delegatedActivitiesSummary: "Protocol-based follow-up care under supervising physician oversight.",
+      cosignExpectation: "Cosign new starts and protocol exceptions.",
+      escalationProtocol: "Escalate same day for red-flag symptoms or protocol exceptions.",
+      createdBy: "medical-director",
+      documentId: "doc_practice_agreement",
+      workflowRunId: "workflow_practice_agreement"
+    });
+    await repository.createPracticeAgreement(practiceAgreement);
+    await repository.enqueueWorkerJob(createWorkerJob({
+      type: "document.publish",
+      payload: {
+        actor: {
+          actorId: "medical-director",
+          role: "medical_director",
+          name: "Medical Director"
+        },
+        documentId: "doc_practice_agreement"
+      },
+      sourceEntityType: "document",
+      sourceEntityId: "doc_practice_agreement"
+    }));
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const summary = await runner.runOnce();
+
+    expect(summary.succeeded).toBeGreaterThanOrEqual(1);
+    expect(await repository.getPracticeAgreement(practiceAgreement.id)).toMatchObject({
+      status: "published",
+      publishedPath: expect.stringContaining("doc_practice_agreement")
     });
   });
 });

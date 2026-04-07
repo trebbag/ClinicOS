@@ -188,7 +188,8 @@ pre {
 .badge-failed,
 .badge-escalated,
 .badge-auth_error,
-.badge-unreachable {
+.badge-unreachable,
+.badge-expired {
   background: rgba(124, 37, 55, 0.4);
 }
 

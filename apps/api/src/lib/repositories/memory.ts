@@ -18,6 +18,7 @@ import type {
   MetricRun,
   MicrosoftIntegrationValidationRecord,
   PublicAssetRecord,
+  PracticeAgreementRecord,
   ScorecardReviewRecord,
   ServiceLinePackRecord,
   ServiceLineRecord,
@@ -44,6 +45,7 @@ export class MemoryClinicRepository implements ClinicRepository {
   public readonly incidents: IncidentRecord[] = [];
   public readonly capas: CapaRecord[] = [];
   public readonly publicAssets: PublicAssetRecord[] = [];
+  public readonly practiceAgreements: PracticeAgreementRecord[] = [];
   public readonly committees: CommitteeRecord[] = [];
   public readonly committeeMeetings: CommitteeMeetingRecord[] = [];
   public readonly serviceLines: ServiceLineRecord[] = [];
@@ -221,6 +223,35 @@ export class MemoryClinicRepository implements ClinicRepository {
     serviceLine?: string;
   }): Promise<PublicAssetRecord[]> {
     return this.publicAssets.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createPracticeAgreement(record: PracticeAgreementRecord): Promise<PracticeAgreementRecord> {
+    this.practiceAgreements.unshift(record);
+    return record;
+  }
+
+  async updatePracticeAgreement(id: string, patch: Partial<PracticeAgreementRecord>): Promise<PracticeAgreementRecord> {
+    const index = this.practiceAgreements.findIndex((record) => record.id === id);
+    this.practiceAgreements[index] = { ...this.practiceAgreements[index], ...patch };
+    return this.practiceAgreements[index];
+  }
+
+  async getPracticeAgreement(id: string): Promise<PracticeAgreementRecord | null> {
+    return this.practiceAgreements.find((record) => record.id === id) ?? null;
+  }
+
+  async getPracticeAgreementByDocumentId(documentId: string): Promise<PracticeAgreementRecord | null> {
+    return this.practiceAgreements.find((record) => record.documentId === documentId) ?? null;
+  }
+
+  async listPracticeAgreements(filters?: {
+    status?: string;
+    ownerRole?: string;
+    supervisingPhysicianRole?: string;
+    supervisedRole?: string;
+    agreementType?: string;
+  }): Promise<PracticeAgreementRecord[]> {
+    return this.practiceAgreements.filter((record) => matchesFilters(record, filters));
   }
 
   async createCommittee(record: CommitteeRecord): Promise<CommitteeRecord> {

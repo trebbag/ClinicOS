@@ -745,6 +745,18 @@ export class WorkerJobRunner {
       }
     }
 
+    const linkedPracticeAgreement = await this.repository.getPracticeAgreementByDocumentId(document.id);
+    if (linkedPracticeAgreement) {
+      await this.repository.updatePracticeAgreement(linkedPracticeAgreement.id, {
+        status: "published",
+        effectiveDate: linkedPracticeAgreement.effectiveDate ?? now,
+        reviewDueAt: addDays(now, linkedPracticeAgreement.reviewCadenceDays),
+        publishedAt: now,
+        publishedPath: publishResult.path,
+        updatedAt: now
+      });
+    }
+
     await this.recordAudit(payload.actor, "artifact.published", "document", document.id, {
       publishedPath: publishResult.path,
       externalId: publishResult.externalId,

@@ -129,7 +129,7 @@ The deployed Render stack is now healthy and pilot-usable, but there is still on
    - up to two backup profiles if needed
    - named office manager / quality lead / HR lead profiles when you want them added
 
-3. Redeploy the latest web, API, and worker services when you want the new delegation-matrix slice available in Render
+3. Redeploy the latest web, API, and worker services when you want the new practice-agreement slice available in Render
    - no new secrets or Microsoft tenant setup are required for the repo-side implementation
    - the external Postgres schema has already been updated locally from this machine
    - if you later want additional Microsoft-backed governance registers beyond the current pilot surfaces, we can add those as separate follow-up integrations
@@ -143,6 +143,6 @@ Postgres is still required even though Microsoft is now ready, because Clinic OS
 
 ## The next command I am waiting to run
 
-The next step is no longer additional named-role setup. The next major engineering step after the new delegation-matrix slice is:
+The next step is no longer physician-oversight implementation. The next major engineering step after the new practice-agreement slice is:
 
-- physician-oversight / practice-agreement operations
+- deeper clinic-specific governance modules such as controlled-substance stewardship, telehealth stewardship details, or standards/evidence-binder tooling

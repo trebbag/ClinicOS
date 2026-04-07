@@ -2021,4 +2021,92 @@ describe("Clinic API", () => {
     });
     expect(deniedCreate.statusCode).toBe(403);
   });
+
+  it("bootstraps practice agreements, routes them through approval, and publishes them", async () => {
+    const bootstrapResponse = await app.inject({
+      method: "POST",
+      url: "/practice-agreements/bootstrap-defaults",
+      headers: headers("medical_director")
+    });
+
+    expect(bootstrapResponse.statusCode).toBe(200);
+    const bootstrap = bootstrapResponse.json<{ created: Array<{ id: string; title: string }>; existing: Array<{ id: string; title: string }> }>();
+    expect(bootstrap.created.length + bootstrap.existing.length).toBeGreaterThanOrEqual(3);
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/practice-agreements?serviceLineId=telehealth",
+      headers: headers("patient_care_team_physician")
+    });
+    expect(listResponse.statusCode).toBe(200);
+    const telehealthAgreement = listResponse
+      .json<Array<{ id: string; title: string; status: string; documentId: string | null; notes: string | null }>>()
+      .find((agreement) => agreement.title === "Telehealth physician oversight agreement");
+    expect(telehealthAgreement).toBeTruthy();
+    expect(telehealthAgreement?.status).toBe("draft");
+
+    const updateResponse = await app.inject({
+      method: "PATCH",
+      url: `/practice-agreements/${telehealthAgreement!.id}`,
+      headers: headers("medical_director"),
+      payload: {
+        notes: "Updated during API test.",
+        cosignExpectation: "Physician cosign is required for new telehealth treatment plans, protocol exceptions, and charts selected for peer review."
+      }
+    });
+    expect(updateResponse.statusCode).toBe(200);
+    expect(updateResponse.json<{ practiceAgreement: { notes: string | null } }>().practiceAgreement.notes).toBe("Updated during API test.");
+
+    const submitResponse = await app.inject({
+      method: "POST",
+      url: `/practice-agreements/${telehealthAgreement!.id}/submit`,
+      headers: headers("medical_director")
+    });
+    expect(submitResponse.statusCode).toBe(200);
+    const submitted = submitResponse.json<{
+      practiceAgreement: { status: string; documentId: string | null };
+      document: { id: string; status: string };
+      approvals: Array<{ id: string; reviewerRole: string }>;
+    }>();
+    expect(submitted.practiceAgreement.status).toBe("approval_pending");
+    expect(submitted.document.status).toBe("in_review");
+    expect(submitted.approvals.map((approval) => approval.reviewerRole).sort()).toEqual([
+      "medical_director",
+      "patient_care_team_physician"
+    ]);
+
+    for (const approval of submitted.approvals) {
+      const decision = await app.inject({
+        method: "POST",
+        url: `/approvals/${approval.id}/decide`,
+        headers: headers(approval.reviewerRole as Parameters<typeof headers>[0]),
+        payload: { decision: "approved" }
+      });
+      expect(decision.statusCode).toBe(200);
+    }
+
+    const publishResponse = await app.inject({
+      method: "POST",
+      url: `/practice-agreements/${telehealthAgreement!.id}/publish`,
+      headers: headers("medical_director")
+    });
+    expect(publishResponse.statusCode).toBe(200);
+    expect(publishResponse.json<{ practiceAgreement: { status: string } }>().practiceAgreement.status).toBe("publish_pending");
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const summary = await runner.runOnce();
+    expect(summary.succeeded).toBeGreaterThanOrEqual(1);
+
+    const publishedResponse = await app.inject({
+      method: "GET",
+      url: "/practice-agreements?serviceLineId=telehealth",
+      headers: headers("medical_director")
+    });
+    expect(publishedResponse.statusCode).toBe(200);
+    const published = publishedResponse
+      .json<Array<{ id: string; status: string; publishedPath: string | null }>>()
+      .find((agreement) => agreement.id === telehealthAgreement!.id);
+    expect(published?.status).toBe("published");
+    expect(published?.publishedPath).toContain(submitted.document.id);
+  });
 });

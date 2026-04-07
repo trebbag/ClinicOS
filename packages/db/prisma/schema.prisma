@@ -225,6 +225,38 @@ model ServiceLinePack {
   @@index([serviceLineId, status])
 }
 
+model PracticeAgreement {
+  id                         String   @id
+  title                      String
+  agreementType              String
+  status                     String
+  ownerRole                  String
+  supervisingPhysicianName   String
+  supervisingPhysicianRole   String
+  supervisedRole             String
+  serviceLineIdsJson         Json
+  scopeSummary               String
+  delegatedActivitiesSummary String
+  cosignExpectation          String
+  escalationProtocol         String
+  reviewCadenceDays          Int
+  effectiveDate              DateTime?
+  reviewDueAt                DateTime?
+  expiresAt                  DateTime?
+  notes                      String?
+  documentId                 String?  @unique
+  workflowRunId              String?  @unique
+  createdBy                  String
+  createdAt                  DateTime
+  updatedAt                  DateTime
+  publishedAt                DateTime?
+  publishedPath              String?
+
+  @@index([status, ownerRole])
+  @@index([supervisedRole, status])
+  @@index([supervisingPhysicianRole, status])
+}
+
 model DelegationRule {
   id                         String   @id
   serviceLineId              String

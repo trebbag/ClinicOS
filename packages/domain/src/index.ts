@@ -26,3 +26,4 @@ export * from "./schemas/committee";
 export * from "./schemas/serviceLine";
 export * from "./schemas/publicAsset";
 export * from "./schemas/delegation";
+export * from "./schemas/practiceAgreement";

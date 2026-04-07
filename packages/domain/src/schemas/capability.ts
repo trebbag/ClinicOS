@@ -14,6 +14,8 @@ export const appCapabilities = [
   "committees.manage",
   "service_lines.view",
   "service_lines.manage",
+  "practice_agreements.view",
+  "practice_agreements.manage",
   "delegation.view",
   "delegation.manage",
   "public_assets.view",
@@ -55,6 +57,8 @@ const roleCapabilityMatrix = {
     "committees.manage",
     "service_lines.view",
     "service_lines.manage",
+    "practice_agreements.view",
+    "practice_agreements.manage",
     "delegation.view",
     "delegation.manage",
     "public_assets.view",
@@ -78,6 +82,7 @@ const roleCapabilityMatrix = {
     "committees.manage",
     "service_lines.view",
     "service_lines.manage",
+    "practice_agreements.view",
     "delegation.view",
     "approvals.view",
     "public_assets.view",
@@ -120,6 +125,7 @@ const roleCapabilityMatrix = {
     "committees.manage",
     "service_lines.view",
     "service_lines.manage",
+    "practice_agreements.view",
     "scorecards.view",
     "pilot_ops.view",
     "ops.view_config",
@@ -136,6 +142,8 @@ const roleCapabilityMatrix = {
     "committees.manage",
     "service_lines.view",
     "service_lines.manage",
+    "practice_agreements.view",
+    "practice_agreements.manage",
     "delegation.view",
     "delegation.manage",
     "public_assets.view",
@@ -153,6 +161,8 @@ const roleCapabilityMatrix = {
     "audit.view_auth_events"
   ],
   patient_care_team_physician: [
+    "practice_agreements.view",
+    "practice_agreements.manage",
     "delegation.view"
   ],
   nurse_practitioner: [
