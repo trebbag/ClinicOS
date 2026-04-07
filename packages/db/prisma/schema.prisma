@@ -67,21 +67,50 @@ model Incident {
   id             String   @id
   title          String
   severity       String
+  category       String
   detectedAt     DateTime
   detectedByRole String
+  ownerRole      String
   status         String
   summary        String
+  immediateResponse String?
+  resolutionNote String?
+  workflowRunId  String?
+  reviewActionItemId String?
+  linkedCapaId   String?
+  dueDate        DateTime?
+  closedAt       DateTime?
+  createdAt      DateTime
+  updatedAt      DateTime
+
+  @@index([status, ownerRole])
+  @@index([workflowRunId])
+  @@index([linkedCapaId])
 }
 
 model CAPA {
   id               String   @id
+  title            String
+  summary          String
   sourceId         String
   sourceType       String
+  incidentId       String?
   ownerRole        String
   dueDate          DateTime
   status           String
   correctiveAction String
   preventiveAction String
+  verificationPlan String?
+  resolutionNote   String?
+  workflowRunId    String?
+  actionItemId     String?
+  closedAt         DateTime?
+  createdAt        DateTime
+  updatedAt        DateTime
+
+  @@index([status, ownerRole])
+  @@index([incidentId])
+  @@index([workflowRunId])
 }
 
 model PublicAsset {

@@ -19,6 +19,7 @@ The repository now has a working pilot backbone for:
 - Planner task reconciliation back into Clinic OS action-item status and sync health
 - manual HR/training requirement tracking with gap summaries and follow-up task creation from scorecard reviews
 - scorecard history enrichment with rolling averages and open training-gap counts
+- first-class incident and CAPA records with deterministic review/resolution commands, linked workflow runs, audit events, and quality UI management
 - device-bound profile auth with enrollment codes, trusted device/session cookies, pilot-ops profile/device management, and a simple login flow
 - same-origin deployment plumbing for a public web origin that proxies browser API requests through `/clinic-api/*`
 - Render-first blueprint, startup/readiness validation, and a deploy smoke script for stub-mode pilots
@@ -41,12 +42,13 @@ The following areas are still placeholders or partial:
 - richer alert delivery integrations beyond the new cleanup/runbook/dashboard baseline
 - multi-room office master data, richer checklist analytics, and fuller Planner reconciliation breadth
 - broader HR/training workflows beyond manual requirements/completions and longer-range scorecard analytics
+- committee/QAPI workflow parity and standards mapping depth beyond the new incident/CAPA slice
 - runtime agent structured tool execution loop and full eval-backed feature flag rollout
 - deeper deployment, observability, and environment promotion workflows
 
 Operational note from the latest live validation:
 
 - local Microsoft live validation is still green
-- the deployed Render Microsoft validation is currently degraded on the SharePoint policy folder path
+- the deployed Render Microsoft validation is green again for the scoped pilot surfaces
 - synthetic office-manager, quality-lead, and HR-lead device flows succeeded
-- queued jobs can still be processed against the live database, but the deployed worker needs a Render-side health/config review because the queue did not drain on its own during the latest smoke pass
+- the deployed worker is healthy, though steady-state queue behavior should still be watched during broader pilot usage

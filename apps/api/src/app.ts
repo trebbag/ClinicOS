@@ -9,6 +9,7 @@ import { registerAuditRoutes } from "./routes/audit";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerActionItemRoutes } from "./routes/action-items";
 import { registerDashboardRoutes } from "./routes/dashboard";
+import { registerCapaRoutes } from "./routes/capas";
 import { registerDeviceRoutes } from "./routes/devices";
 import { registerDocumentRoutes } from "./routes/documents";
 import { registerHealthRoutes } from "./routes/health";
@@ -16,6 +17,7 @@ import { registerIntegrationRoutes } from "./routes/integrations";
 import { registerMetricRoutes } from "./routes/metrics";
 import { registerOfficeOpsRoutes } from "./routes/office-ops";
 import { registerOpsRoutes } from "./routes/ops";
+import { registerIncidentRoutes } from "./routes/incidents";
 import { registerScorecardReviewRoutes } from "./routes/scorecard-reviews";
 import { registerTrainingRoutes } from "./routes/training";
 import { registerUserProfileRoutes } from "./routes/user-profiles";
@@ -70,7 +72,9 @@ export function buildApp(options?: {
           issueListId: env.microsoft.issueListId,
           actionItemListId: env.microsoft.actionItemListId,
           importStatusListId: env.microsoft.importStatusListId
-        })
+        }),
+        incidentListSyncEnabled: Boolean(env.microsoft.listsSiteId && env.microsoft.incidentsListId),
+        capaListSyncEnabled: Boolean(env.microsoft.listsSiteId && env.microsoft.capaListId)
       }
     );
   const deviceAuthService =
@@ -152,6 +156,8 @@ export function buildApp(options?: {
   registerDocumentRoutes(app);
   registerApprovalRoutes(app);
   registerActionItemRoutes(app);
+  registerIncidentRoutes(app);
+  registerCapaRoutes(app);
   registerOfficeOpsRoutes(app);
   registerAuditRoutes(app);
   registerMetricRoutes(app);

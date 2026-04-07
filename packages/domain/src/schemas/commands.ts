@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { approvalClasses, roles, serviceLines, workflowStates } from "../enums";
 import { actionItemKindSchema, actionItemStatusSchema } from "./actionItem";
+import { capaCreateSchema, capaResolutionCommandSchema, capaUpdateSchema } from "./capa";
 import { checklistItemStatusSchema } from "./checklist";
+import {
+  incidentCreateSchema,
+  incidentReviewDecisionCommandSchema,
+  incidentUpdateSchema
+} from "./incident";
 import { trainingCompletionCreateSchema, trainingRequirementCreateSchema } from "./training";
 
 export const workflowTransitionCommandSchema = z.object({
@@ -77,8 +83,20 @@ export type ScorecardReviewDecisionCommand = z.infer<typeof scorecardReviewDecis
 export type ChecklistItemUpdateCommand = z.infer<typeof checklistItemUpdateSchema>;
 export type TrainingRequirementCreateCommand = z.infer<typeof trainingRequirementCreateSchema>;
 export type TrainingCompletionCreateCommand = z.infer<typeof trainingCompletionCreateSchema>;
+export type IncidentCreateCommand = z.infer<typeof incidentCreateSchema>;
+export type IncidentUpdateCommand = z.infer<typeof incidentUpdateSchema>;
+export type IncidentReviewDecisionCommand = z.infer<typeof incidentReviewDecisionCommandSchema>;
+export type CapaCreateCommand = z.infer<typeof capaCreateSchema>;
+export type CapaUpdateCommand = z.infer<typeof capaUpdateSchema>;
+export type CapaResolutionCommand = z.infer<typeof capaResolutionCommandSchema>;
 
 export {
+  incidentCreateSchema,
+  incidentUpdateSchema,
+  incidentReviewDecisionCommandSchema,
+  capaCreateSchema,
+  capaUpdateSchema,
+  capaResolutionCommandSchema,
   trainingRequirementCreateSchema,
   trainingCompletionCreateSchema
 };

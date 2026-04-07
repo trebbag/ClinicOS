@@ -2,6 +2,7 @@ import type {
   ActionItemRecord,
   ApprovalTask,
   AuditEvent,
+  CapaRecord,
   ChecklistItemRecord,
   ChecklistRun,
   ChecklistTemplate,
@@ -10,6 +11,7 @@ import type {
   DeviceSession,
   DocumentRecord,
   EnrolledDevice,
+  IncidentRecord,
   MetricRun,
   MicrosoftIntegrationValidationRecord,
   ScorecardReviewRecord,
@@ -23,6 +25,7 @@ import {
   actionItemRecordSchema,
   approvalTaskSchema,
   auditEventSchema,
+  capaRecordSchema,
   checklistItemRecordSchema,
   checklistRunSchema,
   checklistTemplateSchema,
@@ -31,6 +34,7 @@ import {
   deviceSessionSchema,
   documentRecordSchema,
   enrolledDeviceSchema,
+  incidentRecordSchema,
   metricRunSchema,
   microsoftIntegrationValidationRecordSchema,
   scorecardReviewRecordSchema,
@@ -67,6 +71,24 @@ export type ClinicRepository = {
     escalationStatus?: string;
     sourceWorkflowRunId?: string;
   }): Promise<ActionItemRecord[]>;
+  createIncident(record: IncidentRecord): Promise<IncidentRecord>;
+  updateIncident(id: string, patch: Partial<IncidentRecord>): Promise<IncidentRecord>;
+  getIncident(id: string): Promise<IncidentRecord | null>;
+  listIncidents(filters?: {
+    status?: string;
+    severity?: string;
+    ownerRole?: string;
+    linkedCapaId?: string;
+  }): Promise<IncidentRecord[]>;
+  createCapa(record: CapaRecord): Promise<CapaRecord>;
+  updateCapa(id: string, patch: Partial<CapaRecord>): Promise<CapaRecord>;
+  getCapa(id: string): Promise<CapaRecord | null>;
+  listCapas(filters?: {
+    status?: string;
+    sourceType?: string;
+    ownerRole?: string;
+    incidentId?: string;
+  }): Promise<CapaRecord[]>;
   createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate>;
   updateChecklistTemplate(id: string, patch: Partial<ChecklistTemplate>): Promise<ChecklistTemplate>;
   getChecklistTemplate(id: string): Promise<ChecklistTemplate | null>;
@@ -329,6 +351,75 @@ export class PrismaClinicRepository implements ClinicRepository {
       lastSyncedAt: record.lastSyncedAt?.toISOString() ?? null,
       lastSyncError: record.lastSyncError ?? null,
       completedExternallyAt: record.completedExternallyAt?.toISOString() ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString()
+    });
+  }
+
+  private mapIncidentRecord(record: {
+    id: string;
+    title: string;
+    severity: string;
+    category: string;
+    detectedAt: Date;
+    detectedByRole: string;
+    ownerRole: string;
+    status: string;
+    summary: string;
+    immediateResponse: string | null;
+    resolutionNote: string | null;
+    workflowRunId: string | null;
+    reviewActionItemId: string | null;
+    linkedCapaId: string | null;
+    dueDate: Date | null;
+    closedAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }): IncidentRecord {
+    return incidentRecordSchema.parse({
+      ...record,
+      detectedAt: record.detectedAt.toISOString(),
+      immediateResponse: record.immediateResponse ?? null,
+      resolutionNote: record.resolutionNote ?? null,
+      workflowRunId: record.workflowRunId ?? null,
+      reviewActionItemId: record.reviewActionItemId ?? null,
+      linkedCapaId: record.linkedCapaId ?? null,
+      dueDate: record.dueDate?.toISOString() ?? null,
+      closedAt: record.closedAt?.toISOString() ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString()
+    });
+  }
+
+  private mapCapaRecord(record: {
+    id: string;
+    title: string;
+    summary: string;
+    sourceId: string;
+    sourceType: string;
+    incidentId: string | null;
+    ownerRole: string;
+    dueDate: Date;
+    status: string;
+    correctiveAction: string;
+    preventiveAction: string;
+    verificationPlan: string | null;
+    resolutionNote: string | null;
+    workflowRunId: string | null;
+    actionItemId: string | null;
+    closedAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }): CapaRecord {
+    return capaRecordSchema.parse({
+      ...record,
+      incidentId: record.incidentId ?? null,
+      dueDate: record.dueDate.toISOString(),
+      verificationPlan: record.verificationPlan ?? null,
+      resolutionNote: record.resolutionNote ?? null,
+      workflowRunId: record.workflowRunId ?? null,
+      actionItemId: record.actionItemId ?? null,
+      closedAt: record.closedAt?.toISOString() ?? null,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString()
     });
@@ -822,6 +913,152 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
 
     return records.map((record) => this.mapActionItemRecord(record));
+  }
+
+  async createIncident(record: IncidentRecord): Promise<IncidentRecord> {
+    const created = await this.client.incident.create({
+      data: {
+        id: record.id,
+        title: record.title,
+        severity: record.severity,
+        category: record.category,
+        detectedAt: new Date(record.detectedAt),
+        detectedByRole: record.detectedByRole,
+        ownerRole: record.ownerRole,
+        status: record.status,
+        summary: record.summary,
+        immediateResponse: record.immediateResponse,
+        resolutionNote: record.resolutionNote,
+        workflowRunId: record.workflowRunId,
+        reviewActionItemId: record.reviewActionItemId,
+        linkedCapaId: record.linkedCapaId,
+        dueDate: isoToDate(record.dueDate),
+        closedAt: isoToDate(record.closedAt),
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt)
+      }
+    });
+
+    return this.mapIncidentRecord(created);
+  }
+
+  async updateIncident(id: string, patch: Partial<IncidentRecord>): Promise<IncidentRecord> {
+    const updated = await this.client.incident.update({
+      where: { id },
+      data: {
+        title: patch.title,
+        severity: patch.severity,
+        category: patch.category,
+        detectedAt: isoToRequiredDate(patch.detectedAt),
+        detectedByRole: patch.detectedByRole,
+        ownerRole: patch.ownerRole,
+        status: patch.status,
+        summary: patch.summary,
+        immediateResponse: patch.immediateResponse,
+        resolutionNote: patch.resolutionNote,
+        workflowRunId: patch.workflowRunId,
+        reviewActionItemId: patch.reviewActionItemId,
+        linkedCapaId: patch.linkedCapaId,
+        dueDate: isoToDate(patch.dueDate),
+        closedAt: isoToDate(patch.closedAt),
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt)
+      }
+    });
+
+    return this.mapIncidentRecord(updated);
+  }
+
+  async getIncident(id: string): Promise<IncidentRecord | null> {
+    const record = await this.client.incident.findUnique({ where: { id } });
+    return record ? this.mapIncidentRecord(record) : null;
+  }
+
+  async listIncidents(filters?: {
+    status?: string;
+    severity?: string;
+    ownerRole?: string;
+    linkedCapaId?: string;
+  }): Promise<IncidentRecord[]> {
+    const records = await this.client.incident.findMany({
+      where: mapListFilters(filters),
+      orderBy: { detectedAt: "desc" }
+    });
+
+    return records.map((record) => this.mapIncidentRecord(record));
+  }
+
+  async createCapa(record: CapaRecord): Promise<CapaRecord> {
+    const created = await this.client.cAPA.create({
+      data: {
+        id: record.id,
+        title: record.title,
+        summary: record.summary,
+        sourceId: record.sourceId,
+        sourceType: record.sourceType,
+        incidentId: record.incidentId,
+        ownerRole: record.ownerRole,
+        dueDate: new Date(record.dueDate),
+        status: record.status,
+        correctiveAction: record.correctiveAction,
+        preventiveAction: record.preventiveAction,
+        verificationPlan: record.verificationPlan,
+        resolutionNote: record.resolutionNote,
+        workflowRunId: record.workflowRunId,
+        actionItemId: record.actionItemId,
+        closedAt: isoToDate(record.closedAt),
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt)
+      }
+    });
+
+    return this.mapCapaRecord(created);
+  }
+
+  async updateCapa(id: string, patch: Partial<CapaRecord>): Promise<CapaRecord> {
+    const updated = await this.client.cAPA.update({
+      where: { id },
+      data: {
+        title: patch.title,
+        summary: patch.summary,
+        sourceId: patch.sourceId,
+        sourceType: patch.sourceType,
+        incidentId: patch.incidentId,
+        ownerRole: patch.ownerRole,
+        dueDate: isoToRequiredDate(patch.dueDate),
+        status: patch.status,
+        correctiveAction: patch.correctiveAction,
+        preventiveAction: patch.preventiveAction,
+        verificationPlan: patch.verificationPlan,
+        resolutionNote: patch.resolutionNote,
+        workflowRunId: patch.workflowRunId,
+        actionItemId: patch.actionItemId,
+        closedAt: isoToDate(patch.closedAt),
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt)
+      }
+    });
+
+    return this.mapCapaRecord(updated);
+  }
+
+  async getCapa(id: string): Promise<CapaRecord | null> {
+    const record = await this.client.cAPA.findUnique({ where: { id } });
+    return record ? this.mapCapaRecord(record) : null;
+  }
+
+  async listCapas(filters?: {
+    status?: string;
+    sourceType?: string;
+    ownerRole?: string;
+    incidentId?: string;
+  }): Promise<CapaRecord[]> {
+    const records = await this.client.cAPA.findMany({
+      where: mapListFilters(filters),
+      orderBy: { dueDate: "asc" }
+    });
+
+    return records.map((record) => this.mapCapaRecord(record));
   }
 
   async createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate> {

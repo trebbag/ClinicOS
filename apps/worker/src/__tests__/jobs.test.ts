@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   createActionItemRecord,
+  createCapaRecord,
   createChecklistItemRecord,
   createChecklistRun,
   createChecklistTemplate,
+  createIncidentRecord,
   createScorecardReviewRecord,
   createTrainingRequirement,
   createWorkerJob
@@ -331,5 +333,64 @@ describe("WorkerJobRunner", () => {
     expect(repository.workerJobs.some((job) => job.type === "office_ops.checklist.reminder")).toBe(true);
     expect(repository.workerJobs.some((job) => job.type === "office_ops.checklist.escalation")).toBe(true);
     expect(repository.workerJobs.some((job) => job.type === "training.requirement.reminder")).toBe(true);
+  });
+
+  it("syncs incident and CAPA records through the Microsoft list wrappers", async () => {
+    const repository = new MemoryClinicRepository();
+    const incident = createIncidentRecord({
+      title: "Temperature variance",
+      severity: "high",
+      category: "environment",
+      summary: "Vaccine refrigerator log requires review.",
+      detectedByRole: "quality_lead",
+      ownerRole: "quality_lead"
+    });
+    const capa = createCapaRecord({
+      title: "CAPA for temperature variance",
+      summary: "Document the remediation and prevention plan.",
+      sourceId: incident.id,
+      sourceType: "incident",
+      incidentId: incident.id,
+      ownerRole: "quality_lead",
+      dueDate: "2026-04-20T00:00:00.000Z",
+      correctiveAction: "Reconcile the log and affected inventory.",
+      preventiveAction: "Add a second daily refrigerator check."
+    });
+
+    await repository.createIncident(incident);
+    await repository.createCapa(capa);
+    await repository.enqueueWorkerJob(createWorkerJob({
+      type: "lists.incident.upsert",
+      payload: {
+        actor: {
+          actorId: "quality-user",
+          role: "quality_lead",
+          name: "Quality Lead"
+        },
+        incidentId: incident.id
+      },
+      sourceEntityType: "incident",
+      sourceEntityId: incident.id
+    }));
+    await repository.enqueueWorkerJob(createWorkerJob({
+      type: "lists.capa.upsert",
+      payload: {
+        actor: {
+          actorId: "quality-user",
+          role: "quality_lead",
+          name: "Quality Lead"
+        },
+        capaId: capa.id
+      },
+      sourceEntityType: "capa",
+      sourceEntityId: capa.id
+    }));
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const summary = await runner.runOnce();
+
+    expect(summary.succeeded).toBe(2);
+    expect(repository.auditEvents.some((event) => event.eventType === "lists.incident_synced")).toBe(true);
+    expect(repository.auditEvents.some((event) => event.eventType === "lists.capa_synced")).toBe(true);
   });
 });

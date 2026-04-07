@@ -22,6 +22,8 @@ export type MicrosoftPilotOpsConfig = {
   issueListId?: string;
   actionItemListId?: string;
   importStatusListId?: string;
+  incidentsListId?: string;
+  capaListId?: string;
 };
 
 export type MicrosoftPilotOps = {
@@ -52,6 +54,8 @@ export type MicrosoftPilotOps = {
   createIssueListItem(fields: Record<string, unknown>): Promise<{ itemId: string }>;
   createActionItemListItem(fields: Record<string, unknown>): Promise<{ itemId: string }>;
   createImportStatusListItem(fields: Record<string, unknown>): Promise<{ itemId: string }>;
+  createIncidentListItem(fields: Record<string, unknown>): Promise<{ itemId: string }>;
+  createCapaListItem(fields: Record<string, unknown>): Promise<{ itemId: string }>;
 };
 
 function slugify(input: string): string {
@@ -136,6 +140,18 @@ class StubMicrosoftPilotOps implements MicrosoftPilotOps {
   async createImportStatusListItem(fields: Record<string, unknown>): Promise<{ itemId: string }> {
     return {
       itemId: `stub-import-${slugify(String(fields.Title ?? "item"))}`
+    };
+  }
+
+  async createIncidentListItem(fields: Record<string, unknown>): Promise<{ itemId: string }> {
+    return {
+      itemId: `stub-incident-${slugify(String(fields.Title ?? "item"))}`
+    };
+  }
+
+  async createCapaListItem(fields: Record<string, unknown>): Promise<{ itemId: string }> {
+    return {
+      itemId: `stub-capa-${slugify(String(fields.Title ?? "item"))}`
     };
   }
 }
@@ -264,6 +280,24 @@ class LiveMicrosoftPilotOps implements MicrosoftPilotOps {
       this.client,
       withRequired(this.config.listsSiteId, "MICROSOFT_LISTS_SITE_ID"),
       withRequired(this.config.importStatusListId, "MICROSOFT_LIST_IMPORT_STATUS_ID"),
+      fields
+    );
+  }
+
+  async createIncidentListItem(fields: Record<string, unknown>): Promise<{ itemId: string }> {
+    return createListItem(
+      this.client,
+      withRequired(this.config.listsSiteId, "MICROSOFT_LISTS_SITE_ID"),
+      withRequired(this.config.incidentsListId, "MICROSOFT_LIST_INCIDENTS_ID"),
+      fields
+    );
+  }
+
+  async createCapaListItem(fields: Record<string, unknown>): Promise<{ itemId: string }> {
+    return createListItem(
+      this.client,
+      withRequired(this.config.listsSiteId, "MICROSOFT_LISTS_SITE_ID"),
+      withRequired(this.config.capaListId, "MICROSOFT_LIST_CAPA_ID"),
       fields
     );
   }

@@ -6,10 +6,15 @@ import { z } from "zod";
 import {
   actionItemCreateSchema,
   actionItemUpdateSchema,
+  capaCreateSchema,
+  capaResolutionCommandSchema,
+  capaUpdateSchema,
   checklistItemUpdateSchema,
+  createCapaRecord,
   createChecklistItemRecord,
   createChecklistRun,
   createChecklistTemplate,
+  createIncidentRecord,
   createMicrosoftIntegrationValidationRecord,
   createActionItemRecord,
   createAuditEvent,
@@ -21,6 +26,9 @@ import {
   createWorkflowRun,
   deidentifiedOperationalRowSchema,
   documentMetadataSchema,
+  incidentCreateSchema,
+  incidentReviewDecisionCommandSchema,
+  incidentUpdateSchema,
   listRoleCapabilities,
   opsCleanupCommandSchema,
   opsCleanupResultSchema,
@@ -36,6 +44,8 @@ import {
   type ApprovalTask,
   type AppCapability,
   type AuditEvent,
+  type CapaRecord,
+  type CapaStatus,
   type AuthMode,
   type ChecklistItemRecord,
   type ChecklistRun,
@@ -44,6 +54,7 @@ import {
   type MicrosoftIntegrationStatus,
   type MicrosoftIntegrationValidationRecord,
   type DocumentRecord,
+  type IncidentRecord,
   type OpsAlert,
   type OpsAlertSummary,
   type OpsCleanupResult,
@@ -251,6 +262,10 @@ function isTrainingGapOpen(status: TrainingGapStatus): boolean {
   return status !== "complete";
 }
 
+function isCapaStillOpen(status: CapaStatus): boolean {
+  return status !== "closed";
+}
+
 export class ClinicApiService {
   constructor(
     private readonly repository: ClinicRepository,
@@ -259,6 +274,8 @@ export class ClinicApiService {
       authMode: AuthMode;
       integrationMode: "stub" | "live";
       microsoftPreflight: MicrosoftPreflightService;
+      incidentListSyncEnabled?: boolean;
+      capaListSyncEnabled?: boolean;
     }
   ) {}
 
@@ -871,6 +888,379 @@ export class ClinicApiService {
     sourceWorkflowRunId?: string;
   }) {
     return this.repository.listActionItems(filters);
+  }
+
+  async createIncident(actor: ActorContext, input: unknown): Promise<IncidentRecord> {
+    const command = incidentCreateSchema.parse(input);
+    const workflow = await this.createWorkflowRun(actor, {
+      workflowId: "incident_review",
+      input: {
+        title: command.title,
+        severity: command.severity,
+        category: command.category,
+        requestedBy: actor.actorId,
+        detectedAt: command.detectedAt ?? new Date().toISOString(),
+        detectedByRole: actor.role
+      }
+    });
+    const reviewTask = await this.createActionItem(actor, {
+      kind: "review",
+      title: `Review incident: ${command.title}`,
+      description: command.summary,
+      ownerRole: command.ownerRole,
+      dueDate: command.dueDate ?? addDays(new Date().toISOString(), 2),
+      sourceWorkflowRunId: workflow.id
+    });
+    const record = createIncidentRecord({
+      title: command.title,
+      severity: command.severity,
+      category: command.category,
+      summary: command.summary,
+      detectedAt: command.detectedAt,
+      detectedByRole: actor.role,
+      ownerRole: command.ownerRole,
+      immediateResponse: command.immediateResponse,
+      workflowRunId: workflow.id,
+      reviewActionItemId: reviewTask.id,
+      dueDate: command.dueDate ?? reviewTask.dueDate
+    });
+    const created = await this.repository.createIncident(record);
+
+    if (canTransition(workflowRegistry.get("incident_review")!, workflow.state, "scoped")) {
+      await this.transitionWorkflowRun(actor, workflow.id, {
+        nextState: "scoped",
+        note: "Incident intake captured."
+      });
+    }
+
+    await this.recordAudit(actor, "incident.created", "incident", created.id, {
+      workflowRunId: created.workflowRunId,
+      reviewActionItemId: created.reviewActionItemId,
+      severity: created.severity
+    });
+    await this.syncIncidentSideEffects(actor, created);
+    return created;
+  }
+
+  async listIncidents(filters?: {
+    status?: string;
+    severity?: string;
+    ownerRole?: string;
+    linkedCapaId?: string;
+  }): Promise<IncidentRecord[]> {
+    return this.repository.listIncidents(filters);
+  }
+
+  async updateIncident(actor: ActorContext, incidentId: string, input: unknown): Promise<IncidentRecord> {
+    const command = incidentUpdateSchema.parse(input);
+    const incident = await this.repository.getIncident(incidentId);
+    if (!incident) {
+      notFound(`Incident not found: ${incidentId}`);
+    }
+    if (![incident.ownerRole, "medical_director"].includes(actor.role)) {
+      forbidden(`Role ${actor.role} cannot update incident ${incidentId}.`);
+    }
+
+    const updated = await this.repository.updateIncident(incident.id, {
+      title: command.title ?? incident.title,
+      severity: command.severity ?? incident.severity,
+      category: command.category ?? incident.category,
+      summary: command.summary ?? incident.summary,
+      immediateResponse: command.immediateResponse !== undefined ? command.immediateResponse : incident.immediateResponse,
+      resolutionNote: command.resolutionNote !== undefined ? command.resolutionNote : incident.resolutionNote,
+      ownerRole: command.ownerRole ?? incident.ownerRole,
+      dueDate: command.dueDate !== undefined ? command.dueDate : incident.dueDate,
+      updatedAt: new Date().toISOString()
+    });
+    await this.recordAudit(actor, "incident.updated", "incident", updated.id, {
+      status: updated.status,
+      ownerRole: updated.ownerRole
+    });
+    await this.syncIncidentSideEffects(actor, updated);
+    return updated;
+  }
+
+  async reviewIncident(actor: ActorContext, incidentId: string, input: unknown): Promise<{
+    incident: IncidentRecord;
+    capa: CapaRecord | null;
+  }> {
+    const command = incidentReviewDecisionCommandSchema.parse(input);
+    const incident = await this.repository.getIncident(incidentId);
+    if (!incident) {
+      notFound(`Incident not found: ${incidentId}`);
+    }
+    if (![incident.ownerRole, "medical_director"].includes(actor.role)) {
+      forbidden(`Role ${actor.role} cannot review incident ${incidentId}.`);
+    }
+
+    const now = new Date().toISOString();
+    let updatedIncident = incident;
+    let createdCapa: CapaRecord | null = null;
+
+    if (command.decision === "log_review") {
+      updatedIncident = await this.repository.updateIncident(incident.id, {
+        status: "under_review",
+        resolutionNote: command.notes ?? incident.resolutionNote,
+        updatedAt: now
+      });
+      if (incident.reviewActionItemId) {
+        const reviewAction = await this.repository.getActionItem(incident.reviewActionItemId);
+        if (reviewAction && reviewAction.status !== "done") {
+          await this.applyActionItemUpdate(actor, reviewAction, {
+            status: "in_progress",
+            resolutionNote: command.notes ?? reviewAction.resolutionNote
+          });
+        }
+      }
+      await this.advanceWorkflowIfPossible(actor, incident.workflowRunId, ["drafted", "quality_checked"], "Incident reviewed.");
+    } else if (command.decision === "open_capa") {
+      if (incident.linkedCapaId) {
+        badRequest("Incident already has a linked CAPA.");
+      }
+      createdCapa = await this.createCapa(actor, {
+        title: command.capaTitle ?? `CAPA for ${incident.title}`,
+        summary: command.capaSummary ?? incident.summary,
+        sourceId: incident.id,
+        sourceType: "incident",
+        incidentId: incident.id,
+        ownerRole: command.ownerRole!,
+        dueDate: command.dueDate!,
+        correctiveAction: command.correctiveAction!,
+        preventiveAction: command.preventiveAction!,
+        verificationPlan: command.verificationPlan
+      });
+      updatedIncident = await this.repository.updateIncident(incident.id, {
+        status: "capa_open",
+        linkedCapaId: createdCapa.id,
+        resolutionNote: command.notes ?? incident.resolutionNote,
+        updatedAt: now
+      });
+      if (incident.reviewActionItemId) {
+        const reviewAction = await this.repository.getActionItem(incident.reviewActionItemId);
+        if (reviewAction && reviewAction.status !== "done") {
+          await this.applyActionItemUpdate(actor, reviewAction, {
+            status: "done",
+            resolutionNote: command.notes ?? "Linked CAPA opened."
+          });
+        }
+      }
+      await this.advanceWorkflowIfPossible(actor, incident.workflowRunId, ["drafted", "quality_checked", "approved"], "Incident escalated to CAPA.");
+    } else {
+      if (incident.linkedCapaId) {
+        const linkedCapa = await this.repository.getCapa(incident.linkedCapaId);
+        if (linkedCapa && linkedCapa.status !== "closed") {
+          badRequest("Cannot close an incident while the linked CAPA remains open.");
+        }
+      }
+      updatedIncident = await this.repository.updateIncident(incident.id, {
+        status: "closed",
+        resolutionNote: command.notes ?? incident.resolutionNote,
+        closedAt: incident.closedAt ?? now,
+        updatedAt: now
+      });
+      if (incident.reviewActionItemId) {
+        const reviewAction = await this.repository.getActionItem(incident.reviewActionItemId);
+        if (reviewAction && reviewAction.status !== "done") {
+          await this.applyActionItemUpdate(actor, reviewAction, {
+            status: "done",
+            resolutionNote: command.notes ?? "Incident closed."
+          });
+        }
+      }
+      await this.advanceWorkflowIfPossible(actor, incident.workflowRunId, ["drafted", "quality_checked", "approved", "archived"], "Incident closed.");
+    }
+
+    await this.recordAudit(actor, "incident.reviewed", "incident", updatedIncident.id, {
+      decision: command.decision,
+      linkedCapaId: updatedIncident.linkedCapaId
+    });
+    await this.syncIncidentSideEffects(actor, updatedIncident);
+    return {
+      incident: updatedIncident,
+      capa: createdCapa
+    };
+  }
+
+  async createCapa(actor: ActorContext, input: unknown): Promise<CapaRecord> {
+    const command = capaCreateSchema.parse(input);
+    const workflow = await this.createWorkflowRun(actor, {
+      workflowId: "capa_lifecycle",
+      input: {
+        title: command.title,
+        sourceId: command.sourceId,
+        sourceType: command.sourceType,
+        ownerRole: command.ownerRole,
+        dueDate: command.dueDate,
+        requestedBy: actor.actorId
+      }
+    });
+    const actionItem = await this.createActionItem(actor, {
+      kind: "action_item",
+      title: `CAPA: ${command.title}`,
+      description: command.summary,
+      ownerRole: command.ownerRole,
+      dueDate: command.dueDate,
+      sourceWorkflowRunId: workflow.id
+    });
+    const created = await this.repository.createCapa(createCapaRecord({
+      title: command.title,
+      summary: command.summary,
+      sourceId: command.sourceId,
+      sourceType: command.sourceType,
+      incidentId: command.incidentId,
+      ownerRole: command.ownerRole,
+      dueDate: command.dueDate,
+      correctiveAction: command.correctiveAction,
+      preventiveAction: command.preventiveAction,
+      verificationPlan: command.verificationPlan,
+      workflowRunId: workflow.id,
+      actionItemId: actionItem.id
+    }));
+
+    if (command.incidentId) {
+      const incident = await this.repository.getIncident(command.incidentId);
+      if (incident) {
+        await this.repository.updateIncident(incident.id, {
+          status: "capa_open",
+          linkedCapaId: created.id,
+          updatedAt: new Date().toISOString()
+        });
+      }
+    }
+
+    if (canTransition(workflowRegistry.get("capa_lifecycle")!, workflow.state, "scoped")) {
+      await this.transitionWorkflowRun(actor, workflow.id, {
+        nextState: "scoped",
+        note: "CAPA opened."
+      });
+    }
+
+    await this.recordAudit(actor, "capa.created", "capa", created.id, {
+      workflowRunId: created.workflowRunId,
+      actionItemId: created.actionItemId,
+      sourceType: created.sourceType,
+      incidentId: created.incidentId
+    });
+    await this.syncCapaSideEffects(actor, created);
+    return created;
+  }
+
+  async listCapas(filters?: {
+    status?: string;
+    sourceType?: string;
+    ownerRole?: string;
+    incidentId?: string;
+  }): Promise<CapaRecord[]> {
+    const capas = await this.repository.listCapas(filters);
+    return Promise.all(capas.map((capa) => this.refreshCapaStatus(capa)));
+  }
+
+  async updateCapa(actor: ActorContext, capaId: string, input: unknown): Promise<CapaRecord> {
+    const command = capaUpdateSchema.parse(input);
+    const capa = await this.repository.getCapa(capaId);
+    if (!capa) {
+      notFound(`CAPA not found: ${capaId}`);
+    }
+    if (![capa.ownerRole, "medical_director"].includes(actor.role)) {
+      forbidden(`Role ${actor.role} cannot update CAPA ${capaId}.`);
+    }
+
+    const updated = await this.repository.updateCapa(capa.id, {
+      title: command.title ?? capa.title,
+      summary: command.summary ?? capa.summary,
+      ownerRole: command.ownerRole ?? capa.ownerRole,
+      dueDate: command.dueDate ?? capa.dueDate,
+      correctiveAction: command.correctiveAction ?? capa.correctiveAction,
+      preventiveAction: command.preventiveAction ?? capa.preventiveAction,
+      verificationPlan: command.verificationPlan !== undefined ? command.verificationPlan : capa.verificationPlan,
+      resolutionNote: command.resolutionNote !== undefined ? command.resolutionNote : capa.resolutionNote,
+      updatedAt: new Date().toISOString()
+    });
+    await this.recordAudit(actor, "capa.updated", "capa", updated.id, {
+      status: updated.status,
+      ownerRole: updated.ownerRole
+    });
+    await this.syncCapaSideEffects(actor, updated);
+    return this.refreshCapaStatus(updated);
+  }
+
+  async resolveCapa(actor: ActorContext, capaId: string, input: unknown): Promise<CapaRecord> {
+    const command = capaResolutionCommandSchema.parse(input);
+    const capa = await this.repository.getCapa(capaId);
+    if (!capa) {
+      notFound(`CAPA not found: ${capaId}`);
+    }
+    if (![capa.ownerRole, "medical_director"].includes(actor.role)) {
+      forbidden(`Role ${actor.role} cannot resolve CAPA ${capaId}.`);
+    }
+
+    const now = new Date().toISOString();
+    let nextStatus: CapaStatus;
+    if (command.decision === "start") {
+      nextStatus = "in_progress";
+    } else if (command.decision === "request_verification") {
+      nextStatus = "pending_verification";
+    } else if (command.decision === "close") {
+      nextStatus = "closed";
+    } else {
+      nextStatus = "in_progress";
+    }
+
+    let updated = await this.repository.updateCapa(capa.id, {
+      status: nextStatus,
+      resolutionNote: command.notes ?? capa.resolutionNote,
+      closedAt: command.decision === "close" ? now : null,
+      updatedAt: now
+    });
+
+    if (capa.actionItemId) {
+      const actionItem = await this.repository.getActionItem(capa.actionItemId);
+      if (actionItem) {
+        await this.applyActionItemUpdate(actor, actionItem, {
+          status: nextStatus === "closed" ? "done" : nextStatus === "in_progress" ? "in_progress" : actionItem.status,
+          resolutionNote: command.notes ?? actionItem.resolutionNote,
+          closedAt: nextStatus === "closed" ? now : null
+        });
+      }
+    }
+
+    if (command.decision === "close" && capa.incidentId) {
+      const incident = await this.repository.getIncident(capa.incidentId);
+      if (incident && incident.status !== "closed") {
+        await this.repository.updateIncident(incident.id, {
+          status: "closed",
+          resolutionNote: command.notes ?? incident.resolutionNote ?? "Closed after linked CAPA completion.",
+          closedAt: now,
+          updatedAt: now
+        });
+        await this.syncIncidentSideEffects(actor, {
+          ...incident,
+          status: "closed",
+          resolutionNote: command.notes ?? incident.resolutionNote ?? "Closed after linked CAPA completion.",
+          closedAt: now,
+          updatedAt: now
+        });
+      }
+    }
+
+    await this.advanceWorkflowIfPossible(
+      actor,
+      capa.workflowRunId,
+      command.decision === "close"
+        ? ["drafted", "quality_checked", "compliance_checked", "approved", "archived"]
+        : command.decision === "request_verification"
+          ? ["drafted", "quality_checked", "compliance_checked"]
+          : ["drafted", "quality_checked"],
+      `CAPA ${command.decision.replace("_", " ")}.`
+    );
+
+    updated = await this.refreshCapaStatus(updated);
+    await this.recordAudit(actor, "capa.resolved", "capa", updated.id, {
+      decision: command.decision,
+      status: updated.status
+    });
+    await this.syncCapaSideEffects(actor, updated);
+    return updated;
   }
 
   async listAuditEvents(filters?: {
@@ -2207,6 +2597,83 @@ export class ClinicApiService {
     }
 
     return (await this.repository.getScorecardReview(review.id)) ?? review;
+  }
+
+  private async refreshCapaStatus(capa: CapaRecord): Promise<CapaRecord> {
+    if (!isCapaStillOpen(capa.status)) {
+      return capa;
+    }
+    if (new Date(capa.dueDate).getTime() >= Date.now() || capa.status === "overdue") {
+      return capa;
+    }
+
+    return this.repository.updateCapa(capa.id, {
+      status: "overdue",
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  private async advanceWorkflowIfPossible(
+    actor: ActorContext,
+    workflowRunId: string | null,
+    states: ReadonlyArray<WorkflowRun["state"]>,
+    note: string
+  ): Promise<void> {
+    if (!workflowRunId) {
+      return;
+    }
+
+    const workflow = await this.repository.getWorkflowRun(workflowRunId);
+    if (!workflow) {
+      return;
+    }
+    const definition = workflowRegistry.get(workflow.workflowDefinitionId);
+    if (!definition) {
+      return;
+    }
+
+    let current = workflow;
+    for (const state of states) {
+      if (!canTransition(definition, current.state, state)) {
+        continue;
+      }
+      current = await this.transitionWorkflowRun(actor, current.id, {
+        nextState: state,
+        note
+      });
+    }
+  }
+
+  private async syncIncidentSideEffects(actor: ActorContext, incident: IncidentRecord): Promise<void> {
+    if (!this.options.incidentListSyncEnabled) {
+      return;
+    }
+
+    await this.enqueueWorkerJob(actor, createWorkerJob({
+      type: "lists.incident.upsert",
+      payload: {
+        actor: actorSnapshot(actor),
+        incidentId: incident.id
+      },
+      sourceEntityType: "incident",
+      sourceEntityId: incident.id
+    }));
+  }
+
+  private async syncCapaSideEffects(actor: ActorContext, capa: CapaRecord): Promise<void> {
+    if (!this.options.capaListSyncEnabled) {
+      return;
+    }
+
+    await this.enqueueWorkerJob(actor, createWorkerJob({
+      type: "lists.capa.upsert",
+      payload: {
+        actor: actorSnapshot(actor),
+        capaId: capa.id
+      },
+      sourceEntityType: "capa",
+      sourceEntityId: capa.id
+    }));
   }
 
   private async syncActionItemSideEffects(actor: ActorContext, item: ActionItemRecord): Promise<void> {

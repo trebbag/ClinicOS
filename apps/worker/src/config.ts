@@ -26,7 +26,9 @@ export const workerConfig = {
     officeOpsWebhookUrl: process.env.MICROSOFT_TEAMS_OFFICE_OPS_WEBHOOK_URL ?? "",
     issueListId: process.env.MICROSOFT_LIST_ISSUES_ID ?? "",
     actionItemListId: process.env.MICROSOFT_LIST_ACTION_ITEMS_ID ?? "",
-    importStatusListId: process.env.MICROSOFT_LIST_IMPORT_STATUS_ID ?? ""
+    importStatusListId: process.env.MICROSOFT_LIST_IMPORT_STATUS_ID ?? "",
+    incidentsListId: process.env.MICROSOFT_LIST_INCIDENTS_ID ?? "",
+    capaListId: process.env.MICROSOFT_LIST_CAPA_ID ?? ""
   }
 };
 

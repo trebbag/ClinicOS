@@ -3,3 +3,5 @@ export * from "./registry";
 export * from "./definitions/policy-lifecycle";
 export * from "./definitions/office-manager-daily";
 export * from "./definitions/staff-scorecard";
+export * from "./definitions/incident-review";
+export * from "./definitions/capa-lifecycle";

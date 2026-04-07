@@ -1527,4 +1527,75 @@ describe("Clinic API", () => {
 
     await proxyApp.close();
   });
+
+  it("creates incidents, opens linked CAPAs, and closes both through the quality workflow", async () => {
+    const incidentResponse = await app.inject({
+      method: "POST",
+      url: "/incidents",
+      headers: headers("quality_lead"),
+      payload: {
+        title: "Temperature log variance",
+        severity: "high",
+        category: "environment",
+        summary: "Vaccine refrigerator log showed an unexplained temperature gap.",
+        immediateResponse: "Quarantined the affected range pending review.",
+        ownerRole: "quality_lead",
+        dueDate: "2026-04-10"
+      }
+    });
+
+    expect(incidentResponse.statusCode).toBe(200);
+    const incident = incidentResponse.json<{ id: string; workflowRunId: string | null; reviewActionItemId: string | null }>();
+    expect(incident.workflowRunId).toBeTruthy();
+    expect(incident.reviewActionItemId).toBeTruthy();
+
+    const reviewResponse = await app.inject({
+      method: "POST",
+      url: `/incidents/${incident.id}/review`,
+      headers: headers("quality_lead"),
+      payload: {
+        decision: "open_capa",
+        ownerRole: "quality_lead",
+        dueDate: "2026-04-20",
+        correctiveAction: "Reconcile the temperature log and document disposition of affected stock.",
+        preventiveAction: "Add a second daily validation step for refrigerator logging.",
+        verificationPlan: "Quality lead audits the next 10 days of log entries."
+      }
+    });
+
+    expect(reviewResponse.statusCode).toBe(200);
+    const reviewed = reviewResponse.json<{ incident: { status: string; linkedCapaId: string | null }; capa: { id: string } | null }>();
+    expect(reviewed.incident.status).toBe("capa_open");
+    expect(reviewed.incident.linkedCapaId).toBeTruthy();
+    expect(reviewed.capa?.id).toBeTruthy();
+
+    const closeCapaResponse = await app.inject({
+      method: "POST",
+      url: `/capas/${reviewed.capa!.id}/resolve`,
+      headers: headers("quality_lead"),
+      payload: {
+        decision: "close",
+        notes: "Corrective action verified and preventive controls are in place."
+      }
+    });
+
+    expect(closeCapaResponse.statusCode).toBe(200);
+    expect(closeCapaResponse.json<{ status: string }>().status).toBe("closed");
+
+    const incidentList = await app.inject({
+      method: "GET",
+      url: "/incidents",
+      headers: headers("quality_lead")
+    });
+    expect(incidentList.statusCode).toBe(200);
+    expect(incidentList.json<Array<{ id: string; status: string }>>().find((item) => item.id === incident.id)?.status).toBe("closed");
+
+    const capaList = await app.inject({
+      method: "GET",
+      url: "/capas",
+      headers: headers("quality_lead")
+    });
+    expect(capaList.statusCode).toBe(200);
+    expect(capaList.json<Array<{ id: string; status: string }>>().find((item) => item.id === reviewed.capa!.id)?.status).toBe("closed");
+  });
 });

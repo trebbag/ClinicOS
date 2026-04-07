@@ -2,6 +2,7 @@ import type {
   ActionItemRecord,
   ApprovalTask,
   AuditEvent,
+  CapaRecord,
   ChecklistItemRecord,
   ChecklistRun,
   ChecklistTemplate,
@@ -10,6 +11,7 @@ import type {
   DeviceSession,
   DocumentRecord,
   EnrolledDevice,
+  IncidentRecord,
   MetricRun,
   MicrosoftIntegrationValidationRecord,
   ScorecardReviewRecord,
@@ -33,6 +35,8 @@ export class MemoryClinicRepository implements ClinicRepository {
   public readonly documents: DocumentRecord[] = [];
   public readonly approvals: ApprovalTask[] = [];
   public readonly actionItems: ActionItemRecord[] = [];
+  public readonly incidents: IncidentRecord[] = [];
+  public readonly capas: CapaRecord[] = [];
   public readonly checklistTemplates: ChecklistTemplate[] = [];
   public readonly checklistRuns: ChecklistRun[] = [];
   public readonly checklistItems: ChecklistItemRecord[] = [];
@@ -129,6 +133,54 @@ export class MemoryClinicRepository implements ClinicRepository {
 
   async getActionItem(id: string): Promise<ActionItemRecord | null> {
     return this.actionItems.find((item) => item.id === id) ?? null;
+  }
+
+  async createIncident(record: IncidentRecord): Promise<IncidentRecord> {
+    this.incidents.unshift(record);
+    return record;
+  }
+
+  async updateIncident(id: string, patch: Partial<IncidentRecord>): Promise<IncidentRecord> {
+    const index = this.incidents.findIndex((record) => record.id === id);
+    this.incidents[index] = { ...this.incidents[index], ...patch };
+    return this.incidents[index];
+  }
+
+  async getIncident(id: string): Promise<IncidentRecord | null> {
+    return this.incidents.find((record) => record.id === id) ?? null;
+  }
+
+  async listIncidents(filters?: {
+    status?: string;
+    severity?: string;
+    ownerRole?: string;
+    linkedCapaId?: string;
+  }): Promise<IncidentRecord[]> {
+    return this.incidents.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createCapa(record: CapaRecord): Promise<CapaRecord> {
+    this.capas.unshift(record);
+    return record;
+  }
+
+  async updateCapa(id: string, patch: Partial<CapaRecord>): Promise<CapaRecord> {
+    const index = this.capas.findIndex((record) => record.id === id);
+    this.capas[index] = { ...this.capas[index], ...patch };
+    return this.capas[index];
+  }
+
+  async getCapa(id: string): Promise<CapaRecord | null> {
+    return this.capas.find((record) => record.id === id) ?? null;
+  }
+
+  async listCapas(filters?: {
+    status?: string;
+    sourceType?: string;
+    ownerRole?: string;
+    incidentId?: string;
+  }): Promise<CapaRecord[]> {
+    return this.capas.filter((record) => matchesFilters(record, filters));
   }
 
   async createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate> {

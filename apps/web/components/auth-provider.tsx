@@ -30,6 +30,7 @@ export type AppCapability =
   | "office_ops.manage"
   | "office_ops.reconcile_planner"
   | "quality.view"
+  | "quality.manage"
   | "scorecards.view"
   | "pilot_ops.view"
   | "ops.view_config"

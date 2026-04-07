@@ -8,6 +8,8 @@ export const workerJobTypeSchema = z.enum([
   "lists.issue.upsert",
   "lists.action-item.upsert",
   "lists.import-status.upsert",
+  "lists.incident.upsert",
+  "lists.capa.upsert",
   "office_ops.closeout.reminder",
   "office_ops.checklist.reminder",
   "office_ops.checklist.escalation",

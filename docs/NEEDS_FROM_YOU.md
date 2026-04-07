@@ -22,6 +22,11 @@ Using the current local `.env` and repo code:
   - `readyForLive: true`
   - `pilotUsable: true`
 - the worker code can start locally and process live jobs against the real database
+- the first incident + CAPA parity slice is now implemented in the repo
+  - incident register endpoints and quality UI
+  - CAPA lifecycle endpoints and quality UI
+  - linked workflow/action-item/audit behavior
+  - optional Microsoft List sync hooks for incident and CAPA registers when those list IDs are provided
 
 That means the remaining pilot blockers are now mostly broader pilot validation, Render deployment consistency, and operations hardening.
 
@@ -103,6 +108,14 @@ The deployed Render stack is now healthy and pilot-usable, but there is still on
    - up to two backup profiles if needed
    - named office manager / quality lead / HR lead profiles when you want them added
 
+3. Optional future Microsoft list-sync inputs for the new governance slice
+   - `MICROSOFT_LIST_INCIDENTS_ID`
+   - `MICROSOFT_LIST_CAPA_ID`
+   - only needed when you want live incident/CAPA register sync into Microsoft Lists
+   - if you enable those later, the target lists will need matching columns for:
+     - incidents: `Title`, `Severity`, `Status`, `Category`, `OwnerRole`, `Summary`, `ImmediateResponse`, `ResolutionNote`, `DetectedAt`, `DetectedByRole`, `LinkedCapaId`, `DueDate`
+     - CAPAs: `Title`, `Status`, `SourceType`, `SourceId`, `IncidentId`, `OwnerRole`, `DueDate`, `Summary`, `CorrectiveAction`, `PreventiveAction`, `VerificationPlan`, `ResolutionNote`
+
 ## Database rule
 
 Postgres is still required even though Microsoft is now ready, because Clinic OS stores its system-of-record state in Postgres and uses Microsoft 365 as connected publication and operations surfaces.
@@ -112,6 +125,6 @@ Postgres is still required even though Microsoft is now ready, because Clinic OS
 
 ## The next command I am waiting to run
 
-The next step is no longer additional named-role setup. The next major engineering step after this pilot hardening phase is the first missing major domain slice:
+The next step is no longer additional named-role setup. The next major engineering step after the new incident + CAPA slice is:
 
-- incident + CAPA parity
+- committee + QAPI parity

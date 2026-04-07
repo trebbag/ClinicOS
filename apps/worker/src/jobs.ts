@@ -2,6 +2,8 @@ import type { ClinicRepository } from "@clinic-os/db";
 import {
   actorContextSchema,
   type ActionItemRecord,
+  type CapaRecord,
+  type IncidentRecord,
   createActionItemRecord,
   createAuditEvent,
   createWorkerJob,
@@ -26,6 +28,14 @@ const approvalReminderPayloadSchema = actorPayloadSchema.extend({
 
 const actionItemPayloadSchema = actorPayloadSchema.extend({
   actionItemId: z.string()
+});
+
+const incidentPayloadSchema = actorPayloadSchema.extend({
+  incidentId: z.string()
+});
+
+const capaPayloadSchema = actorPayloadSchema.extend({
+  capaId: z.string()
 });
 
 const officeOpsChecklistReminderPayloadSchema = actorPayloadSchema.extend({
@@ -192,6 +202,10 @@ export class WorkerJobRunner {
         return this.processActionItemSync(job);
       case "lists.import-status.upsert":
         return this.processImportStatusSync(job);
+      case "lists.incident.upsert":
+        return this.processIncidentSync(job);
+      case "lists.capa.upsert":
+        return this.processCapaSync(job);
       case "office_ops.closeout.reminder":
         return this.processOfficeOpsCloseoutReminder(job);
       case "office_ops.checklist.reminder":
@@ -426,6 +440,48 @@ export class WorkerJobRunner {
 
     return {
       workflowRunId: payload.workflowRunId,
+      itemId: result.itemId
+    };
+  }
+
+  private async processIncidentSync(job: WorkerJobRecord): Promise<Record<string, unknown>> {
+    const payload = incidentPayloadSchema.parse(job.payload);
+    const incident = await this.repository.getIncident(payload.incidentId);
+    if (!incident) {
+      return {
+        skipped: true,
+        reason: "Incident no longer exists."
+      };
+    }
+
+    const result = await this.pilotOps.createIncidentListItem(this.buildIncidentListFields(incident));
+    await this.recordAudit(payload.actor, "lists.incident_synced", "incident", incident.id, {
+      itemId: result.itemId
+    });
+
+    return {
+      incidentId: incident.id,
+      itemId: result.itemId
+    };
+  }
+
+  private async processCapaSync(job: WorkerJobRecord): Promise<Record<string, unknown>> {
+    const payload = capaPayloadSchema.parse(job.payload);
+    const capa = await this.repository.getCapa(payload.capaId);
+    if (!capa) {
+      return {
+        skipped: true,
+        reason: "CAPA no longer exists."
+      };
+    }
+
+    const result = await this.pilotOps.createCapaListItem(this.buildCapaListFields(capa));
+    await this.recordAudit(payload.actor, "lists.capa_synced", "capa", capa.id, {
+      itemId: result.itemId
+    });
+
+    return {
+      capaId: capa.id,
       itemId: result.itemId
     };
   }
@@ -677,6 +733,40 @@ export class WorkerJobRunner {
     await this.maintainOfficeOps(now);
     await this.maintainScorecardReviews(now);
     await this.maintainTrainingRequirements(now);
+  }
+
+  private buildIncidentListFields(incident: IncidentRecord): Record<string, unknown> {
+    return {
+      Title: incident.title,
+      Severity: incident.severity,
+      Status: incident.status,
+      Category: incident.category,
+      OwnerRole: incident.ownerRole,
+      Summary: incident.summary,
+      ImmediateResponse: incident.immediateResponse ?? "",
+      ResolutionNote: incident.resolutionNote ?? "",
+      DetectedAt: incident.detectedAt,
+      DetectedByRole: incident.detectedByRole,
+      LinkedCapaId: incident.linkedCapaId ?? "",
+      DueDate: incident.dueDate ?? ""
+    };
+  }
+
+  private buildCapaListFields(capa: CapaRecord): Record<string, unknown> {
+    return {
+      Title: capa.title,
+      Status: capa.status,
+      SourceType: capa.sourceType,
+      SourceId: capa.sourceId,
+      IncidentId: capa.incidentId ?? "",
+      OwnerRole: capa.ownerRole,
+      DueDate: capa.dueDate,
+      Summary: capa.summary,
+      CorrectiveAction: capa.correctiveAction,
+      PreventiveAction: capa.preventiveAction,
+      VerificationPlan: capa.verificationPlan ?? "",
+      ResolutionNote: capa.resolutionNote ?? ""
+    };
   }
 
   private async maintainOfficeOps(now: string): Promise<void> {
