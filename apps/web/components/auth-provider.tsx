@@ -18,6 +18,7 @@ export type AuthProfileSummary = {
   id: string;
   displayName: string;
   role: ActorRole;
+  availableRoles: ActorRole[];
   isPrimary: boolean;
   lockedUntil: string | null;
 };
@@ -71,6 +72,18 @@ export const adminProfileRoles: ActorRole[] = [
   "office_manager",
   "hr_lead",
   "cfo"
+];
+
+export const allActorRoles: ActorRole[] = [
+  "medical_director",
+  "quality_lead",
+  "office_manager",
+  "hr_lead",
+  "cfo",
+  "patient_care_team_physician",
+  "nurse_practitioner",
+  "medical_assistant",
+  "front_desk"
 ];
 
 export const devProfiles: ActorIdentity[] = [
@@ -180,8 +193,8 @@ type AppAuthContextValue = {
   hasCapability: (capability: AppCapability) => boolean;
   selectDevProfile: (role: ActorRole) => void;
   enrollDevice: (input: { enrollmentCode: string; deviceLabel: string }) => Promise<void>;
-  login: (input: { profileId: string; pin: string }) => Promise<void>;
-  switchProfile: (input: { profileId: string; pin: string }) => Promise<void>;
+  login: (input: { profileId: string; role?: ActorRole; pin: string }) => Promise<void>;
+  switchProfile: (input: { profileId: string; role?: ActorRole; pin: string }) => Promise<void>;
   lock: () => Promise<void>;
   logout: () => Promise<void>;
 };

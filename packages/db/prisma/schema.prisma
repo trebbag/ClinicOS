@@ -110,6 +110,7 @@ model UserProfile {
   id          String   @id
   displayName String
   role        String
+  grantedRoles Json
   status      String
   pinHash     String
   createdAt   DateTime
@@ -167,6 +168,7 @@ model DeviceSession {
   id                String   @id
   deviceId          String
   profileId         String
+  activeRole        String
   sessionSecretHash String   @unique
   idleExpiresAt     DateTime
   absoluteExpiresAt DateTime

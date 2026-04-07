@@ -16,6 +16,7 @@ export const authProfileSummarySchema = z.object({
   id: z.string(),
   displayName: z.string(),
   role: z.enum(roles),
+  availableRoles: z.array(z.enum(roles)).min(1),
   isPrimary: z.boolean().default(false),
   lockedUntil: z.string().nullable().default(null)
 });
@@ -24,6 +25,7 @@ export const userProfileSchema = z.object({
   id: z.string(),
   displayName: z.string(),
   role: z.enum(roles),
+  grantedRoles: z.array(z.enum(roles)).min(1),
   status: userProfileStatusSchema,
   pinHash: z.string(),
   createdAt: z.string(),
@@ -70,6 +72,7 @@ export const deviceSessionSchema = z.object({
   id: z.string(),
   deviceId: z.string(),
   profileId: z.string(),
+  activeRole: z.enum(roles),
   sessionSecretHash: z.string(),
   idleExpiresAt: z.string(),
   absoluteExpiresAt: z.string(),
@@ -99,6 +102,7 @@ export const authStateSchema = z.object({
 export const userProfileCreateSchema = z.object({
   displayName: z.string().min(1),
   role: z.enum(roles),
+  grantedRoles: z.array(z.enum(roles)).min(1).optional(),
   pin: z.string().regex(/^\d{6}$/),
   status: userProfileStatusSchema.default("active")
 });
@@ -106,6 +110,7 @@ export const userProfileCreateSchema = z.object({
 export const userProfileUpdateSchema = z.object({
   displayName: z.string().min(1).optional(),
   role: z.enum(roles).optional(),
+  grantedRoles: z.array(z.enum(roles)).min(1).optional(),
   pin: z.string().regex(/^\d{6}$/).optional(),
   status: userProfileStatusSchema.optional()
 }).refine((value) => Object.keys(value).length > 0, {
@@ -125,6 +130,7 @@ export const deviceEnrollSchema = z.object({
 
 export const deviceProfileLoginSchema = z.object({
   profileId: z.string().min(1),
+  role: z.enum(roles).optional(),
   pin: z.string().regex(/^\d{6}$/)
 });
 
@@ -156,14 +162,17 @@ export type EnrolledDeviceUpdateCommand = z.infer<typeof enrolledDeviceUpdateSch
 export function createUserProfile(input: {
   displayName: string;
   role: UserProfile["role"];
+  grantedRoles?: UserProfile["grantedRoles"];
   pinHash: string;
   status?: UserProfileStatus;
 }): UserProfile {
   const now = new Date().toISOString();
+  const grantedRoles = Array.from(new Set([input.role, ...(input.grantedRoles ?? [])]));
   return userProfileSchema.parse({
     id: randomId("profile"),
     displayName: input.displayName,
     role: input.role,
+    grantedRoles,
     status: input.status ?? "active",
     pinHash: input.pinHash,
     createdAt: now,
@@ -234,6 +243,7 @@ export function createDeviceEnrollmentCode(input: {
 export function createDeviceSession(input: {
   deviceId: string;
   profileId: string;
+  activeRole: DeviceSession["activeRole"];
   sessionSecretHash: string;
   idleExpiresAt: string;
   absoluteExpiresAt: string;
@@ -243,6 +253,7 @@ export function createDeviceSession(input: {
     id: randomId("session"),
     deviceId: input.deviceId,
     profileId: input.profileId,
+    activeRole: input.activeRole,
     sessionSecretHash: input.sessionSecretHash,
     idleExpiresAt: input.idleExpiresAt,
     absoluteExpiresAt: input.absoluteExpiresAt,

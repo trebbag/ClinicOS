@@ -198,6 +198,7 @@ export class PrismaClinicRepository implements ClinicRepository {
     id: string;
     displayName: string;
     role: string;
+    grantedRoles: Prisma.JsonValue;
     status: string;
     pinHash: string;
     createdAt: Date;
@@ -205,6 +206,7 @@ export class PrismaClinicRepository implements ClinicRepository {
   }): UserProfile {
     return userProfileSchema.parse({
       ...record,
+      grantedRoles: record.grantedRoles,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString()
     });
@@ -272,6 +274,7 @@ export class PrismaClinicRepository implements ClinicRepository {
     id: string;
     deviceId: string;
     profileId: string;
+    activeRole: string;
     sessionSecretHash: string;
     idleExpiresAt: Date;
     absoluteExpiresAt: Date;
@@ -1202,6 +1205,7 @@ export class PrismaClinicRepository implements ClinicRepository {
         id: profile.id,
         displayName: profile.displayName,
         role: profile.role,
+        grantedRoles: asJsonValue(profile.grantedRoles),
         status: profile.status,
         pinHash: profile.pinHash,
         createdAt: new Date(profile.createdAt),
@@ -1217,6 +1221,7 @@ export class PrismaClinicRepository implements ClinicRepository {
       data: {
         displayName: patch.displayName,
         role: patch.role,
+        grantedRoles: patch.grantedRoles ? asJsonValue(patch.grantedRoles) : undefined,
         status: patch.status,
         pinHash: patch.pinHash,
         createdAt: isoToRequiredDate(patch.createdAt),
@@ -1428,6 +1433,7 @@ export class PrismaClinicRepository implements ClinicRepository {
         id: session.id,
         deviceId: session.deviceId,
         profileId: session.profileId,
+        activeRole: session.activeRole,
         sessionSecretHash: session.sessionSecretHash,
         idleExpiresAt: new Date(session.idleExpiresAt),
         absoluteExpiresAt: new Date(session.absoluteExpiresAt),
@@ -1446,6 +1452,7 @@ export class PrismaClinicRepository implements ClinicRepository {
       data: {
         deviceId: patch.deviceId,
         profileId: patch.profileId,
+        activeRole: patch.activeRole,
         sessionSecretHash: patch.sessionSecretHash,
         idleExpiresAt: isoToRequiredDate(patch.idleExpiresAt),
         absoluteExpiresAt: isoToRequiredDate(patch.absoluteExpiresAt),

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { adminProfileRoles, useAppAuth, type AppCapability } from "../../components/auth-provider";
+import { allActorRoles, useAppAuth, type AppCapability } from "../../components/auth-provider";
 import { apiRequest, type ActorRole } from "../../lib/api";
 
 type WhoAmI = {
@@ -10,6 +10,7 @@ type WhoAmI = {
     role: string;
     name?: string;
   };
+  grantedRoles?: string[];
   authMode: "dev_headers" | "trusted_proxy" | "device_profiles";
   authenticatedAt: string;
   capabilities: AppCapability[];
@@ -137,6 +138,7 @@ type UserProfile = {
   id: string;
   displayName: string;
   role: ActorRole;
+  grantedRoles: ActorRole[];
   status: "active" | "inactive";
   createdAt: string;
   updatedAt: string;
@@ -180,6 +182,7 @@ type AuditEvent = {
 type ProfileEditState = {
   displayName: string;
   role: ActorRole;
+  grantedRoles: ActorRole[];
   status: "active" | "inactive";
   pin: string;
 };
@@ -255,6 +258,7 @@ export default function PilotOpsPage(): JSX.Element {
           next[profile.id] = current[profile.id] ?? {
             displayName: profile.displayName,
             role: profile.role,
+            grantedRoles: profile.grantedRoles,
             status: profile.status,
             pin: ""
           };
@@ -321,6 +325,7 @@ export default function PilotOpsPage(): JSX.Element {
         body: JSON.stringify({
           displayName: newProfileName,
           role: newProfileRole,
+          grantedRoles: [newProfileRole],
           pin: newProfilePin,
           status: "active"
         })
@@ -352,6 +357,7 @@ export default function PilotOpsPage(): JSX.Element {
         body: JSON.stringify({
           displayName: edit.displayName,
           role: edit.role,
+          grantedRoles: edit.grantedRoles,
           status: edit.status,
           pin: edit.pin || undefined
         })
@@ -780,7 +786,7 @@ export default function PilotOpsPage(): JSX.Element {
               required
             />
             <select value={newProfileRole} onChange={(event) => setNewProfileRole(event.target.value as ActorRole)}>
-              {adminProfileRoles.map((role) => (
+              {allActorRoles.map((role) => (
                 <option key={role} value={role}>
                   {role}
                 </option>
@@ -847,7 +853,8 @@ export default function PilotOpsPage(): JSX.Element {
         <div className="table">
           <div className="table-row table-head">
             <span>Name</span>
-            <span>Role</span>
+            <span>Default role</span>
+            <span>Granted roles</span>
             <span>Status</span>
             <span>PIN</span>
             <span>Action</span>
@@ -863,6 +870,7 @@ export default function PilotOpsPage(): JSX.Element {
                       ...(current[profile.id] ?? {
                         displayName: profile.displayName,
                         role: profile.role,
+                        grantedRoles: profile.grantedRoles,
                         status: profile.status,
                         pin: ""
                       }),
@@ -874,25 +882,70 @@ export default function PilotOpsPage(): JSX.Element {
               <span>
                 <select
                   value={profileEdits[profile.id]?.role ?? profile.role}
-                  onChange={(event) => setProfileEdits((current) => ({
-                    ...current,
-                    [profile.id]: {
-                      ...(current[profile.id] ?? {
-                        displayName: profile.displayName,
-                        role: profile.role,
-                        status: profile.status,
-                        pin: ""
-                      }),
-                      role: event.target.value as ActorRole
-                    }
-                  }))}
+                  onChange={(event) => setProfileEdits((current) => {
+                    const nextRole = event.target.value as ActorRole;
+                    const previous = current[profile.id] ?? {
+                      displayName: profile.displayName,
+                      role: profile.role,
+                      grantedRoles: profile.grantedRoles,
+                      status: profile.status,
+                      pin: ""
+                    };
+                    return {
+                      ...current,
+                      [profile.id]: {
+                        ...previous,
+                        role: nextRole,
+                        grantedRoles: Array.from(new Set([nextRole, ...previous.grantedRoles]))
+                      }
+                    };
+                  })}
                 >
-                  {adminProfileRoles.map((role) => (
+                  {allActorRoles.map((role) => (
                     <option key={role} value={role}>
                       {role}
                     </option>
                   ))}
                 </select>
+              </span>
+              <span className="stack">
+                <span className="muted">Granted roles</span>
+                <div className="grid" style={{ gap: 6 }}>
+                  {allActorRoles.map((role) => {
+                    const edit = profileEdits[profile.id] ?? {
+                      displayName: profile.displayName,
+                      role: profile.role,
+                      grantedRoles: profile.grantedRoles,
+                      status: profile.status,
+                      pin: ""
+                    };
+                    const checked = edit.grantedRoles.includes(role);
+                    return (
+                      <label key={role} className="muted" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => setProfileEdits((current) => {
+                            const previous = current[profile.id] ?? edit;
+                            const nextGrantedRoles = event.target.checked
+                              ? Array.from(new Set([...previous.grantedRoles, role, previous.role]))
+                              : previous.grantedRoles.filter((candidate) => candidate !== role || candidate === previous.role);
+                            return {
+                              ...current,
+                              [profile.id]: {
+                                ...previous,
+                                grantedRoles: nextGrantedRoles.includes(previous.role)
+                                  ? nextGrantedRoles
+                                  : [previous.role, ...nextGrantedRoles]
+                              }
+                            };
+                          })}
+                        />
+                        {role}
+                      </label>
+                    );
+                  })}
+                </div>
               </span>
               <span>
                 <select
@@ -903,6 +956,7 @@ export default function PilotOpsPage(): JSX.Element {
                       ...(current[profile.id] ?? {
                         displayName: profile.displayName,
                         role: profile.role,
+                        grantedRoles: profile.grantedRoles,
                         status: profile.status,
                         pin: ""
                       }),
@@ -923,6 +977,7 @@ export default function PilotOpsPage(): JSX.Element {
                       ...(current[profile.id] ?? {
                         displayName: profile.displayName,
                         role: profile.role,
+                        grantedRoles: profile.grantedRoles,
                         status: profile.status,
                         pin: ""
                       }),

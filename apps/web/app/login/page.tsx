@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { devProfiles, useAppAuth } from "../../components/auth-provider";
+import type { ActorRole } from "../../lib/api";
 
 export default function LoginPage(): JSX.Element {
   const router = useRouter();
@@ -20,6 +21,7 @@ export default function LoginPage(): JSX.Element {
   const [deviceLabel, setDeviceLabel] = useState("");
   const [enrollmentCode, setEnrollmentCode] = useState("");
   const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [selectedRole, setSelectedRole] = useState("");
   const [pin, setPin] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -39,6 +41,17 @@ export default function LoginPage(): JSX.Element {
     }
     setSelectedProfileId((current) => current || authState.allowedProfiles[0].id);
   }, [authState?.allowedProfiles]);
+
+  useEffect(() => {
+    if (!selectedProfile) {
+      return;
+    }
+    setSelectedRole((current) =>
+      current && selectedProfile.availableRoles.includes(current as typeof selectedProfile.availableRoles[number])
+        ? current
+        : selectedProfile.role
+    );
+  }, [selectedProfile]);
 
   useEffect(() => {
     if (actor && authState?.authMode === "dev_headers") {
@@ -69,6 +82,7 @@ export default function LoginPage(): JSX.Element {
       const handler = actor && isSwitchMode ? switchProfile : login;
       await handler({
         profileId: selectedProfileId,
+        role: (selectedRole || selectedProfile?.role) as ActorRole | undefined,
         pin
       });
       setPin("");
@@ -175,7 +189,7 @@ export default function LoginPage(): JSX.Element {
         </div>
       ) : (
         <div className="card">
-          <h2>{isSwitchMode ? "Choose another profile" : "Choose a profile"}</h2>
+        <h2>{isSwitchMode ? "Choose another role or profile" : "Choose a profile"}</h2>
           <div className="muted" style={{ marginBottom: 12 }}>
             Trusted device: {authState.device?.deviceLabel ?? "unknown"}
           </div>
@@ -189,7 +203,10 @@ export default function LoginPage(): JSX.Element {
               <span className="muted">Allowed profiles</span>
               <select
                 value={selectedProfileId}
-                onChange={(event) => setSelectedProfileId(event.target.value)}
+                onChange={(event) => {
+                  setSelectedProfileId(event.target.value);
+                  setSelectedRole("");
+                }}
                 required
               >
                 {authState.allowedProfiles.map((profile) => (
@@ -199,6 +216,22 @@ export default function LoginPage(): JSX.Element {
                 ))}
               </select>
             </label>
+            {selectedProfile ? (
+              <label className="stack">
+                <span className="muted">Active role</span>
+                <select
+                  value={selectedRole}
+                  onChange={(event) => setSelectedRole(event.target.value)}
+                  required
+                >
+                  {selectedProfile.availableRoles.map((role) => (
+                    <option key={role} value={role}>
+                      {role}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <label className="stack">
               <span className="muted">PIN</span>
               <input

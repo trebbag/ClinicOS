@@ -49,7 +49,7 @@ export function Nav(): JSX.Element {
               router.push("/login" as Route);
             }}
           >
-            Switch profile
+            Switch role/profile
           </button>
           <button
             className="button secondary"

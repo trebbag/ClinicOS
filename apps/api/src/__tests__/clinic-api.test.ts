@@ -825,6 +825,145 @@ describe("Clinic API", () => {
     await deviceApp.close();
   });
 
+  it("lets a multi-role admin profile switch acting roles on the same trusted account", async () => {
+    const deviceRepository = new MemoryClinicRepository();
+    const service = new ClinicApiService(deviceRepository, new LocalApprovedDocumentPublisher(), {
+      authMode: "device_profiles",
+      integrationMode: "stub",
+      microsoftPreflight: {
+        getMissingConfigKeys: () => [],
+        validate: async () => ({
+          mode: "stub",
+          configComplete: true,
+          overallStatus: "ready",
+          readyForLive: true,
+          missingConfigKeys: [],
+          surfaces: []
+        })
+      }
+    });
+    const deviceAuthService = new DeviceProfileAuthService(deviceRepository, {
+      mode: "device_profiles",
+      secureCookies: false,
+      cookieSameSite: "Strict",
+      deviceTrustDays: 90,
+      sessionIdleHours: 12,
+      sessionAbsoluteDays: 7,
+      failedPinLimit: 5,
+      failedPinLockMinutes: 15,
+      enrollmentTtlMinutes: 15
+    });
+    const bootstrap = await deviceAuthService.bootstrapFirstAdmin({
+      displayName: "Pilot Admin",
+      role: "medical_director",
+      pin: "123456"
+    });
+    const deviceApp = buildApp({
+      authMode: "device_profiles",
+      service,
+      repository: deviceRepository,
+      deviceAuthService
+    });
+
+    const enrollResponse = await deviceApp.inject({
+      method: "POST",
+      url: "/auth/enroll-device",
+      headers: originHeaders(),
+      payload: {
+        enrollmentCode: bootstrap.enrollmentCode.code,
+        deviceLabel: "Admin Console"
+      }
+    });
+    const deviceCookie = cookieValue(enrollResponse, "clinic_device");
+
+    const loginResponse = await deviceApp.inject({
+      method: "POST",
+      url: "/auth/login",
+      headers: {
+        ...originHeaders(),
+        cookie: `clinic_device=${deviceCookie}`
+      },
+      payload: {
+        profileId: bootstrap.profile.id,
+        role: "office_manager",
+        pin: "123456"
+      }
+    });
+
+    expect(loginResponse.statusCode).toBe(200);
+    expect(loginResponse.json<{ currentProfile: { role: string; availableRoles: string[] } }>().currentProfile).toEqual(
+      expect.objectContaining({
+        role: "office_manager",
+        availableRoles: expect.arrayContaining(["medical_director", "office_manager", "quality_lead", "hr_lead", "cfo"])
+      })
+    );
+    const sessionCookie = cookieValue(loginResponse, "clinic_session");
+
+    const whoami = await deviceApp.inject({
+      method: "GET",
+      url: "/auth/whoami",
+      headers: {
+        cookie: `clinic_device=${deviceCookie}; clinic_session=${sessionCookie}`
+      }
+    });
+    expect(whoami.statusCode).toBe(200);
+    expect(whoami.json<{ actor: { role: string }; grantedRoles: string[] }>().actor.role).toBe("office_manager");
+    expect(whoami.json<{ actor: { role: string }; grantedRoles: string[] }>().grantedRoles).toEqual(
+      expect.arrayContaining(["medical_director", "office_manager", "quality_lead", "hr_lead", "cfo"])
+    );
+
+    const packetResponse = await deviceApp.inject({
+      method: "POST",
+      url: "/office-ops/daily-packet",
+      headers: {
+        ...originHeaders(),
+        cookie: `clinic_device=${deviceCookie}; clinic_session=${sessionCookie}`
+      },
+      payload: {
+        targetDate: "2026-04-07"
+      }
+    });
+    expect(packetResponse.statusCode).toBe(200);
+
+    const switchResponse = await deviceApp.inject({
+      method: "POST",
+      url: "/auth/switch-profile",
+      headers: {
+        ...originHeaders(),
+        cookie: `clinic_device=${deviceCookie}; clinic_session=${sessionCookie}`
+      },
+      payload: {
+        profileId: bootstrap.profile.id,
+        role: "quality_lead",
+        pin: "123456"
+      }
+    });
+    expect(switchResponse.statusCode).toBe(200);
+    const switchedSessionCookie = cookieValue(switchResponse, "clinic_session");
+
+    const qualityWhoami = await deviceApp.inject({
+      method: "GET",
+      url: "/auth/whoami",
+      headers: {
+        cookie: `clinic_device=${deviceCookie}; clinic_session=${switchedSessionCookie}`
+      }
+    });
+    expect(qualityWhoami.statusCode).toBe(200);
+    expect(qualityWhoami.json<{ actor: { role: string } }>().actor.role).toBe("quality_lead");
+
+    const validateResponse = await deviceApp.inject({
+      method: "POST",
+      url: "/integrations/microsoft/validate",
+      headers: {
+        ...originHeaders(),
+        cookie: `clinic_device=${deviceCookie}; clinic_session=${switchedSessionCookie}`
+      }
+    });
+    expect(validateResponse.statusCode).toBe(200);
+
+    await deviceApp.close();
+  });
+
   it("reports stub-mode runtime readiness through readyz and config-status", async () => {
     const statusRepository = new MemoryClinicRepository();
     const service = new ClinicApiService(statusRepository, new LocalApprovedDocumentPublisher(), {
@@ -1015,6 +1154,7 @@ describe("Clinic API", () => {
       createDeviceSession({
         deviceId: cleanupRepository.enrolledDevices[0].id,
         profileId: profile.id,
+        activeRole: profile.role,
         sessionSecretHash: "expired-active-session",
         idleExpiresAt: "2026-03-20T00:00:00.000Z",
         absoluteExpiresAt: "2026-03-25T00:00:00.000Z"
@@ -1023,6 +1163,7 @@ describe("Clinic API", () => {
         ...createDeviceSession({
           deviceId: cleanupRepository.enrolledDevices[0].id,
           profileId: profile.id,
+          activeRole: profile.role,
           sessionSecretHash: "revoked-session",
           idleExpiresAt: "2026-03-01T00:00:00.000Z",
           absoluteExpiresAt: "2026-03-10T00:00:00.000Z"

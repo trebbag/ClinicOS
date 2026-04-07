@@ -5,7 +5,11 @@ export type ActorRole =
   | "cfo"
   | "office_manager"
   | "hr_lead"
-  | "quality_lead";
+  | "quality_lead"
+  | "patient_care_team_physician"
+  | "nurse_practitioner"
+  | "medical_assistant"
+  | "front_desk";
 
 export type ActorIdentity = {
   actorId: string;

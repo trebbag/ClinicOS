@@ -25,6 +25,7 @@ import {
   type ResolvedIdentity,
   type Role,
   type UserProfile,
+  roles,
   userProfileCreateSchema,
   userProfileUpdateSchema
 } from "@clinic-os/domain";
@@ -49,6 +50,7 @@ export type PublicUserProfile = {
   id: string;
   displayName: string;
   role: Role;
+  grantedRoles: Role[];
   status: UserProfile["status"];
   createdAt: string;
   updatedAt: string;
@@ -109,10 +111,10 @@ function verifyPin(pin: string, storedHash: string): boolean {
   return timingSafeEqual(candidate, digest);
 }
 
-function actorForProfile(profile: UserProfile): ActorContext {
+function actorForProfile(profile: UserProfile, role = profile.role): ActorContext {
   return {
     actorId: profile.id,
-    role: profile.role,
+    role,
     name: profile.displayName
   };
 }
@@ -122,11 +124,18 @@ function sanitizeProfile(profile: UserProfile): PublicUserProfile {
     id: profile.id,
     displayName: profile.displayName,
     role: profile.role,
+    grantedRoles: profile.grantedRoles,
     status: profile.status,
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt
   };
 }
+
+function normalizeGrantedRoles(role: Role, grantedRoles?: Role[]): Role[] {
+  return Array.from(new Set([role, ...(grantedRoles ?? [])]));
+}
+
+const bootstrapAdminRoles: Role[] = [...roles];
 
 function cookieExpiresAt(input: string): string {
   return new Date(input).toUTCString();
@@ -234,6 +243,7 @@ export class DeviceProfileAuthService {
           id: profile.id,
           displayName: profile.displayName,
           role: profile.role,
+          availableRoles: profile.grantedRoles,
           isPrimary: assignment.isPrimary,
           lockedUntil: assignment.lockedUntil
         } satisfies AuthProfileSummary;
@@ -364,22 +374,19 @@ export class DeviceProfileAuthService {
       });
       return null;
     }
+    const activeRole = profile.grantedRoles.includes(session.activeRole) ? session.activeRole : profile.role;
     const nextIdleExpiry = addHours(effectiveNow, this.options.sessionIdleHours);
     const rolledIdleExpiry = nextIdleExpiry < session.absoluteExpiresAt
       ? nextIdleExpiry
       : session.absoluteExpiresAt;
-    await this.repository.updateDeviceSession(session.id, {
+    const updatedSession = await this.repository.updateDeviceSession(session.id, {
+      activeRole,
       idleExpiresAt: rolledIdleExpiry,
       lastSeenAt: effectiveNow,
       updatedAt: effectiveNow
     });
     return {
-      session: {
-        ...session,
-        idleExpiresAt: rolledIdleExpiry,
-        lastSeenAt: effectiveNow,
-        updatedAt: effectiveNow
-      },
+      session: updatedSession,
       profile
     };
   }
@@ -403,12 +410,13 @@ export class DeviceProfileAuthService {
     }
     return {
       actorId: resolvedSession.profile.id,
-      role: resolvedSession.profile.role,
+      role: resolvedSession.session.activeRole,
       name: resolvedSession.profile.displayName,
       authMode: "device_profiles",
       authenticatedAt: resolvedSession.session.createdAt,
       deviceId: device.id,
-      profileId: resolvedSession.profile.id
+      profileId: resolvedSession.profile.id,
+      grantedRoles: resolvedSession.profile.grantedRoles
     };
   }
 
@@ -463,7 +471,8 @@ export class DeviceProfileAuthService {
       currentProfile: resolvedSession ? {
         id: resolvedSession.profile.id,
         displayName: resolvedSession.profile.displayName,
-        role: resolvedSession.profile.role,
+        role: resolvedSession.session.activeRole,
+        availableRoles: resolvedSession.profile.grantedRoles,
         isPrimary: device.primaryProfileId === resolvedSession.profile.id,
         lockedUntil: null
       } : null,
@@ -478,14 +487,17 @@ export class DeviceProfileAuthService {
   async createUserProfile(actor: ActorContext, input: unknown): Promise<PublicUserProfile> {
     this.requireCapability(actor, "auth.manage_profiles");
     const command = userProfileCreateSchema.parse(input);
+    const grantedRoles = normalizeGrantedRoles(command.role, command.grantedRoles);
     const created = await this.repository.createUserProfile(createUserProfile({
       displayName: command.displayName,
       role: command.role,
+      grantedRoles,
       pinHash: hashPin(command.pin),
       status: command.status
     }));
     await this.recordAudit(actor, "auth.profile_created", "user_profile", created.id, {
       role: created.role,
+      grantedRoles: created.grantedRoles,
       status: created.status
     });
     return sanitizeProfile(created);
@@ -498,9 +510,12 @@ export class DeviceProfileAuthService {
     if (!profile) {
       notFound(`User profile not found: ${profileId}`);
     }
+    const nextRole = command.role ?? profile.role;
+    const nextGrantedRoles = normalizeGrantedRoles(nextRole, command.grantedRoles ?? profile.grantedRoles);
     const updated = await this.repository.updateUserProfile(profileId, {
       displayName: command.displayName ?? profile.displayName,
-      role: command.role ?? profile.role,
+      role: nextRole,
+      grantedRoles: nextGrantedRoles,
       status: command.status ?? profile.status,
       pinHash: command.pin ? hashPin(command.pin) : profile.pinHash,
       updatedAt: new Date().toISOString()
@@ -510,6 +525,7 @@ export class DeviceProfileAuthService {
     }
     await this.recordAudit(actor, "auth.profile_updated", "user_profile", updated.id, {
       role: updated.role,
+      grantedRoles: updated.grantedRoles,
       status: updated.status,
       pinChanged: Boolean(command.pin)
     });
@@ -638,6 +654,10 @@ export class DeviceProfileAuthService {
     if (!profile || profile.status !== "active") {
       unauthorized("Profile is unavailable.");
     }
+    const activeRole = command.role ?? profile.role;
+    if (!profile.grantedRoles.includes(activeRole)) {
+      forbidden("This profile is not allowed to use that role.");
+    }
     const assignments = await this.repository.listDeviceAllowedProfiles({ deviceId: device.id });
     const assignment = assignments.find((record) => record.profileId === command.profileId);
     if (!assignment) {
@@ -683,13 +703,15 @@ export class DeviceProfileAuthService {
     const session = await this.repository.createDeviceSession(createDeviceSession({
       deviceId: device.id,
       profileId: profile.id,
+      activeRole,
       sessionSecretHash: hashToken(sessionToken),
       idleExpiresAt: addHours(now, this.options.sessionIdleHours),
       absoluteExpiresAt: addDays(now, this.options.sessionAbsoluteDays)
     }));
-    await this.recordAudit(actorForProfile(profile), input.reason === "switch_profile" ? "auth.profile_switched" : "auth.logged_in", "device_session", session.id, {
+    await this.recordAudit(actorForProfile(profile, activeRole), input.reason === "switch_profile" ? "auth.profile_switched" : "auth.logged_in", "device_session", session.id, {
       deviceId: device.id,
       profileId: profile.id,
+      activeRole,
       previousProfileIds: existingSessions.map((existing) => existing.profileId)
     });
     return {
@@ -845,12 +867,14 @@ export class DeviceProfileAuthService {
     const profile = await this.repository.createUserProfile(createUserProfile({
       displayName: input.displayName,
       role: input.role,
+      grantedRoles: bootstrapAdminRoles,
       pinHash: hashPin(input.pin),
       status: "active"
     }));
     const bootstrapActor = actorForProfile(profile);
     await this.recordAudit(bootstrapActor, "auth.profile_bootstrapped", "user_profile", profile.id, {
-      role: profile.role
+      role: profile.role,
+      grantedRoles: profile.grantedRoles
     });
     const enrollmentCode = await this.createEnrollmentCode(bootstrapActor, {
       primaryProfileId: profile.id,

@@ -75,7 +75,8 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       authMode: identity.authMode,
       authenticatedAt: identity.authenticatedAt,
       deviceId: identity.deviceId,
-      profileId: identity.profileId
+      profileId: identity.profileId,
+      grantedRoles: identity.grantedRoles
     };
   });
 

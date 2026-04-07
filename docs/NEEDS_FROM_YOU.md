@@ -1,6 +1,6 @@
 # Needs From You
 
-These are the remaining items I still need from you before Clinic OS can move from single-device/live-readiness into a broader real-user pilot.
+These are the remaining items I still need from you before Clinic OS moves from current pilot-ready state into broader day-to-day use and deeper product expansion.
 
 ## What is already in place
 
@@ -48,48 +48,60 @@ That means the remaining pilot blockers are now mostly broader pilot validation,
   - quality lead device flow: validated
   - HR lead device flow: validated
   - temporary validation auth fixtures were revoked/deactivated after the run
+- The `admin` profile is now configured as a multi-role account and can act as all current product roles from one enrolled device/session.
 
 ## What the latest live validation found
 
-The codebase and local env are healthy, but the deployed Render environment is no longer perfectly aligned with the locally validated Microsoft setup.
+The deployed Render stack is now healthy and pilot-usable, but there is still one worker-operations concern to keep watching.
 
-- Local Microsoft preflight is `ready`.
-- Deployed Microsoft validation is currently `degraded`.
-- The current deployed failure is SharePoint publication path reachability:
-  - SharePoint policy folder returns `404 itemNotFound` from the deployed API
-- The broader live smoke harness also showed that queued jobs were not draining on their own during validation, which points to Render worker/service operations rather than a code-path failure.
-- A one-off local worker run against the same live DB was able to process queued jobs successfully, so the worker logic itself is still good.
+- The deployed Render smoke check is green:
+  - web `healthz`: `200`
+  - web `readyz`: `200`
+  - proxied API `healthz`: `200`
+- The live pilot smoke harness succeeded against the deployed app for:
+  - device enrollment + profile login
+  - SharePoint-backed document publish path
+  - Planner/list-triggering workflow actions
+- The broader synthetic role-validation pass also succeeded for:
+  - office manager flow
+  - quality lead flow
+  - HR lead flow
+- A fresh deployed Microsoft validation run is now `ready` again:
+  - SharePoint policy folder: ready
+  - Planner: ready
+  - Teams webhooks: ready
+  - Issue list: ready
+  - Action item list: ready
+  - Import status list: ready
+- The Render worker is processing jobs during live validation, but it is still worth checking its steady-state behavior:
+  - the queue dropped during validation, but it settled at `2` fresh `lists.action-item.upsert` jobs tied to office-ops maintenance actions
+  - that may be expected maintenance churn, or it may point to a Render worker/runtime issue that still needs inspection
+
+## What is now effectively closed
+
+1. Broader named-role validation is no longer a pilot blocker.
+   - The `admin` profile can now switch among all current roles from the same enrolled account.
+   - That means office manager, quality lead, HR lead, CFO, and other role-specific flows can be exercised without waiting for separate user setup.
+
+2. Additional real pilot users can be registered later.
+   - Separate named profiles are still recommended for real-world accountability and adoption.
+   - They are no longer required before continuing pilot validation.
+
+3. The Render worker exists and is reported healthy.
+   - The remaining queue behavior is now a monitor-and-observe concern rather than a launch blocker.
+   - If queue depth starts growing or jobs stop draining, inspect the worker logs and rerun the live smoke commands.
 
 ## What I still need from you next
 
-1. Real broader approved pilot device rollout
-   - one label per computer/device
-   - primary profile for that device
-   - up to two backup profiles if needed
-
-2. Real named pilot profiles for breadth validation
-   - office manager
-   - quality lead
-   - HR lead
-   - optional CFO if you want approvals and finance review exercised more broadly
-
-3. Render deployment alignment check
-   - compare the Render API and worker values for:
-     - `MICROSOFT_SHAREPOINT_SITE_ID`
-     - `MICROSOFT_SHAREPOINT_POLICY_FOLDER`
-   - confirm they exactly match the working local `.env`
-   - redeploy API and worker after correcting any mismatch
-
-4. Render worker health check
-   - confirm the worker service is actually running continuously on Render
-   - inspect the Render worker logs for why live queued jobs were not draining during validation
-   - after any fix, rerun:
-     - `npm run smoke:pilot-live -- https://...`
-     - `npm run validate:pilot-roles -- https://...`
-
-5. A decision on whether to keep the optional trusted-proxy path documented as a later hardening phase
+1. A decision on whether to keep the optional trusted-proxy path documented as a later hardening phase
    - it is still not required for the first pilot
    - it can remain a future infrastructure path if desired
+
+2. Optional later real-user rollout details
+   - one label per additional computer/device
+   - primary profile for that device
+   - up to two backup profiles if needed
+   - named office manager / quality lead / HR lead profiles when you want them added
 
 ## Database rule
 
@@ -100,9 +112,6 @@ Postgres is still required even though Microsoft is now ready, because Clinic OS
 
 ## The next command I am waiting to run
 
-The next step is to realign the Render Microsoft/worker deployment and then rerun:
+The next step is no longer additional named-role setup. The next major engineering step after this pilot hardening phase is the first missing major domain slice:
 
-- `npm run smoke:pilot-live -- https://...`
-- `npm run validate:pilot-roles -- https://...`
-
-After that, the remaining step is real human pilot rollout on the approved office manager, quality lead, and HR lead devices.
+- incident + CAPA parity
