@@ -38,6 +38,11 @@ Using the current local `.env` and repo code:
   - packet generation through the existing document/workflow engine
   - explicit approval routing for committee packets
   - committee decision logging with linked action-item follow-up creation
+- the service-line governance slice is now implemented in the repo
+  - service-line registry and default bootstrap for the initial clinic service lines
+  - governance-pack drafting with charter, competency, audit, pricing, and claims-governance sections
+  - linked `clinical_governance` approval routing and controlled publication
+  - publish-sync back into service-line governance status and next-review scheduling
 
 That means the remaining pilot blockers are now mostly broader pilot validation, Render deployment consistency, and operations hardening.
 
@@ -119,7 +124,7 @@ The deployed Render stack is now healthy and pilot-usable, but there is still on
    - up to two backup profiles if needed
    - named office manager / quality lead / HR lead profiles when you want them added
 
-3. Redeploy the latest web, API, and worker services when you want the new committee + QAPI slice available in Render
+3. Redeploy the latest web, API, and worker services when you want the new service-line governance slice available in Render
    - no new secrets or Microsoft tenant setup are required for the repo-side implementation
    - the external Postgres schema has already been updated locally from this machine
    - if you later want additional Microsoft-backed governance registers beyond the current pilot surfaces, we can add those as separate follow-up integrations
@@ -133,6 +138,6 @@ Postgres is still required even though Microsoft is now ready, because Clinic OS
 
 ## The next command I am waiting to run
 
-The next step is no longer additional named-role setup. The next major engineering step after the new committee + QAPI slice is:
+The next step is no longer additional named-role setup. The next major engineering step after the new service-line governance slice is:
 
-- service-line governance packs
+- clinic-specific governance modules

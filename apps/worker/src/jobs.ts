@@ -725,6 +725,26 @@ export class WorkerJobRunner {
       });
     }
 
+    const linkedServiceLinePack = await this.repository.getServiceLinePackByDocumentId(document.id);
+    if (linkedServiceLinePack) {
+      await this.repository.updateServiceLinePack(linkedServiceLinePack.id, {
+        status: "published",
+        publishedAt: now,
+        publishedPath: publishResult.path,
+        updatedAt: now
+      });
+      const serviceLine = await this.repository.getServiceLine(linkedServiceLinePack.serviceLineId);
+      if (serviceLine) {
+        await this.repository.updateServiceLine(serviceLine.id, {
+          governanceStatus: "published",
+          latestPackId: linkedServiceLinePack.id,
+          lastReviewedAt: now,
+          nextReviewDueAt: addDays(now, serviceLine.reviewCadenceDays),
+          updatedAt: now
+        });
+      }
+    }
+
     await this.recordAudit(payload.actor, "artifact.published", "document", document.id, {
       publishedPath: publishResult.path,
       externalId: publishResult.externalId,

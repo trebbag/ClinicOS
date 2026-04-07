@@ -181,6 +181,50 @@ model CommitteeMeeting {
   @@index([scheduledFor])
 }
 
+model ServiceLineRecord {
+  id                 String   @id
+  ownerRole          String?
+  governanceStatus   String
+  hasCharter         Boolean
+  hasCompetencyMatrix Boolean
+  hasAuditTool       Boolean
+  hasClaimsInventory Boolean
+  reviewCadenceDays  Int
+  lastReviewedAt     DateTime?
+  nextReviewDueAt    DateTime?
+  latestPackId       String?
+  createdAt          DateTime
+  updatedAt          DateTime
+
+  @@index([governanceStatus, nextReviewDueAt])
+}
+
+model ServiceLinePack {
+  id                       String   @id
+  serviceLineId            String
+  title                    String
+  ownerRole                String
+  status                   String
+  charterSummary           String
+  inclusionExclusionRules  String
+  roleMatrixSummary        String
+  competencyRequirements   String
+  auditToolSummary         String
+  emergencyEscalation      String
+  pricingModelSummary      String
+  claimsGovernanceSummary  String
+  notes                    String?
+  documentId               String?  @unique
+  workflowRunId            String?  @unique
+  createdBy                String
+  createdAt                DateTime
+  updatedAt                DateTime
+  publishedAt              DateTime?
+  publishedPath            String?
+
+  @@index([serviceLineId, status])
+}
+
 model AuditEvent {
   id         String   @id
   eventType  String

@@ -32,6 +32,8 @@ import {
   createTrainingRequirement,
   createWorkerJob,
   createWorkflowRun,
+  createServiceLinePackRecord,
+  createServiceLineRecord,
   deidentifiedOperationalRowSchema,
   documentMetadataSchema,
   incidentCreateSchema,
@@ -43,6 +45,9 @@ import {
   publicAssetCreateSchema,
   publicAssetUpdateSchema,
   claimsReviewDecisionCommandSchema,
+  serviceLineCreateSchema,
+  serviceLinePackCreateSchema,
+  serviceLineUpdateSchema,
   scorecardImportJobSchema,
   scorecardReviewDecisionCommandSchema,
   trainingCompletionCreateSchema,
@@ -79,6 +84,8 @@ import {
   type PublicationMode,
   type PublicAssetRecord,
   type RoleCapabilityRecord,
+  type ServiceLinePackRecord,
+  type ServiceLineRecord,
   type TrainingDashboard,
   type TrainingGapItem,
   type TrainingGapStatus,
@@ -179,6 +186,28 @@ function deriveCommitteeMeetingStatus(input: {
     case "archived":
     default:
       return "packet_ready";
+  }
+}
+
+function deriveServiceLinePackStatus(input: {
+  documentStatus: DocumentRecord["status"];
+}): ServiceLinePackRecord["status"] {
+  switch (input.documentStatus) {
+    case "in_review":
+      return "approval_pending";
+    case "approved":
+      return "approved";
+    case "publish_pending":
+      return "publish_pending";
+    case "published":
+      return "published";
+    case "rejected":
+      return "sent_back";
+    case "archived":
+      return "archived";
+    case "draft":
+    default:
+      return "draft";
   }
 }
 
@@ -829,6 +858,7 @@ export class ClinicApiService {
 
     await this.syncPublicAssetFromDocument(updatedDocument);
     await this.syncCommitteeMeetingFromDocument(updatedDocument);
+    await this.syncServiceLinePackFromDocument(updatedDocument);
 
     return {
       approval: updatedApproval,
@@ -869,6 +899,7 @@ export class ClinicApiService {
 
     await this.syncPublicAssetFromDocument(updatedDocument);
     await this.syncCommitteeMeetingFromDocument(updatedDocument);
+    await this.syncServiceLinePackFromDocument(updatedDocument);
 
     return updatedDocument;
   }
@@ -1499,6 +1530,267 @@ export class ClinicApiService {
     });
 
     return updated;
+  }
+
+  async listServiceLines(filters?: {
+    governanceStatus?: string;
+    ownerRole?: string;
+  }): Promise<Array<{
+    serviceLine: ServiceLineRecord;
+    latestPack: ServiceLinePackRecord | null;
+    linkedPublicAssetCount: number;
+    publishedPublicAssetCount: number;
+  }>> {
+    const [serviceLines, packs, publicAssets] = await Promise.all([
+      this.repository.listServiceLines(filters),
+      this.repository.listServiceLinePacks(),
+      this.repository.listPublicAssets()
+    ]);
+
+    return serviceLines.map((serviceLine) => {
+      const serviceLinePacks = packs.filter((pack) => pack.serviceLineId === serviceLine.id);
+      const serviceAssets = publicAssets.filter((asset) => asset.serviceLine === serviceLine.id);
+      return {
+        serviceLine,
+        latestPack: serviceLinePacks[0] ?? null,
+        linkedPublicAssetCount: serviceAssets.length,
+        publishedPublicAssetCount: serviceAssets.filter((asset) => asset.status === "published").length
+      };
+    });
+  }
+
+  async createServiceLine(actor: ActorContext, input: unknown): Promise<ServiceLineRecord> {
+    const command = serviceLineCreateSchema.parse(input);
+    const existing = await this.repository.getServiceLine(command.id);
+    if (existing) {
+      badRequest(`Service line already exists: ${command.id}`);
+    }
+
+    const created = await this.repository.createServiceLine(createServiceLineRecord({
+      id: command.id,
+      ownerRole: command.ownerRole ?? null,
+      reviewCadenceDays: command.reviewCadenceDays
+    }));
+
+    await this.recordAudit(actor, "service_line.created", "service_line", created.id, {
+      ownerRole: created.ownerRole,
+      reviewCadenceDays: created.reviewCadenceDays
+    });
+
+    return created;
+  }
+
+  async bootstrapServiceLines(actor: ActorContext): Promise<{
+    created: ServiceLineRecord[];
+    existing: ServiceLineRecord[];
+  }> {
+    const defaults: Array<{ id: ServiceLineRecord["id"]; ownerRole: ServiceLineRecord["ownerRole"]; reviewCadenceDays: number }> = [
+      { id: "primary_care", ownerRole: "medical_director", reviewCadenceDays: 90 },
+      { id: "women_health", ownerRole: "medical_director", reviewCadenceDays: 90 },
+      { id: "telehealth", ownerRole: "medical_director", reviewCadenceDays: 60 },
+      { id: "weight_management", ownerRole: "medical_director", reviewCadenceDays: 60 },
+      { id: "hrt", ownerRole: "medical_director", reviewCadenceDays: 60 },
+      { id: "vaccines", ownerRole: "quality_lead", reviewCadenceDays: 60 },
+      { id: "waived_testing", ownerRole: "quality_lead", reviewCadenceDays: 60 },
+      { id: "contracted_lab", ownerRole: "quality_lead", reviewCadenceDays: 60 },
+      { id: "iv_hydration", ownerRole: "medical_director", reviewCadenceDays: 60 },
+      { id: "aesthetics", ownerRole: "cfo", reviewCadenceDays: 90 },
+      { id: "allergy_testing", ownerRole: "medical_director", reviewCadenceDays: 90 }
+    ];
+
+    const created: ServiceLineRecord[] = [];
+    const existing: ServiceLineRecord[] = [];
+
+    for (const entry of defaults) {
+      const match = await this.repository.getServiceLine(entry.id);
+      if (match) {
+        existing.push(match);
+        continue;
+      }
+      created.push(await this.createServiceLine(actor, entry));
+    }
+
+    return { created, existing };
+  }
+
+  async updateServiceLine(actor: ActorContext, serviceLineId: string, input: unknown): Promise<ServiceLineRecord> {
+    const command = serviceLineUpdateSchema.parse(input);
+    const record = await this.repository.getServiceLine(serviceLineId);
+    if (!record) {
+      notFound(`Service line not found: ${serviceLineId}`);
+    }
+
+    const updated = await this.repository.updateServiceLine(record.id, {
+      ownerRole: command.ownerRole !== undefined ? command.ownerRole : record.ownerRole,
+      governanceStatus: command.governanceStatus ?? record.governanceStatus,
+      hasCharter: command.hasCharter ?? record.hasCharter,
+      hasCompetencyMatrix: command.hasCompetencyMatrix ?? record.hasCompetencyMatrix,
+      hasAuditTool: command.hasAuditTool ?? record.hasAuditTool,
+      hasClaimsInventory: command.hasClaimsInventory ?? record.hasClaimsInventory,
+      reviewCadenceDays: command.reviewCadenceDays ?? record.reviewCadenceDays,
+      lastReviewedAt: command.lastReviewedAt !== undefined ? command.lastReviewedAt : record.lastReviewedAt,
+      nextReviewDueAt: command.nextReviewDueAt !== undefined ? command.nextReviewDueAt : record.nextReviewDueAt,
+      updatedAt: new Date().toISOString()
+    });
+
+    await this.recordAudit(actor, "service_line.updated", "service_line", updated.id, {
+      governanceStatus: updated.governanceStatus,
+      ownerRole: updated.ownerRole
+    });
+
+    return updated;
+  }
+
+  async generateServiceLinePack(actor: ActorContext, serviceLineId: string, input: unknown): Promise<{
+    serviceLine: ServiceLineRecord;
+    pack: ServiceLinePackRecord;
+    document: DocumentRecord;
+  }> {
+    const command = serviceLinePackCreateSchema.parse(input);
+    const record = await this.repository.getServiceLine(serviceLineId);
+    if (!record) {
+      notFound(`Service line not found: ${serviceLineId}`);
+    }
+
+    const publicAssets = await this.repository.listPublicAssets({ serviceLine: serviceLineId });
+    const workflow = await this.createWorkflowRun(actor, {
+      workflowId: "service_line_pack_review",
+      input: {
+        serviceLineId,
+        ownerRole: command.ownerRole,
+        requestedBy: actor.actorId,
+        reviewCadenceDays: record.reviewCadenceDays,
+        publicAssetCount: publicAssets.length
+      }
+    });
+
+    await this.advanceWorkflowIfPossible(actor, workflow.id, ["scoped", "drafted"], "Service-line governance pack drafted.");
+
+    const title = command.title ?? `${serviceLineId.replaceAll("_", " ")} governance pack`;
+    const body = this.buildServiceLinePackBody(record.id, command, publicAssets.length);
+    const document = await this.createDocument(actor, {
+      title,
+      ownerRole: command.ownerRole,
+      approvalClass: "clinical_governance",
+      artifactType: "service_line_pack",
+      summary: `Governance pack for ${serviceLineId.replaceAll("_", " ")} service line.`,
+      workflowRunId: workflow.id,
+      serviceLines: [serviceLineId as DocumentRecord["serviceLines"][number]],
+      body
+    });
+    const pack = await this.repository.createServiceLinePack(createServiceLinePackRecord({
+      serviceLineId: record.id,
+      title,
+      ownerRole: command.ownerRole,
+      charterSummary: command.charterSummary,
+      inclusionExclusionRules: command.inclusionExclusionRules,
+      roleMatrixSummary: command.roleMatrixSummary,
+      competencyRequirements: command.competencyRequirements,
+      auditToolSummary: command.auditToolSummary,
+      emergencyEscalation: command.emergencyEscalation,
+      pricingModelSummary: command.pricingModelSummary,
+      claimsGovernanceSummary: command.claimsGovernanceSummary,
+      notes: command.notes ?? null,
+      documentId: document.id,
+      workflowRunId: workflow.id,
+      createdBy: actor.actorId
+    }));
+
+    const now = new Date().toISOString();
+    const updatedServiceLine = await this.repository.updateServiceLine(record.id, {
+      ownerRole: command.ownerRole,
+      governanceStatus: "drafting",
+      hasCharter: true,
+      hasCompetencyMatrix: true,
+      hasAuditTool: true,
+      hasClaimsInventory: publicAssets.length > 0 || command.claimsGovernanceSummary.trim().length > 0,
+      latestPackId: pack.id,
+      updatedAt: now
+    });
+
+    await this.recordAudit(actor, "service_line.pack_generated", "service_line_pack", pack.id, {
+      serviceLineId: record.id,
+      workflowRunId: workflow.id,
+      documentId: document.id
+    });
+
+    return {
+      serviceLine: updatedServiceLine,
+      pack,
+      document
+    };
+  }
+
+  async submitServiceLinePack(actor: ActorContext, serviceLineId: string): Promise<{
+    serviceLine: ServiceLineRecord;
+    pack: ServiceLinePackRecord;
+    document: DocumentRecord;
+    approvals: ApprovalTask[];
+  }> {
+    const serviceLine = await this.repository.getServiceLine(serviceLineId);
+    if (!serviceLine) {
+      notFound(`Service line not found: ${serviceLineId}`);
+    }
+    const pack = await this.getLatestServiceLinePack(serviceLineId);
+    if (!pack || !pack.documentId) {
+      badRequest("Generate a service-line pack before routing it for approval.");
+    }
+
+    await this.advanceWorkflowIfPossible(
+      actor,
+      pack.workflowRunId,
+      ["drafted", "quality_checked", "awaiting_human_review"],
+      "Service-line pack routed for human review."
+    );
+
+    const result = await this.submitDocument(actor, pack.documentId);
+    const syncedPack = await this.syncServiceLinePackFromDocument(result.document);
+    const updatedServiceLine = await this.repository.updateServiceLine(serviceLine.id, {
+      governanceStatus: "review_pending",
+      updatedAt: new Date().toISOString()
+    });
+
+    await this.recordAudit(actor, "service_line.pack_submitted", "service_line_pack", pack.id, {
+      serviceLineId,
+      approvalCount: result.approvals.length
+    });
+
+    return {
+      serviceLine: updatedServiceLine,
+      pack: syncedPack ?? pack,
+      document: result.document,
+      approvals: result.approvals
+    };
+  }
+
+  async publishServiceLinePack(actor: ActorContext, serviceLineId: string): Promise<{
+    serviceLine: ServiceLineRecord;
+    pack: ServiceLinePackRecord;
+  }> {
+    const serviceLine = await this.repository.getServiceLine(serviceLineId);
+    if (!serviceLine) {
+      notFound(`Service line not found: ${serviceLineId}`);
+    }
+    const pack = await this.getLatestServiceLinePack(serviceLineId);
+    if (!pack || !pack.documentId) {
+      badRequest("Service-line pack is not available for publication.");
+    }
+
+    const document = await this.publishDocument(actor, pack.documentId);
+    const syncedPack = await this.syncServiceLinePackFromDocument(document);
+    const updatedServiceLine = await this.repository.updateServiceLine(serviceLine.id, {
+      governanceStatus: "approved",
+      updatedAt: new Date().toISOString()
+    });
+
+    await this.recordAudit(actor, "service_line.pack_publish_requested", "service_line_pack", pack.id, {
+      serviceLineId
+    });
+
+    return {
+      serviceLine: updatedServiceLine,
+      pack: syncedPack ?? pack
+    };
   }
 
   async createActionItem(actor: ActorContext, input: unknown) {
@@ -3427,6 +3719,48 @@ export class ClinicApiService {
     ].filter((line): line is string => line !== null).join("\n");
   }
 
+  private buildServiceLinePackBody(
+    serviceLineId: ServiceLineRecord["id"],
+    input: z.infer<typeof serviceLinePackCreateSchema>,
+    publicAssetCount: number
+  ): string {
+    return [
+      `# ${serviceLineId.replaceAll("_", " ")} governance pack`,
+      "",
+      `Owner role: ${input.ownerRole}`,
+      "",
+      "## Service charter",
+      input.charterSummary,
+      "",
+      "## Inclusion / exclusion rules",
+      input.inclusionExclusionRules,
+      "",
+      "## Role matrix",
+      input.roleMatrixSummary,
+      "",
+      "## Competency requirements",
+      input.competencyRequirements,
+      "",
+      "## Audit tool",
+      input.auditToolSummary,
+      "",
+      "## Emergency escalation",
+      input.emergencyEscalation,
+      "",
+      "## Pricing model",
+      input.pricingModelSummary,
+      "",
+      "## Claims governance",
+      input.claimsGovernanceSummary,
+      "",
+      "## Public asset inventory signal",
+      `Linked public assets currently tracked for this service line: ${publicAssetCount}`,
+      input.notes ? "" : null,
+      input.notes ? "## Notes" : null,
+      input.notes ?? null
+    ].filter((line): line is string => line !== null).join("\n");
+  }
+
   private async syncPublicAssetFromDocument(document: DocumentRecord): Promise<PublicAssetRecord | null> {
     const asset = await this.repository.getPublicAssetByDocumentId(document.id);
     if (!asset) {
@@ -3462,6 +3796,54 @@ export class ClinicApiService {
       }),
       updatedAt: new Date().toISOString()
     });
+  }
+
+  private async getLatestServiceLinePack(serviceLineId: string): Promise<ServiceLinePackRecord | null> {
+    const packs = await this.repository.listServiceLinePacks({ serviceLineId });
+    return packs[0] ?? null;
+  }
+
+  private async syncServiceLinePackFromDocument(document: DocumentRecord): Promise<ServiceLinePackRecord | null> {
+    const pack = await this.repository.getServiceLinePackByDocumentId(document.id);
+    if (!pack) {
+      return null;
+    }
+
+    const updatedPack = await this.repository.updateServiceLinePack(pack.id, {
+      title: document.title,
+      ownerRole: document.ownerRole as ServiceLinePackRecord["ownerRole"],
+      status: deriveServiceLinePackStatus({ documentStatus: document.status }),
+      publishedAt: document.publishedAt,
+      publishedPath: document.publishedPath,
+      updatedAt: new Date().toISOString()
+    });
+
+    const serviceLine = await this.repository.getServiceLine(pack.serviceLineId);
+    if (serviceLine) {
+      const nextGovernanceStatus =
+        updatedPack.status === "published"
+          ? "published"
+          : updatedPack.status === "approved"
+            ? "approved"
+            : updatedPack.status === "approval_pending"
+              ? "review_pending"
+              : updatedPack.status === "sent_back"
+                ? "attention_needed"
+                : "drafting";
+      await this.repository.updateServiceLine(serviceLine.id, {
+        governanceStatus: nextGovernanceStatus,
+        latestPackId: updatedPack.id,
+        lastReviewedAt: updatedPack.status === "approved" || updatedPack.status === "published"
+          ? new Date().toISOString()
+          : serviceLine.lastReviewedAt,
+        nextReviewDueAt: updatedPack.status === "published"
+          ? addDays(new Date().toISOString(), serviceLine.reviewCadenceDays)
+          : serviceLine.nextReviewDueAt,
+        updatedAt: new Date().toISOString()
+      });
+    }
+
+    return updatedPack;
   }
 
   private async syncIncidentSideEffects(actor: ActorContext, incident: IncidentRecord): Promise<void> {

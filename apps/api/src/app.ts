@@ -22,6 +22,7 @@ import { registerOpsRoutes } from "./routes/ops";
 import { registerIncidentRoutes } from "./routes/incidents";
 import { registerPublicAssetRoutes } from "./routes/public-assets";
 import { registerScorecardReviewRoutes } from "./routes/scorecard-reviews";
+import { registerServiceLineRoutes } from "./routes/service-lines";
 import { registerTrainingRoutes } from "./routes/training";
 import { registerUserProfileRoutes } from "./routes/user-profiles";
 import { registerWorkflowRoutes } from "./routes/workflows";
@@ -163,6 +164,7 @@ export function buildApp(options?: {
   registerCapaRoutes(app);
   registerCommitteeRoutes(app);
   registerCommitteeMeetingRoutes(app);
+  registerServiceLineRoutes(app);
   registerPublicAssetRoutes(app);
   registerOfficeOpsRoutes(app);
   registerAuditRoutes(app);

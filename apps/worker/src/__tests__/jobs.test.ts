@@ -7,6 +7,8 @@ import {
   createChecklistTemplate,
   createIncidentRecord,
   createPublicAssetRecord,
+  createServiceLinePackRecord,
+  createServiceLineRecord,
   createScorecardReviewRecord,
   createTrainingRequirement,
   createWorkerJob
@@ -453,5 +455,81 @@ describe("WorkerJobRunner", () => {
     expect(summary.succeeded).toBe(2);
     expect(repository.auditEvents.some((event) => event.eventType === "lists.incident_synced")).toBe(true);
     expect(repository.auditEvents.some((event) => event.eventType === "lists.capa_synced")).toBe(true);
+  });
+
+  it("keeps linked service-line packs in sync when publication completes", async () => {
+    const repository = new MemoryClinicRepository();
+    const serviceLine = createServiceLineRecord({
+      id: "weight_management",
+      ownerRole: "medical_director",
+      reviewCadenceDays: 60
+    });
+    await repository.createServiceLine(serviceLine);
+    await repository.createDocument({
+      id: "doc_service_line_pack",
+      title: "Weight management governance pack",
+      ownerRole: "medical_director",
+      approvalClass: "clinical_governance",
+      artifactType: "service_line_pack",
+      summary: "Approved service-line governance pack",
+      workflowRunId: "workflow_service_line_pack",
+      serviceLines: ["weight_management"],
+      createdBy: "medical-director",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: "approved",
+      body: "# Governance pack",
+      version: 1,
+      publishedAt: null,
+      publishedPath: null,
+      reviewDueAt: null
+    });
+    const pack = createServiceLinePackRecord({
+      serviceLineId: "weight_management",
+      title: "Weight management governance pack",
+      ownerRole: "medical_director",
+      charterSummary: "Charter summary for weight management governance.",
+      inclusionExclusionRules: "Inclusion and exclusion rules for weight management participation.",
+      roleMatrixSummary: "Role matrix for physician, NP, and support staff oversight.",
+      competencyRequirements: "Competency requirements with onboarding and refresher checkpoints.",
+      auditToolSummary: "Audit tool summary and monthly evidence review expectations.",
+      emergencyEscalation: "Emergency escalation path for adverse events or clinical deterioration.",
+      pricingModelSummary: "Pricing model summary with finance guardrails and discount boundaries.",
+      claimsGovernanceSummary: "Claims governance summary tied to approved evidence inventory.",
+      createdBy: "medical-director",
+      documentId: "doc_service_line_pack",
+      workflowRunId: "workflow_service_line_pack"
+    });
+    await repository.createServiceLinePack(pack);
+    await repository.updateServiceLine(serviceLine.id, {
+      latestPackId: pack.id,
+      governanceStatus: "approved",
+      updatedAt: new Date().toISOString()
+    });
+    await repository.enqueueWorkerJob(createWorkerJob({
+      type: "document.publish",
+      payload: {
+        actor: {
+          actorId: "medical-director",
+          role: "medical_director",
+          name: "Medical Director"
+        },
+        documentId: "doc_service_line_pack"
+      },
+      sourceEntityType: "document",
+      sourceEntityId: "doc_service_line_pack"
+    }));
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const summary = await runner.runOnce();
+
+    expect(summary.succeeded).toBeGreaterThanOrEqual(1);
+    expect(await repository.getServiceLinePack(pack.id)).toMatchObject({
+      status: "published"
+    });
+    expect(await repository.getServiceLine(serviceLine.id)).toMatchObject({
+      governanceStatus: "published",
+      latestPackId: pack.id
+    });
   });
 });

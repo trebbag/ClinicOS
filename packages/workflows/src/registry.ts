@@ -7,6 +7,7 @@ import { officeManagerDailyDefinition } from "./definitions/office-manager-daily
 import { policyLifecycleDefinition } from "./definitions/policy-lifecycle";
 import { publicAssetClaimsReviewDefinition } from "./definitions/public-asset-claims-review";
 import { qapiMonthlyReviewDefinition } from "./definitions/qapi-monthly-review";
+import { serviceLinePackReviewDefinition } from "./definitions/service-line-pack-review";
 import { staffScorecardDefinition } from "./definitions/staff-scorecard";
 
 export type RegisteredWorkflowDefinition = WorkflowDefinition & {
@@ -21,5 +22,6 @@ export const workflowRegistry = new Map<string, RegisteredWorkflowDefinition>([
   [capaLifecycleDefinition.id, capaLifecycleDefinition],
   [committeePacketReviewDefinition.id, committeePacketReviewDefinition],
   [qapiMonthlyReviewDefinition.id, qapiMonthlyReviewDefinition],
+  [serviceLinePackReviewDefinition.id, serviceLinePackReviewDefinition],
   [publicAssetClaimsReviewDefinition.id, publicAssetClaimsReviewDefinition]
 ]);

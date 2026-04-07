@@ -18,6 +18,8 @@ import type {
   MicrosoftIntegrationValidationRecord,
   PublicAssetRecord,
   ScorecardReviewRecord,
+  ServiceLinePackRecord,
+  ServiceLineRecord,
   TrainingCompletionRecord,
   TrainingRequirement,
   UserProfile,
@@ -43,6 +45,8 @@ export class MemoryClinicRepository implements ClinicRepository {
   public readonly publicAssets: PublicAssetRecord[] = [];
   public readonly committees: CommitteeRecord[] = [];
   public readonly committeeMeetings: CommitteeMeetingRecord[] = [];
+  public readonly serviceLines: ServiceLineRecord[] = [];
+  public readonly serviceLinePacks: ServiceLinePackRecord[] = [];
   public readonly checklistTemplates: ChecklistTemplate[] = [];
   public readonly checklistRuns: ChecklistRun[] = [];
   public readonly checklistItems: ChecklistItemRecord[] = [];
@@ -270,6 +274,54 @@ export class MemoryClinicRepository implements ClinicRepository {
     status?: string;
   }): Promise<CommitteeMeetingRecord[]> {
     return this.committeeMeetings.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createServiceLine(record: ServiceLineRecord): Promise<ServiceLineRecord> {
+    this.serviceLines.unshift(record);
+    return record;
+  }
+
+  async updateServiceLine(id: string, patch: Partial<ServiceLineRecord>): Promise<ServiceLineRecord> {
+    const index = this.serviceLines.findIndex((record) => record.id === id);
+    this.serviceLines[index] = { ...this.serviceLines[index], ...patch };
+    return this.serviceLines[index];
+  }
+
+  async getServiceLine(id: string): Promise<ServiceLineRecord | null> {
+    return this.serviceLines.find((record) => record.id === id) ?? null;
+  }
+
+  async listServiceLines(filters?: {
+    governanceStatus?: string;
+    ownerRole?: string;
+  }): Promise<ServiceLineRecord[]> {
+    return this.serviceLines.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createServiceLinePack(record: ServiceLinePackRecord): Promise<ServiceLinePackRecord> {
+    this.serviceLinePacks.unshift(record);
+    return record;
+  }
+
+  async updateServiceLinePack(id: string, patch: Partial<ServiceLinePackRecord>): Promise<ServiceLinePackRecord> {
+    const index = this.serviceLinePacks.findIndex((record) => record.id === id);
+    this.serviceLinePacks[index] = { ...this.serviceLinePacks[index], ...patch };
+    return this.serviceLinePacks[index];
+  }
+
+  async getServiceLinePack(id: string): Promise<ServiceLinePackRecord | null> {
+    return this.serviceLinePacks.find((record) => record.id === id) ?? null;
+  }
+
+  async getServiceLinePackByDocumentId(documentId: string): Promise<ServiceLinePackRecord | null> {
+    return this.serviceLinePacks.find((record) => record.documentId === documentId) ?? null;
+  }
+
+  async listServiceLinePacks(filters?: {
+    serviceLineId?: string;
+    status?: string;
+  }): Promise<ServiceLinePackRecord[]> {
+    return this.serviceLinePacks.filter((record) => matchesFilters(record, filters));
   }
 
   async createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate> {

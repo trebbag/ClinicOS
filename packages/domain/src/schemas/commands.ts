@@ -20,6 +20,11 @@ import {
   publicAssetCreateSchema,
   publicAssetUpdateSchema
 } from "./publicAsset";
+import {
+  serviceLineCreateSchema,
+  serviceLinePackCreateSchema,
+  serviceLineUpdateSchema
+} from "./serviceLine";
 import { trainingCompletionCreateSchema, trainingRequirementCreateSchema } from "./training";
 
 export const workflowTransitionCommandSchema = z.object({
@@ -106,6 +111,9 @@ export type CommitteeUpdateCommand = z.infer<typeof committeeUpdateSchema>;
 export type CommitteeMeetingCreateCommand = z.infer<typeof committeeMeetingCreateSchema>;
 export type CommitteeMeetingDecisionCommand = z.infer<typeof committeeMeetingDecisionCommandSchema>;
 export type CommitteeMeetingCompleteCommand = z.infer<typeof committeeMeetingCompleteSchema>;
+export type ServiceLineCreateCommand = z.infer<typeof serviceLineCreateSchema>;
+export type ServiceLineUpdateCommand = z.infer<typeof serviceLineUpdateSchema>;
+export type ServiceLinePackCreateCommand = z.infer<typeof serviceLinePackCreateSchema>;
 
 export {
   committeeCreateSchema,
@@ -122,6 +130,9 @@ export {
   publicAssetCreateSchema,
   publicAssetUpdateSchema,
   claimsReviewDecisionCommandSchema,
+  serviceLineCreateSchema,
+  serviceLineUpdateSchema,
+  serviceLinePackCreateSchema,
   trainingRequirementCreateSchema,
   trainingCompletionCreateSchema
 };

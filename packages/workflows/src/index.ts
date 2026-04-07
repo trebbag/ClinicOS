@@ -7,4 +7,5 @@ export * from "./definitions/incident-review";
 export * from "./definitions/capa-lifecycle";
 export * from "./definitions/committee-packet-review";
 export * from "./definitions/qapi-monthly-review";
+export * from "./definitions/service-line-pack-review";
 export * from "./definitions/public-asset-claims-review";

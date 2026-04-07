@@ -1812,4 +1812,118 @@ describe("Clinic API", () => {
     expect(capaList.statusCode).toBe(200);
     expect(capaList.json<Array<{ id: string; status: string }>>().find((item) => item.id === reviewed.capa!.id)?.status).toBe("closed");
   });
+
+  it("bootstraps service lines, routes a governance pack through approval, and publishes it", async () => {
+    const bootstrapResponse = await app.inject({
+      method: "POST",
+      url: "/service-lines/bootstrap-defaults",
+      headers: headers("medical_director")
+    });
+
+    expect(bootstrapResponse.statusCode).toBe(200);
+    const bootstrap = bootstrapResponse.json<{ created: Array<{ id: string }>; existing: Array<{ id: string }> }>();
+    expect(bootstrap.created.length + bootstrap.existing.length).toBeGreaterThanOrEqual(11);
+
+    const generateResponse = await app.inject({
+      method: "POST",
+      url: "/service-lines/weight_management/generate-pack",
+      headers: headers("medical_director"),
+      payload: {
+        ownerRole: "medical_director",
+        charterSummary: "Weight management services are governed through documented scope, owner accountability, and explicit patient selection boundaries.",
+        inclusionExclusionRules: "Adults seeking physician-led weight management may enroll, while unstable patients are escalated before care starts.",
+        roleMatrixSummary: "Medical director owns protocols, NPs execute under approved guidance, and support staff escalate exceptions immediately.",
+        competencyRequirements: "Initial onboarding, prescribing competency sign-off, and quarterly refreshers are required for all participating staff.",
+        auditToolSummary: "Monthly chart audits review enrollment appropriateness, informed consent, and follow-up completion.",
+        emergencyEscalation: "Acute symptoms, medication complications, or unexpected deterioration route to physician review the same day.",
+        pricingModelSummary: "Pricing changes require CFO review, approved discount guardrails, and documented package boundaries.",
+        claimsGovernanceSummary: "All public claims are inventoried, tied to approved evidence, and reviewed before publication.",
+        notes: "Pilot governance pack for the weight-management service line."
+      }
+    });
+
+    expect(generateResponse.statusCode).toBe(200);
+    const generated = generateResponse.json<{
+      serviceLine: { id: string; governanceStatus: string; latestPackId: string | null };
+      pack: { id: string; status: string; documentId: string | null; workflowRunId: string | null };
+      document: { id: string; status: string; artifactType: string };
+    }>();
+    expect(generated.serviceLine.id).toBe("weight_management");
+    expect(generated.serviceLine.governanceStatus).toBe("drafting");
+    expect(generated.pack.status).toBe("draft");
+    expect(generated.pack.documentId).toBeTruthy();
+    expect(generated.pack.workflowRunId).toBeTruthy();
+    expect(generated.document.artifactType).toBe("service_line_pack");
+
+    const submitResponse = await app.inject({
+      method: "POST",
+      url: "/service-lines/weight_management/submit-pack",
+      headers: headers("medical_director")
+    });
+
+    expect(submitResponse.statusCode).toBe(200);
+    const submitted = submitResponse.json<{
+      serviceLine: { governanceStatus: string };
+      pack: { id: string; status: string; documentId: string | null };
+      document: { id: string; status: string };
+      approvals: Array<{ id: string; reviewerRole: string }>;
+    }>();
+    expect(submitted.serviceLine.governanceStatus).toBe("review_pending");
+    expect(submitted.pack.status).toBe("approval_pending");
+    expect(submitted.document.status).toBe("in_review");
+    expect(submitted.approvals.map((approval) => approval.reviewerRole).sort()).toEqual([
+      "medical_director",
+      "patient_care_team_physician"
+    ]);
+
+    for (const approval of submitted.approvals) {
+      const reviewerRole = approval.reviewerRole === "patient_care_team_physician"
+        ? "patient_care_team_physician"
+        : "medical_director";
+      const decision = await app.inject({
+        method: "POST",
+        url: `/approvals/${approval.id}/decide`,
+        headers: headers(reviewerRole),
+        payload: { decision: "approved" }
+      });
+      expect(decision.statusCode).toBe(200);
+    }
+
+    const approvedListResponse = await app.inject({
+      method: "GET",
+      url: "/service-lines",
+      headers: headers("medical_director")
+    });
+    expect(approvedListResponse.statusCode).toBe(200);
+    const approvedLine = approvedListResponse
+      .json<Array<{ serviceLine: { id: string; governanceStatus: string }; latestPack: { status: string } | null }>>()
+      .find((row) => row.serviceLine.id === "weight_management");
+    expect(approvedLine?.serviceLine.governanceStatus).toBe("approved");
+    expect(approvedLine?.latestPack?.status).toBe("approved");
+
+    const publishResponse = await app.inject({
+      method: "POST",
+      url: "/service-lines/weight_management/publish-pack",
+      headers: headers("medical_director")
+    });
+
+    expect(publishResponse.statusCode).toBe(200);
+    expect(publishResponse.json<{ pack: { status: string } }>().pack.status).toBe("publish_pending");
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const summary = await runner.runOnce();
+    expect(summary.succeeded).toBeGreaterThanOrEqual(1);
+
+    const publishedLineResponse = await app.inject({
+      method: "GET",
+      url: "/service-lines",
+      headers: headers("medical_director")
+    });
+    const publishedLine = publishedLineResponse
+      .json<Array<{ serviceLine: { id: string; governanceStatus: string; latestPackId: string | null }; latestPack: { id: string; status: string; publishedPath: string | null } | null }>>()
+      .find((row) => row.serviceLine.id === "weight_management");
+    expect(publishedLine?.serviceLine.governanceStatus).toBe("published");
+    expect(publishedLine?.latestPack?.status).toBe("published");
+    expect(publishedLine?.latestPack?.publishedPath).toContain(generated.document.id);
+  });
 });

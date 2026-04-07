@@ -33,6 +33,8 @@ export type AppCapability =
   | "quality.manage"
   | "committees.view"
   | "committees.manage"
+  | "service_lines.view"
+  | "service_lines.manage"
   | "public_assets.view"
   | "public_assets.manage"
   | "scorecards.view"
@@ -120,7 +122,7 @@ export const devProfiles: ActorIdentity[] = [
 ];
 
 type NavigationLink = {
-  href: "/" | "/medical-director" | "/office-manager" | "/pilot-ops" | "/quality" | "/committees" | "/scorecards" | "/public-assets";
+  href: "/" | "/medical-director" | "/office-manager" | "/pilot-ops" | "/quality" | "/committees" | "/service-lines" | "/scorecards" | "/public-assets";
   label: string;
   allowedRoles: ActorRole[];
   requiredCapability?: AppCapability;
@@ -158,6 +160,12 @@ export const navigationLinks: NavigationLink[] = [
     label: "Committees",
     allowedRoles: ["medical_director", "quality_lead", "hr_lead", "cfo"] as ActorRole[],
     requiredCapability: "committees.view" as const
+  },
+  {
+    href: "/service-lines" as const,
+    label: "Service Lines",
+    allowedRoles: ["medical_director", "quality_lead", "office_manager", "hr_lead", "cfo"] as ActorRole[],
+    requiredCapability: "service_lines.view" as const
   },
   {
     href: "/public-assets" as const,

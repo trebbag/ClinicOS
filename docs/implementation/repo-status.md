@@ -22,6 +22,7 @@ The repository now has a working pilot backbone for:
 - first-class incident and CAPA records with deterministic review/resolution commands, linked workflow runs, audit events, and quality UI management
 - first-class committee and QAPI records with committee registry, meeting scheduling, packet generation, approval routing, QAPI snapshotting, and decision-to-action-item follow-through
 - first-class public-asset inventory with explicit structured claims, claims-review commands, linked `public_facing` document approvals, and approved archive visibility
+- first-class service-line registry and governance packs with default bootstrap, pack drafting, approval routing, controlled publication, and publish-sync back into service-line review status
 - device-bound profile auth with enrollment codes, trusted device/session cookies, pilot-ops profile/device management, and a simple login flow
 - same-origin deployment plumbing for a public web origin that proxies browser API requests through `/clinic-api/*`
 - Render-first blueprint, startup/readiness validation, and a deploy smoke script for stub-mode pilots
@@ -45,7 +46,7 @@ The following areas are still placeholders or partial:
 - multi-room office master data, richer checklist analytics, and fuller Planner reconciliation breadth
 - broader HR/training workflows beyond manual requirements/completions and longer-range scorecard analytics
 - standards mapping, evidence binder tooling, and deeper committee/QAPI reporting beyond the new committee packet slice
-- service-line governance packs and deeper commercial claims-governance breadth beyond the new public-asset slice
+- deeper commercial claims-governance breadth and service-line-specific analytics beyond the new service-line pack slice
 - runtime agent structured tool execution loop and full eval-backed feature flag rollout
 - deeper deployment, observability, and environment promotion workflows
 

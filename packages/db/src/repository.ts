@@ -18,6 +18,8 @@ import type {
   MicrosoftIntegrationValidationRecord,
   PublicAssetRecord,
   ScorecardReviewRecord,
+  ServiceLinePackRecord,
+  ServiceLineRecord,
   TrainingCompletionRecord,
   TrainingRequirement,
   UserProfile,
@@ -44,6 +46,8 @@ import {
   microsoftIntegrationValidationRecordSchema,
   publicAssetRecordSchema,
   scorecardReviewRecordSchema,
+  serviceLinePackRecordSchema,
+  serviceLineRecordSchema,
   trainingCompletionRecordSchema,
   trainingRequirementSchema,
   userProfileSchema,
@@ -53,6 +57,51 @@ import {
 import { Prisma, type PrismaClient } from "@prisma/client";
 
 type ListFilters = Record<string, string | undefined>;
+type UntypedPrismaDelegate = {
+  create(args: unknown): Promise<unknown>;
+  update(args: unknown): Promise<unknown>;
+  findUnique(args: unknown): Promise<unknown>;
+  findFirst?(args: unknown): Promise<unknown>;
+  findMany(args: unknown): Promise<unknown>;
+};
+type ServiceLineRecordRow = {
+  id: string;
+  ownerRole: string | null;
+  governanceStatus: string;
+  hasCharter: boolean;
+  hasCompetencyMatrix: boolean;
+  hasAuditTool: boolean;
+  hasClaimsInventory: boolean;
+  reviewCadenceDays: number;
+  lastReviewedAt: Date | null;
+  nextReviewDueAt: Date | null;
+  latestPackId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+type ServiceLinePackRow = {
+  id: string;
+  serviceLineId: string;
+  title: string;
+  ownerRole: string;
+  status: string;
+  charterSummary: string;
+  inclusionExclusionRules: string;
+  roleMatrixSummary: string;
+  competencyRequirements: string;
+  auditToolSummary: string;
+  emergencyEscalation: string;
+  pricingModelSummary: string;
+  claimsGovernanceSummary: string;
+  notes: string | null;
+  documentId: string | null;
+  workflowRunId: string | null;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+  publishedAt: Date | null;
+  publishedPath: string | null;
+};
 
 export type ClinicRepository = {
   createWorkflowRun(run: WorkflowRun): Promise<WorkflowRun>;
@@ -122,6 +171,21 @@ export type ClinicRepository = {
     committeeId?: string;
     status?: string;
   }): Promise<CommitteeMeetingRecord[]>;
+  createServiceLine(record: ServiceLineRecord): Promise<ServiceLineRecord>;
+  updateServiceLine(id: string, patch: Partial<ServiceLineRecord>): Promise<ServiceLineRecord>;
+  getServiceLine(id: string): Promise<ServiceLineRecord | null>;
+  listServiceLines(filters?: {
+    governanceStatus?: string;
+    ownerRole?: string;
+  }): Promise<ServiceLineRecord[]>;
+  createServiceLinePack(record: ServiceLinePackRecord): Promise<ServiceLinePackRecord>;
+  updateServiceLinePack(id: string, patch: Partial<ServiceLinePackRecord>): Promise<ServiceLinePackRecord>;
+  getServiceLinePack(id: string): Promise<ServiceLinePackRecord | null>;
+  getServiceLinePackByDocumentId(documentId: string): Promise<ServiceLinePackRecord | null>;
+  listServiceLinePacks(filters?: {
+    serviceLineId?: string;
+    status?: string;
+  }): Promise<ServiceLinePackRecord[]>;
   createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate>;
   updateChecklistTemplate(id: string, patch: Partial<ChecklistTemplate>): Promise<ChecklistTemplate>;
   getChecklistTemplate(id: string): Promise<ChecklistTemplate | null>;
@@ -248,6 +312,14 @@ function mapListFilters(filters?: ListFilters): Record<string, string> | undefin
 
 export class PrismaClinicRepository implements ClinicRepository {
   constructor(private readonly client: PrismaClient) {}
+
+  private get serviceLineRecordClient(): UntypedPrismaDelegate {
+    return (this.client as unknown as { serviceLineRecord: UntypedPrismaDelegate }).serviceLineRecord;
+  }
+
+  private get serviceLinePackClient(): UntypedPrismaDelegate {
+    return (this.client as unknown as { serviceLinePack: UntypedPrismaDelegate }).serviceLinePack;
+  }
 
   private mapUserProfile(record: {
     id: string;
@@ -547,6 +619,31 @@ export class PrismaClinicRepository implements ClinicRepository {
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
       completedAt: record.completedAt?.toISOString() ?? null
+    });
+  }
+
+  private mapServiceLineRecord(record: ServiceLineRecordRow): ServiceLineRecord {
+    return serviceLineRecordSchema.parse({
+      ...record,
+      ownerRole: record.ownerRole ?? null,
+      lastReviewedAt: record.lastReviewedAt?.toISOString() ?? null,
+      nextReviewDueAt: record.nextReviewDueAt?.toISOString() ?? null,
+      latestPackId: record.latestPackId ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString()
+    });
+  }
+
+  private mapServiceLinePackRecord(record: ServiceLinePackRow): ServiceLinePackRecord {
+    return serviceLinePackRecordSchema.parse({
+      ...record,
+      notes: record.notes ?? null,
+      documentId: record.documentId ?? null,
+      workflowRunId: record.workflowRunId ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+      publishedAt: record.publishedAt?.toISOString() ?? null,
+      publishedPath: record.publishedPath ?? null
     });
   }
 
@@ -1409,6 +1506,149 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
 
     return records.map((record) => this.mapCommitteeMeetingRecord(record));
+  }
+
+  async createServiceLine(record: ServiceLineRecord): Promise<ServiceLineRecord> {
+    const created = await this.serviceLineRecordClient.create({
+      data: {
+        id: record.id,
+        ownerRole: record.ownerRole,
+        governanceStatus: record.governanceStatus,
+        hasCharter: record.hasCharter,
+        hasCompetencyMatrix: record.hasCompetencyMatrix,
+        hasAuditTool: record.hasAuditTool,
+        hasClaimsInventory: record.hasClaimsInventory,
+        reviewCadenceDays: record.reviewCadenceDays,
+        lastReviewedAt: isoToDate(record.lastReviewedAt),
+        nextReviewDueAt: isoToDate(record.nextReviewDueAt),
+        latestPackId: record.latestPackId,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt)
+      }
+    });
+
+    return this.mapServiceLineRecord(created as ServiceLineRecordRow);
+  }
+
+  async updateServiceLine(id: string, patch: Partial<ServiceLineRecord>): Promise<ServiceLineRecord> {
+    const updated = await this.serviceLineRecordClient.update({
+      where: { id },
+      data: {
+        ownerRole: patch.ownerRole,
+        governanceStatus: patch.governanceStatus,
+        hasCharter: patch.hasCharter,
+        hasCompetencyMatrix: patch.hasCompetencyMatrix,
+        hasAuditTool: patch.hasAuditTool,
+        hasClaimsInventory: patch.hasClaimsInventory,
+        reviewCadenceDays: patch.reviewCadenceDays,
+        lastReviewedAt: isoToDate(patch.lastReviewedAt),
+        nextReviewDueAt: isoToDate(patch.nextReviewDueAt),
+        latestPackId: patch.latestPackId,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt)
+      }
+    });
+
+    return this.mapServiceLineRecord(updated as ServiceLineRecordRow);
+  }
+
+  async getServiceLine(id: string): Promise<ServiceLineRecord | null> {
+    const record = await this.serviceLineRecordClient.findUnique({ where: { id } });
+    return record ? this.mapServiceLineRecord(record as ServiceLineRecordRow) : null;
+  }
+
+  async listServiceLines(filters?: {
+    governanceStatus?: string;
+    ownerRole?: string;
+  }): Promise<ServiceLineRecord[]> {
+    const records = await this.serviceLineRecordClient.findMany({
+      where: mapListFilters(filters),
+      orderBy: { id: "asc" }
+    });
+
+    return (records as ServiceLineRecordRow[]).map((record) => this.mapServiceLineRecord(record));
+  }
+
+  async createServiceLinePack(record: ServiceLinePackRecord): Promise<ServiceLinePackRecord> {
+    const created = await this.serviceLinePackClient.create({
+      data: {
+        id: record.id,
+        serviceLineId: record.serviceLineId,
+        title: record.title,
+        ownerRole: record.ownerRole,
+        status: record.status,
+        charterSummary: record.charterSummary,
+        inclusionExclusionRules: record.inclusionExclusionRules,
+        roleMatrixSummary: record.roleMatrixSummary,
+        competencyRequirements: record.competencyRequirements,
+        auditToolSummary: record.auditToolSummary,
+        emergencyEscalation: record.emergencyEscalation,
+        pricingModelSummary: record.pricingModelSummary,
+        claimsGovernanceSummary: record.claimsGovernanceSummary,
+        notes: record.notes,
+        documentId: record.documentId,
+        workflowRunId: record.workflowRunId,
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt),
+        publishedAt: isoToDate(record.publishedAt),
+        publishedPath: record.publishedPath
+      }
+    });
+
+    return this.mapServiceLinePackRecord(created as ServiceLinePackRow);
+  }
+
+  async updateServiceLinePack(id: string, patch: Partial<ServiceLinePackRecord>): Promise<ServiceLinePackRecord> {
+    const updated = await this.serviceLinePackClient.update({
+      where: { id },
+      data: {
+        serviceLineId: patch.serviceLineId,
+        title: patch.title,
+        ownerRole: patch.ownerRole,
+        status: patch.status,
+        charterSummary: patch.charterSummary,
+        inclusionExclusionRules: patch.inclusionExclusionRules,
+        roleMatrixSummary: patch.roleMatrixSummary,
+        competencyRequirements: patch.competencyRequirements,
+        auditToolSummary: patch.auditToolSummary,
+        emergencyEscalation: patch.emergencyEscalation,
+        pricingModelSummary: patch.pricingModelSummary,
+        claimsGovernanceSummary: patch.claimsGovernanceSummary,
+        notes: patch.notes,
+        documentId: patch.documentId,
+        workflowRunId: patch.workflowRunId,
+        createdBy: patch.createdBy,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt),
+        publishedAt: isoToDate(patch.publishedAt),
+        publishedPath: patch.publishedPath
+      }
+    });
+
+    return this.mapServiceLinePackRecord(updated as ServiceLinePackRow);
+  }
+
+  async getServiceLinePack(id: string): Promise<ServiceLinePackRecord | null> {
+    const record = await this.serviceLinePackClient.findUnique({ where: { id } });
+    return record ? this.mapServiceLinePackRecord(record as ServiceLinePackRow) : null;
+  }
+
+  async getServiceLinePackByDocumentId(documentId: string): Promise<ServiceLinePackRecord | null> {
+    const record = await this.serviceLinePackClient.findFirst?.({ where: { documentId } });
+    return record ? this.mapServiceLinePackRecord(record as ServiceLinePackRow) : null;
+  }
+
+  async listServiceLinePacks(filters?: {
+    serviceLineId?: string;
+    status?: string;
+  }): Promise<ServiceLinePackRecord[]> {
+    const records = await this.serviceLinePackClient.findMany({
+      where: mapListFilters(filters),
+      orderBy: { createdAt: "desc" }
+    });
+
+    return (records as ServiceLinePackRow[]).map((record) => this.mapServiceLinePackRecord(record));
   }
 
   async createChecklistTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate> {
