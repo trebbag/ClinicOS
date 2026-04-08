@@ -866,6 +866,63 @@ describe("Clinic API", () => {
     expect(retryResponse.json<{ status: string; attempts: number }>().attempts).toBe(0);
   });
 
+  it("can run one worker batch on demand through the operator endpoint", async () => {
+    const runRepository = new MemoryClinicRepository();
+    const runService = new ClinicApiService(runRepository, new LocalApprovedDocumentPublisher(), {
+      authMode: "dev_headers",
+      integrationMode: "stub",
+      microsoftPreflight: {
+        getMissingConfigKeys: () => [],
+        validate: async () => ({
+          mode: "stub",
+          configComplete: true,
+          overallStatus: "ready",
+          readyForLive: true,
+          missingConfigKeys: [],
+          surfaces: []
+        })
+      }
+    });
+    const runApp = buildApp({
+      authMode: "dev_headers",
+      service: runService,
+      repository: runRepository,
+      databaseReadyCheck: async () => true
+    });
+
+    runRepository.workerJobs.push(createWorkerJob({
+      type: "teams.notification",
+      payload: {
+        actor: {
+          actorId: "quality-lead",
+          role: "quality_lead",
+          name: "Quality Lead"
+        },
+        title: "Smoke notification",
+        body: "Smoke notification body"
+      },
+      sourceEntityType: "worker_job",
+      sourceEntityId: "smoke-job"
+    }));
+
+    const response = await runApp.inject({
+      method: "POST",
+      url: "/worker-jobs/run-once",
+      headers: headers("medical_director")
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ summary: { processed: number; succeeded: number; failed: number } }>().summary).toEqual({
+      processed: 1,
+      succeeded: 1,
+      failed: 0
+    });
+    expect(runRepository.workerJobs[0]?.status).toBe("succeeded");
+    expect(runRepository.auditEvents.some((event) => event.eventType === "worker.batch_run_requested")).toBe(true);
+
+    await runApp.close();
+  });
+
   it("returns whoami and worker summary in dev header mode", async () => {
     await repository.enqueueWorkerJob({
       id: "job_summary_1",

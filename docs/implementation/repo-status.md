@@ -15,6 +15,7 @@ The repository now has a working pilot backbone for:
 - a pilot-ops admin page for auth, worker, and Microsoft readiness checks
 - a first-class pilot-ops alert summary for runtime, Microsoft, worker, auth, office-ops, and scorecard risks
 - a first-class worker runtime health surface with last heartbeat, last completed batch, recent failure detail, and oldest queued/processing job age visible through Pilot Ops and `/ops/worker-health`
+- a capability-gated manual worker batch trigger through `/worker-jobs/run-once` and Pilot Ops, so operators can intentionally drain one batch when the background worker needs help
 - office-ops dashboard reads, daily closeout artifacts, overdue maintenance sweeps, and scorecard history views
 - room-readiness checklist templates/runs/items with closeout gating and office-manager inline updates
 - Planner task reconciliation back into Clinic OS action-item status and sync health
@@ -70,3 +71,4 @@ Operational note from the latest live validation:
 - a one-off local worker batch against the same live database processed the stuck job successfully, which points to Render worker steady-state pickup/lease behavior rather than broken publish or sync logic
 - the worker loop now records periodic heartbeat and batch events into the shared audit stream and no longer exits the whole process on a single transient batch error
 - that means the remaining worker question can now be diagnosed from Clinic OS itself instead of relying only on Render logs
+- the repo now also includes a bounded operator fallback: if Render worker pickup stalls again, Pilot Ops can trigger one worker batch intentionally without needing shell access

@@ -198,6 +198,17 @@ Before promoting a new pilot build:
    - no stale processing jobs
    - no failed or dead-letter jobs that need intervention
 
+If the queue stalls during pilot operations and you need a bounded operator recovery path:
+
+1. Open Pilot Ops.
+2. Confirm the worker-health surface shows a stale heartbeat or rising oldest queued job age.
+3. Use `Run one worker batch now`.
+4. Confirm:
+   - the batch processed at least one job
+   - oldest queued job age drops
+   - the specific stuck job moves out of `queued`
+5. Keep using Render logs to diagnose the background worker, but do not block pilot operations on shell-only access.
+
 ## Rollback checklist
 
 If a deploy regresses the pilot:

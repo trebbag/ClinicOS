@@ -137,6 +137,9 @@ The deployed Render stack is still healthy and pilot-usable, but the main remain
   - it records periodic runtime heartbeat events into the shared audit stream
   - it records recent batch failures for Pilot Ops visibility
   - it no longer exits the whole process on one transient batch exception
+- There is now also a bounded operator fallback:
+  - Pilot Ops can run one worker batch intentionally through the API
+  - that means a stalled queue no longer requires local shell access just to confirm or drain one batch
 
 ## What is now effectively closed
 
@@ -167,10 +170,11 @@ The deployed Render stack is still healthy and pilot-usable, but the main remain
    - up to two backup profiles if needed
    - named office manager / quality lead / HR lead profiles when you want them added
 
-3. Watch the new Pilot Ops worker-health surface after the next deploy
+3. After the next deploy, watch the new Pilot Ops worker-health surface
    - confirm `last heartbeat` keeps moving forward
    - confirm `oldest queued job` does not keep climbing during normal use
    - if the queue stalls again, compare Pilot Ops worker-health timing with the Render worker logs
+   - if the queue is stuck and you need an immediate recovery path, use `Run one worker batch now` in Pilot Ops
    - no new secrets or Microsoft tenant setup are required for this step
 
 ## Database rule
@@ -186,6 +190,7 @@ The next bounded validation step is:
 
 - rerun the expanded deployed live smoke once the Render worker is confidently draining fresh queued jobs on its own
 - use the new `/ops/worker-health` surface to confirm the worker is heartbeating before and after that smoke run
+- if needed during pilot operations, use the new `/worker-jobs/run-once` operator action as a bounded fallback while continuing to diagnose Render worker pickup
 
 After that, the next major engineering step should be:
 

@@ -26,4 +26,10 @@ export async function registerWorkerJobRoutes(app: FastifyInstance): Promise<voi
     const params = request.params as { jobId: string };
     return app.clinicService.retryWorkerJob(actor, params.jobId);
   });
+
+  app.post("/worker-jobs/run-once", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "worker_jobs.retry");
+    return app.clinicService.runWorkerBatch(actor, () => app.runWorkerBatch());
+  });
 }

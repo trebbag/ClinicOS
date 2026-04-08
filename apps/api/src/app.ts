@@ -1,8 +1,8 @@
 import cors from "@fastify/cors";
 import type { ClinicRepository } from "@clinic-os/db";
 import { PrismaClinicRepository, prisma } from "@clinic-os/db";
-import type { AuthMode } from "@clinic-os/domain";
-import { buildMicrosoftPreflightService } from "@clinic-os/msgraph";
+import type { AuthMode, WorkerBatchSummary } from "@clinic-os/domain";
+import { buildMicrosoftPilotOps, buildMicrosoftPreflightService } from "@clinic-os/msgraph";
 import Fastify from "fastify";
 import { registerApprovalRoutes } from "./routes/approvals";
 import { registerAuditRoutes } from "./routes/audit";
@@ -38,6 +38,7 @@ import { forbidden, unauthorized } from "./lib/http";
 import { ClinicApiService } from "./lib/services";
 import { buildApprovedDocumentPublisher } from "./lib/publishing";
 import { env } from "./env";
+import { WorkerJobRunner } from "../../worker/src/jobs";
 
 export function buildApp(options?: {
   authMode?: AuthMode;
@@ -114,10 +115,36 @@ export function buildApp(options?: {
       }
     });
 
+  const runWorkerBatch = async (): Promise<WorkerBatchSummary> => {
+    const runner = new WorkerJobRunner(
+      repository,
+      buildMicrosoftPilotOps({
+        mode: env.microsoft.integrationMode,
+        tenantId: env.microsoft.tenantId,
+        clientId: env.microsoft.clientId,
+        clientSecret: env.microsoft.clientSecret,
+        sharepointSiteId: env.microsoft.sharepointSiteId,
+        sharepointPolicyFolder: env.microsoft.sharepointPolicyFolder,
+        listsSiteId: env.microsoft.listsSiteId,
+        plannerPlanId: env.microsoft.plannerPlanId,
+        plannerBucketId: env.microsoft.plannerBucketId,
+        approvalsWebhookUrl: env.microsoft.approvalsWebhookUrl,
+        officeOpsWebhookUrl: env.microsoft.officeOpsWebhookUrl,
+        issueListId: env.microsoft.issueListId,
+        actionItemListId: env.microsoft.actionItemListId,
+        importStatusListId: env.microsoft.importStatusListId,
+        incidentsListId: env.microsoft.incidentsListId,
+        capaListId: env.microsoft.capaListId
+      })
+    );
+    return runner.runOnce({ limit: Number(process.env.WORKER_BATCH_SIZE ?? 10) });
+  };
+
   app.decorate("clinicService", service);
   app.decorate("deviceAuthService", deviceAuthService);
   app.decorate("identityResolver", identityResolver);
   app.decorate("databaseReadyCheck", databaseReadyCheck);
+  app.decorate("runWorkerBatch", runWorkerBatch);
   app.setErrorHandler((error: Error & { statusCode?: number }, _request, reply) => {
     const statusCode = typeof error.statusCode === "number"
       ? error.statusCode

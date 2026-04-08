@@ -3989,6 +3989,22 @@ export class ClinicApiService {
     return retried;
   }
 
+  async runWorkerBatch(actor: ActorContext, runner: () => Promise<WorkerBatchSummary>): Promise<{
+    triggeredAt: string;
+    summary: WorkerBatchSummary;
+  }> {
+    const summary = await runner();
+    const triggeredAt = new Date().toISOString();
+    await this.recordAudit(actor, "worker.batch_run_requested", "worker_runtime", workerRuntimeEntityId, {
+      triggeredAt,
+      summary
+    });
+    return {
+      triggeredAt,
+      summary
+    };
+  }
+
   async getMicrosoftIntegrationStatus(): Promise<MicrosoftIntegrationStatus> {
     const latestValidation = await this.repository.getLatestMicrosoftIntegrationValidationRecord();
     const missingConfigKeys = this.options.microsoftPreflight.getMissingConfigKeys();

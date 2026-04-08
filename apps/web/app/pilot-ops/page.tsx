@@ -153,6 +153,15 @@ type CleanupResult = {
   purgedDeadLetterWorkerJobs: number;
 };
 
+type WorkerRunResult = {
+  triggeredAt: string;
+  summary: {
+    processed: number;
+    succeeded: number;
+    failed: number;
+  };
+};
+
 type RoleCapabilityRecord = {
   role: ActorRole | string;
   capabilities: AppCapability[];
@@ -233,6 +242,7 @@ export default function PilotOpsPage(): JSX.Element {
   const [workerHealth, setWorkerHealth] = useState<WorkerHealth | null>(null);
   const [opsAlerts, setOpsAlerts] = useState<OpsAlertSummary | null>(null);
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null);
+  const [workerRunResult, setWorkerRunResult] = useState<WorkerRunResult | null>(null);
   const [roleCapabilities, setRoleCapabilities] = useState<RoleCapabilityRecord[]>([]);
   const [overview, setOverview] = useState<OverviewStats | null>(null);
   const [authEvents, setAuthEvents] = useState<AuditEvent[]>([]);
@@ -505,6 +515,25 @@ export default function PilotOpsPage(): JSX.Element {
     }
   }
 
+  async function handleRunWorkerBatch() {
+    if (!actor) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await apiRequest<WorkerRunResult>("/worker-jobs/run-once", actor, {
+        method: "POST"
+      });
+      setWorkerRunResult(result);
+      await load();
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : "Unable to run a worker batch.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function toggleDeviceProfile(deviceId: string, profileId: string): void {
     setDeviceEdits((current) => {
       const edit = current[deviceId];
@@ -603,6 +632,15 @@ export default function PilotOpsPage(): JSX.Element {
 
       <div className="card">
         <h2>Worker runtime</h2>
+        <div className="actions">
+          <button
+            className="button secondary"
+            onClick={() => { void handleRunWorkerBatch(); }}
+            disabled={loading || !actor || !hasCapability("worker_jobs.retry")}
+          >
+            Run one worker batch now
+          </button>
+        </div>
         <div className="grid cols-3">
           <div>
             <div className="muted">Backlog</div>
@@ -658,6 +696,15 @@ export default function PilotOpsPage(): JSX.Element {
             <span>{workerHealth?.lastFailedBatchMessage ?? "No recent worker batch failure recorded."}</span>
           </div>
         </div>
+        {workerRunResult ? (
+          <div className="card" style={{ marginTop: 12 }}>
+            <strong>Last manual worker batch</strong>
+            <div className="muted">
+              Triggered {new Date(workerRunResult.triggeredAt).toLocaleString()}.
+              {" "}Processed {workerRunResult.summary.processed}, succeeded {workerRunResult.summary.succeeded}, failed {workerRunResult.summary.failed}.
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="card">
