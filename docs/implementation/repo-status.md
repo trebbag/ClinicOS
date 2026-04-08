@@ -26,6 +26,8 @@ The repository now has a working pilot backbone for:
 - first-class delegation-matrix rules with service-line/task-role matching, deterministic allowed/not-allowed evaluation, bootstrap defaults, API management, and a dedicated governance UI
 - first-class physician-oversight / practice-agreement records with default bootstrap, controlled clinical-governance review, publication sync, and a dedicated oversight UI
 - first-class telehealth stewardship packets tied to telehealth service-line governance, practice-agreement linkage, delegation coverage, controlled clinical-governance review, publication sync, and a dedicated telehealth UI
+- first-class controlled-substance stewardship packets with practice-agreement linkage, service-line coverage, controlled clinical-governance review, publication sync, and a dedicated stewardship UI
+- first-class standards mappings and evidence binders with deterministic review status, binder-driven evidence readiness, controlled clinical-governance review, publication sync, and a dedicated standards/evidence UI
 - device-bound profile auth with enrollment codes, trusted device/session cookies, pilot-ops profile/device management, and a simple login flow
 - same-origin deployment plumbing for a public web origin that proxies browser API requests through `/clinic-api/*`
 - Render-first blueprint, startup/readiness validation, and a deploy smoke script for stub-mode pilots
@@ -48,7 +50,7 @@ The following areas are still placeholders or partial:
 - richer alert delivery integrations beyond the new cleanup/runbook/dashboard baseline
 - multi-room office master data, richer checklist analytics, and fuller Planner reconciliation breadth
 - broader HR/training workflows beyond manual requirements/completions and longer-range scorecard analytics
-- standards mapping, evidence binder tooling, and deeper committee/QAPI reporting beyond the new committee packet slice
+- deeper committee/QAPI reporting, standards-to-survey analytics, and evidence-gap remediation tooling beyond the new committee packet slice
 - deeper commercial claims-governance breadth, service-line-specific analytics, and clinic-specific governance breadth beyond the new practice-agreement slice
 - runtime agent structured tool execution loop and full eval-backed feature flag rollout
 - deeper deployment, observability, and environment promotion workflows
@@ -61,3 +63,5 @@ Operational note from the latest live validation:
 - the redeployed delegation slice was smoke-tested live through bootstrap, evaluation, retirement, and blocked re-evaluation
 - a live practice-agreement smoke run reached `publish_pending` and then sat queued until a one-off local worker batch against the same live DB drained it successfully
 - that means the document publish logic is healthy, but the deployed worker's steady-state queue leasing still deserves monitoring during broader pilot usage
+- the local repo and live external Postgres schema now also include controlled-substance stewardship plus standards/evidence-binder slices
+- those two newest slices still need the latest web/API/worker redeploy before they can be smoke-tested in Render

@@ -2213,4 +2213,196 @@ describe("Clinic API", () => {
     expect(published?.status).toBe("published");
     expect(published?.publishedPath).toContain(submitted.document.id);
   });
+
+  it("bootstraps controlled-substance stewardship, routes it through approval, and publishes it", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/practice-agreements/bootstrap-defaults",
+      headers: headers("medical_director")
+    });
+
+    const bootstrapResponse = await app.inject({
+      method: "POST",
+      url: "/controlled-substances/bootstrap-defaults",
+      headers: headers("medical_director")
+    });
+    expect(bootstrapResponse.statusCode).toBe(200);
+    const bootstrap = bootstrapResponse.json<{ created: Array<{ id: string; title: string }>; existing: Array<{ id: string; title: string }> }>();
+    expect(bootstrap.created.length + bootstrap.existing.length).toBeGreaterThan(0);
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/controlled-substances",
+      headers: headers("patient_care_team_physician")
+    });
+    expect(listResponse.statusCode).toBe(200);
+    const stewardship = listResponse
+      .json<Array<{ id: string; title: string; status: string; documentId: string | null }>>()
+      .find((record) => record.title === "Controlled-substance stewardship packet");
+    expect(stewardship).toBeTruthy();
+    expect(stewardship?.status).toBe("draft");
+
+    const updateResponse = await app.inject({
+      method: "PATCH",
+      url: `/controlled-substances/${stewardship!.id}`,
+      headers: headers("medical_director"),
+      payload: {
+        pdmpReviewSummary: "Updated during controlled-substance API test.",
+        notes: "Controlled-substance test notes."
+      }
+    });
+    expect(updateResponse.statusCode).toBe(200);
+    expect(
+      updateResponse.json<{ stewardship: { pdmpReviewSummary: string } }>().stewardship.pdmpReviewSummary
+    ).toBe("Updated during controlled-substance API test.");
+
+    const submitResponse = await app.inject({
+      method: "POST",
+      url: `/controlled-substances/${stewardship!.id}/submit`,
+      headers: headers("medical_director")
+    });
+    expect(submitResponse.statusCode).toBe(200);
+    const submitted = submitResponse.json<{
+      stewardship: { status: string };
+      document: { id: string; status: string };
+      approvals: Array<{ id: string; reviewerRole: string }>;
+    }>();
+    expect(submitted.stewardship.status).toBe("approval_pending");
+    expect(submitted.document.status).toBe("in_review");
+
+    for (const approval of submitted.approvals) {
+      const decision = await app.inject({
+        method: "POST",
+        url: `/approvals/${approval.id}/decide`,
+        headers: headers(approval.reviewerRole as Parameters<typeof headers>[0]),
+        payload: { decision: "approved" }
+      });
+      expect(decision.statusCode).toBe(200);
+    }
+
+    const publishResponse = await app.inject({
+      method: "POST",
+      url: `/controlled-substances/${stewardship!.id}/publish`,
+      headers: headers("medical_director")
+    });
+    expect(publishResponse.statusCode).toBe(200);
+    expect(publishResponse.json<{ stewardship: { status: string } }>().stewardship.status).toBe("publish_pending");
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const summary = await runner.runOnce();
+    expect(summary.succeeded).toBeGreaterThanOrEqual(1);
+
+    const publishedResponse = await app.inject({
+      method: "GET",
+      url: "/controlled-substances",
+      headers: headers("medical_director")
+    });
+    expect(publishedResponse.statusCode).toBe(200);
+    const published = publishedResponse
+      .json<Array<{ id: string; status: string; publishedPath: string | null }>>()
+      .find((record) => record.id === stewardship!.id);
+    expect(published?.status).toBe("published");
+    expect(published?.publishedPath).toContain(submitted.document.id);
+  });
+
+  it("bootstraps standards defaults, routes an evidence binder through approval, and publishes it", async () => {
+    const standardsBootstrap = await app.inject({
+      method: "POST",
+      url: "/standards/bootstrap-defaults",
+      headers: headers("quality_lead")
+    });
+    expect(standardsBootstrap.statusCode).toBe(200);
+
+    const standardsResponse = await app.inject({
+      method: "GET",
+      url: "/standards",
+      headers: headers("quality_lead")
+    });
+    expect(standardsResponse.statusCode).toBe(200);
+    const standards = standardsResponse.json<Array<{ id: string; standardCode: string; status: string }>>();
+    expect(standards.length).toBeGreaterThan(0);
+
+    const binderCreate = await app.inject({
+      method: "POST",
+      url: "/evidence-binders",
+      headers: headers("quality_lead"),
+      payload: {
+        title: "Mock survey evidence binder",
+        ownerRole: "quality_lead",
+        sourceAuthority: "Joint Commission Mock Survey",
+        surveyWindowLabel: "Pilot readiness mock survey",
+        standardIds: standards.slice(0, 3).map((standard) => standard.id),
+        summary: "Assemble the core survey-readiness evidence trail across mapped standards.",
+        evidenceReadinessSummary: "Each mapped standard should point to a current artifact and named owner.",
+        openGapSummary: "Track stale signatures or missing review evidence before treating the binder as survey-ready.",
+        reviewCadenceDays: 60,
+        notes: "Evidence-binder API test notes."
+      }
+    });
+    expect(binderCreate.statusCode).toBe(200);
+    const created = binderCreate.json<{ binder: { id: string; status: string; documentId: string | null } }>();
+    expect(created.binder.status).toBe("draft");
+    expect(created.binder.documentId).toBeTruthy();
+
+    const submitResponse = await app.inject({
+      method: "POST",
+      url: `/evidence-binders/${created.binder.id}/submit`,
+      headers: headers("quality_lead")
+    });
+    expect(submitResponse.statusCode).toBe(200);
+    const submitted = submitResponse.json<{
+      binder: { status: string };
+      document: { id: string; status: string };
+      approvals: Array<{ id: string; reviewerRole: string }>;
+    }>();
+    expect(submitted.binder.status).toBe("approval_pending");
+    expect(submitted.document.status).toBe("in_review");
+
+    for (const approval of submitted.approvals) {
+      const decision = await app.inject({
+        method: "POST",
+        url: `/approvals/${approval.id}/decide`,
+        headers: headers(approval.reviewerRole as Parameters<typeof headers>[0]),
+        payload: { decision: "approved" }
+      });
+      expect(decision.statusCode).toBe(200);
+    }
+
+    const publishResponse = await app.inject({
+      method: "POST",
+      url: `/evidence-binders/${created.binder.id}/publish`,
+      headers: headers("medical_director")
+    });
+    expect(publishResponse.statusCode).toBe(200);
+    expect(publishResponse.json<{ binder: { status: string } }>().binder.status).toBe("publish_pending");
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const summary = await runner.runOnce();
+    expect(summary.succeeded).toBeGreaterThanOrEqual(1);
+
+    const publishedBinders = await app.inject({
+      method: "GET",
+      url: "/evidence-binders",
+      headers: headers("medical_director")
+    });
+    expect(publishedBinders.statusCode).toBe(200);
+    const published = publishedBinders
+      .json<Array<{ id: string; status: string; publishedPath: string | null }>>()
+      .find((binder) => binder.id === created.binder.id);
+    expect(published?.status).toBe("published");
+    expect(published?.publishedPath).toContain(submitted.document.id);
+
+    const refreshedStandards = await app.inject({
+      method: "GET",
+      url: "/standards",
+      headers: headers("quality_lead")
+    });
+    expect(refreshedStandards.statusCode).toBe(200);
+    expect(
+      refreshedStandards
+        .json<Array<{ id: string; status: string; latestBinderId: string | null }>>()
+        .filter((standard) => created.binder.documentId && standards.slice(0, 3).some((entry) => entry.id === standard.id))
+        .every((standard) => standard.status === "complete" && standard.latestBinderId === created.binder.id)
+    ).toBe(true);
+  });
 });

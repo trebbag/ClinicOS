@@ -290,6 +290,87 @@ model TelehealthStewardship {
   @@index([linkedPracticeAgreementId])
 }
 
+model ControlledSubstanceStewardship {
+  id                           String   @id
+  title                        String
+  ownerRole                    String
+  supervisingPhysicianRole     String
+  serviceLineIdsJson           Json
+  status                       String
+  linkedPracticeAgreementId    String?
+  prescribingScopeSummary      String
+  pdmpReviewSummary            String
+  screeningProtocolSummary     String
+  refillEscalationSummary      String
+  inventoryControlSummary      String
+  patientEducationSummary      String
+  adverseEventEscalationSummary String
+  reviewCadenceDays            Int
+  effectiveDate                DateTime?
+  reviewDueAt                  DateTime?
+  notes                        String?
+  documentId                   String?  @unique
+  workflowRunId                String?  @unique
+  createdBy                    String
+  createdAt                    DateTime
+  updatedAt                    DateTime
+  publishedAt                  DateTime?
+  publishedPath                String?
+
+  @@index([status, ownerRole])
+  @@index([supervisingPhysicianRole, status])
+  @@index([linkedPracticeAgreementId])
+}
+
+model StandardMapping {
+  id                    String   @id
+  standardCode          String
+  title                 String
+  domain                String
+  sourceAuthority       String
+  ownerRole             String
+  status                String
+  requirementSummary    String
+  evidenceExpectation   String
+  evidenceDocumentIdsJson Json
+  latestBinderId        String?
+  reviewCadenceDays     Int
+  lastReviewedAt        DateTime?
+  nextReviewDueAt       DateTime?
+  notes                 String?
+  createdAt             DateTime
+  updatedAt             DateTime
+
+  @@unique([standardCode, sourceAuthority])
+  @@index([domain, status])
+  @@index([ownerRole, status])
+}
+
+model EvidenceBinder {
+  id                     String   @id
+  title                  String
+  ownerRole              String
+  status                 String
+  sourceAuthority        String
+  surveyWindowLabel      String?
+  standardIdsJson        Json
+  summary                String
+  evidenceReadinessSummary String
+  openGapSummary         String
+  reviewCadenceDays      Int
+  notes                  String?
+  documentId             String?  @unique
+  workflowRunId          String?  @unique
+  createdBy              String
+  createdAt              DateTime
+  updatedAt              DateTime
+  publishedAt            DateTime?
+  publishedPath          String?
+
+  @@index([status, ownerRole])
+  @@index([sourceAuthority, status])
+}
+
 model DelegationRule {
   id                         String   @id
   serviceLineId              String

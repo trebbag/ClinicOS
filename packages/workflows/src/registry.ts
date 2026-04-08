@@ -2,6 +2,8 @@ import type { WorkflowDefinition } from "@clinic-os/domain";
 import type { ZodTypeAny } from "zod";
 import { capaLifecycleDefinition } from "./definitions/capa-lifecycle";
 import { committeePacketReviewDefinition } from "./definitions/committee-packet-review";
+import { controlledSubstanceStewardshipReviewDefinition } from "./definitions/controlled-substance-stewardship-review";
+import { evidenceBinderReviewDefinition } from "./definitions/evidence-binder-review";
 import { incidentReviewDefinition } from "./definitions/incident-review";
 import { officeManagerDailyDefinition } from "./definitions/office-manager-daily";
 import { policyLifecycleDefinition } from "./definitions/policy-lifecycle";
@@ -23,6 +25,8 @@ export const workflowRegistry = new Map<string, RegisteredWorkflowDefinition>([
   [incidentReviewDefinition.id, incidentReviewDefinition],
   [capaLifecycleDefinition.id, capaLifecycleDefinition],
   [committeePacketReviewDefinition.id, committeePacketReviewDefinition],
+  [controlledSubstanceStewardshipReviewDefinition.id, controlledSubstanceStewardshipReviewDefinition],
+  [evidenceBinderReviewDefinition.id, evidenceBinderReviewDefinition],
   [qapiMonthlyReviewDefinition.id, qapiMonthlyReviewDefinition],
   [serviceLinePackReviewDefinition.id, serviceLinePackReviewDefinition],
   [practiceAgreementReviewDefinition.id, practiceAgreementReviewDefinition],

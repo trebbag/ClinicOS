@@ -769,6 +769,43 @@ export class WorkerJobRunner {
       });
     }
 
+    const linkedControlledSubstanceStewardship =
+      await this.repository.getControlledSubstanceStewardshipByDocumentId(document.id);
+    if (linkedControlledSubstanceStewardship) {
+      await this.repository.updateControlledSubstanceStewardship(linkedControlledSubstanceStewardship.id, {
+        status: "published",
+        effectiveDate: linkedControlledSubstanceStewardship.effectiveDate ?? now,
+        reviewDueAt: addDays(now, linkedControlledSubstanceStewardship.reviewCadenceDays),
+        publishedAt: now,
+        publishedPath: publishResult.path,
+        updatedAt: now
+      });
+    }
+
+    const linkedEvidenceBinder = await this.repository.getEvidenceBinderByDocumentId(document.id);
+    if (linkedEvidenceBinder) {
+      await this.repository.updateEvidenceBinder(linkedEvidenceBinder.id, {
+        status: "published",
+        publishedAt: now,
+        publishedPath: publishResult.path,
+        updatedAt: now
+      });
+      for (const standardId of linkedEvidenceBinder.standardIds) {
+        const standard = await this.repository.getStandardMapping(standardId);
+        if (!standard) {
+          continue;
+        }
+        await this.repository.updateStandardMapping(standard.id, {
+          status: "complete",
+          latestBinderId: linkedEvidenceBinder.id,
+          evidenceDocumentIds: Array.from(new Set([...standard.evidenceDocumentIds, document.id])),
+          lastReviewedAt: now,
+          nextReviewDueAt: addDays(now, standard.reviewCadenceDays),
+          updatedAt: now
+        });
+      }
+    }
+
     await this.recordAudit(payload.actor, "artifact.published", "document", document.id, {
       publishedPath: publishResult.path,
       externalId: publishResult.externalId,

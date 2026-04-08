@@ -8,6 +8,7 @@ import type {
   ChecklistTemplate,
   CommitteeMeetingRecord,
   CommitteeRecord,
+  ControlledSubstanceStewardshipRecord,
   DelegationRuleRecord,
   DeviceAllowedProfile,
   DeviceEnrollmentCode,
@@ -22,7 +23,9 @@ import type {
   ScorecardReviewRecord,
   ServiceLinePackRecord,
   ServiceLineRecord,
+  StandardMappingRecord,
   TelehealthStewardshipRecord,
+  EvidenceBinderRecord,
   TrainingCompletionRecord,
   TrainingRequirement,
   UserProfile,
@@ -48,10 +51,13 @@ export class MemoryClinicRepository implements ClinicRepository {
   public readonly publicAssets: PublicAssetRecord[] = [];
   public readonly practiceAgreements: PracticeAgreementRecord[] = [];
   public readonly telehealthStewardshipRecords: TelehealthStewardshipRecord[] = [];
+  public readonly controlledSubstanceStewardshipRecords: ControlledSubstanceStewardshipRecord[] = [];
   public readonly committees: CommitteeRecord[] = [];
   public readonly committeeMeetings: CommitteeMeetingRecord[] = [];
   public readonly serviceLines: ServiceLineRecord[] = [];
   public readonly serviceLinePacks: ServiceLinePackRecord[] = [];
+  public readonly standardMappings: StandardMappingRecord[] = [];
+  public readonly evidenceBinders: EvidenceBinderRecord[] = [];
   public readonly delegationRules: DelegationRuleRecord[] = [];
   public readonly checklistTemplates: ChecklistTemplate[] = [];
   public readonly checklistRuns: ChecklistRun[] = [];
@@ -281,6 +287,94 @@ export class MemoryClinicRepository implements ClinicRepository {
     supervisingPhysicianRole?: string;
   }): Promise<TelehealthStewardshipRecord[]> {
     return this.telehealthStewardshipRecords.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createControlledSubstanceStewardship(
+    record: ControlledSubstanceStewardshipRecord
+  ): Promise<ControlledSubstanceStewardshipRecord> {
+    this.controlledSubstanceStewardshipRecords.unshift(record);
+    return record;
+  }
+
+  async updateControlledSubstanceStewardship(
+    id: string,
+    patch: Partial<ControlledSubstanceStewardshipRecord>
+  ): Promise<ControlledSubstanceStewardshipRecord> {
+    const index = this.controlledSubstanceStewardshipRecords.findIndex((record) => record.id === id);
+    this.controlledSubstanceStewardshipRecords[index] = {
+      ...this.controlledSubstanceStewardshipRecords[index],
+      ...patch
+    };
+    return this.controlledSubstanceStewardshipRecords[index];
+  }
+
+  async getControlledSubstanceStewardship(id: string): Promise<ControlledSubstanceStewardshipRecord | null> {
+    return this.controlledSubstanceStewardshipRecords.find((record) => record.id === id) ?? null;
+  }
+
+  async getControlledSubstanceStewardshipByDocumentId(
+    documentId: string
+  ): Promise<ControlledSubstanceStewardshipRecord | null> {
+    return this.controlledSubstanceStewardshipRecords.find((record) => record.documentId === documentId) ?? null;
+  }
+
+  async listControlledSubstanceStewardship(filters?: {
+    status?: string;
+    ownerRole?: string;
+    supervisingPhysicianRole?: string;
+  }): Promise<ControlledSubstanceStewardshipRecord[]> {
+    return this.controlledSubstanceStewardshipRecords.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createStandardMapping(record: StandardMappingRecord): Promise<StandardMappingRecord> {
+    this.standardMappings.unshift(record);
+    return record;
+  }
+
+  async updateStandardMapping(id: string, patch: Partial<StandardMappingRecord>): Promise<StandardMappingRecord> {
+    const index = this.standardMappings.findIndex((record) => record.id === id);
+    this.standardMappings[index] = { ...this.standardMappings[index], ...patch };
+    return this.standardMappings[index];
+  }
+
+  async getStandardMapping(id: string): Promise<StandardMappingRecord | null> {
+    return this.standardMappings.find((record) => record.id === id) ?? null;
+  }
+
+  async listStandardMappings(filters?: {
+    domain?: string;
+    ownerRole?: string;
+    status?: string;
+    sourceAuthority?: string;
+  }): Promise<StandardMappingRecord[]> {
+    return this.standardMappings.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createEvidenceBinder(record: EvidenceBinderRecord): Promise<EvidenceBinderRecord> {
+    this.evidenceBinders.unshift(record);
+    return record;
+  }
+
+  async updateEvidenceBinder(id: string, patch: Partial<EvidenceBinderRecord>): Promise<EvidenceBinderRecord> {
+    const index = this.evidenceBinders.findIndex((record) => record.id === id);
+    this.evidenceBinders[index] = { ...this.evidenceBinders[index], ...patch };
+    return this.evidenceBinders[index];
+  }
+
+  async getEvidenceBinder(id: string): Promise<EvidenceBinderRecord | null> {
+    return this.evidenceBinders.find((record) => record.id === id) ?? null;
+  }
+
+  async getEvidenceBinderByDocumentId(documentId: string): Promise<EvidenceBinderRecord | null> {
+    return this.evidenceBinders.find((record) => record.documentId === documentId) ?? null;
+  }
+
+  async listEvidenceBinders(filters?: {
+    status?: string;
+    ownerRole?: string;
+    sourceAuthority?: string;
+  }): Promise<EvidenceBinderRecord[]> {
+    return this.evidenceBinders.filter((record) => matchesFilters(record, filters));
   }
 
   async createCommittee(record: CommitteeRecord): Promise<CommitteeRecord> {

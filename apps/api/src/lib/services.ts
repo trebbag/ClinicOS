@@ -21,7 +21,9 @@ import {
   createChecklistItemRecord,
   createChecklistRun,
   createChecklistTemplate,
+  createControlledSubstanceStewardshipRecord,
   createDelegationRuleRecord,
+  createEvidenceBinderRecord,
   createIncidentRecord,
   createMicrosoftIntegrationValidationRecord,
   createPublicAssetRecord,
@@ -29,6 +31,7 @@ import {
   createAuditEvent,
   createDraftDocument,
   createScorecardReviewRecord,
+  createStandardMappingRecord,
   createTrainingCompletionRecord,
   createTrainingRequirement,
   createWorkerJob,
@@ -41,6 +44,8 @@ import {
   delegationRuleUpdateSchema,
   documentMetadataSchema,
   evaluateDelegationRule,
+  evidenceBinderCreateSchema,
+  evidenceBinderUpdateSchema,
   incidentCreateSchema,
   incidentReviewDecisionCommandSchema,
   incidentUpdateSchema,
@@ -50,6 +55,8 @@ import {
   publicAssetCreateSchema,
   publicAssetUpdateSchema,
   claimsReviewDecisionCommandSchema,
+  controlledSubstanceStewardshipCreateSchema,
+  controlledSubstanceStewardshipUpdateSchema,
   createPracticeAgreementRecord,
   createTelehealthStewardshipRecord,
   serviceLineCreateSchema,
@@ -61,6 +68,8 @@ import {
   telehealthStewardshipUpdateSchema,
   scorecardImportJobSchema,
   scorecardReviewDecisionCommandSchema,
+  standardMappingCreateSchema,
+  standardMappingUpdateSchema,
   trainingCompletionCreateSchema,
   trainingRequirementCreateSchema,
   workflowTransitionCommandSchema,
@@ -83,10 +92,12 @@ import {
   type CommitteeMeetingRecord,
   type CommitteeQapiSnapshot,
   type CommitteeRecord,
+  type ControlledSubstanceStewardshipRecord,
   type MetricRun,
   type MicrosoftIntegrationStatus,
   type MicrosoftIntegrationValidationRecord,
   type DocumentRecord,
+  type EvidenceBinderRecord,
   type IncidentRecord,
   type OpsAlert,
   type OpsAlertSummary,
@@ -100,6 +111,7 @@ import {
   type RoleCapabilityRecord,
   type ServiceLinePackRecord,
   type ServiceLineRecord,
+  type StandardMappingRecord,
   type TelehealthStewardshipRecord,
   type TrainingDashboard,
   type TrainingGapItem,
@@ -209,6 +221,60 @@ function deriveTelehealthStewardshipStatus(input: {
   documentStatus: DocumentRecord["status"];
   currentStatus: TelehealthStewardshipRecord["status"];
 }): TelehealthStewardshipRecord["status"] {
+  if (input.currentStatus === "archived") {
+    return input.currentStatus;
+  }
+
+  switch (input.documentStatus) {
+    case "in_review":
+      return "approval_pending";
+    case "approved":
+      return "approved";
+    case "publish_pending":
+      return "publish_pending";
+    case "published":
+      return "published";
+    case "rejected":
+      return "sent_back";
+    case "archived":
+      return "archived";
+    case "draft":
+    default:
+      return "draft";
+  }
+}
+
+function deriveControlledSubstanceStewardshipStatus(input: {
+  documentStatus: DocumentRecord["status"];
+  currentStatus: ControlledSubstanceStewardshipRecord["status"];
+}): ControlledSubstanceStewardshipRecord["status"] {
+  if (input.currentStatus === "archived") {
+    return input.currentStatus;
+  }
+
+  switch (input.documentStatus) {
+    case "in_review":
+      return "approval_pending";
+    case "approved":
+      return "approved";
+    case "publish_pending":
+      return "publish_pending";
+    case "published":
+      return "published";
+    case "rejected":
+      return "sent_back";
+    case "archived":
+      return "archived";
+    case "draft":
+    default:
+      return "draft";
+  }
+}
+
+function deriveEvidenceBinderStatus(input: {
+  documentStatus: DocumentRecord["status"];
+  currentStatus: EvidenceBinderRecord["status"];
+}): EvidenceBinderRecord["status"] {
   if (input.currentStatus === "archived") {
     return input.currentStatus;
   }
@@ -1041,8 +1107,10 @@ export class ClinicApiService {
     await this.syncPublicAssetFromDocument(updatedDocument);
     await this.syncPracticeAgreementFromDocument(updatedDocument);
     await this.syncTelehealthStewardshipFromDocument(updatedDocument);
+    await this.syncControlledSubstanceStewardshipFromDocument(updatedDocument);
     await this.syncCommitteeMeetingFromDocument(updatedDocument);
     await this.syncServiceLinePackFromDocument(updatedDocument);
+    await this.syncEvidenceBinderFromDocument(updatedDocument);
 
     return {
       approval: updatedApproval,
@@ -1084,8 +1152,10 @@ export class ClinicApiService {
     await this.syncPublicAssetFromDocument(updatedDocument);
     await this.syncPracticeAgreementFromDocument(updatedDocument);
     await this.syncTelehealthStewardshipFromDocument(updatedDocument);
+    await this.syncControlledSubstanceStewardshipFromDocument(updatedDocument);
     await this.syncCommitteeMeetingFromDocument(updatedDocument);
     await this.syncServiceLinePackFromDocument(updatedDocument);
+    await this.syncEvidenceBinderFromDocument(updatedDocument);
 
     return updatedDocument;
   }
@@ -2512,6 +2582,688 @@ export class ClinicApiService {
 
     return {
       stewardship: synced ?? stewardship,
+      document
+    };
+  }
+
+  async listControlledSubstanceStewardship(filters?: {
+    status?: string;
+    ownerRole?: string;
+    supervisingPhysicianRole?: string;
+    serviceLineId?: string;
+  }): Promise<ControlledSubstanceStewardshipRecord[]> {
+    const { serviceLineId, ...repositoryFilters } = filters ?? {};
+    const records = await this.repository.listControlledSubstanceStewardship(repositoryFilters);
+    if (!serviceLineId) {
+      return records;
+    }
+    return records.filter((record) =>
+      record.serviceLineIds.includes(serviceLineId as ControlledSubstanceStewardshipRecord["serviceLineIds"][number])
+    );
+  }
+
+  async createControlledSubstanceStewardship(actor: ActorContext, input: unknown): Promise<{
+    stewardship: ControlledSubstanceStewardshipRecord;
+    document: DocumentRecord;
+  }> {
+    const command = controlledSubstanceStewardshipCreateSchema.parse(input);
+    const linkedPracticeAgreement = command.linkedPracticeAgreementId
+      ? await this.repository.getPracticeAgreement(command.linkedPracticeAgreementId)
+      : null;
+    if (command.linkedPracticeAgreementId && !linkedPracticeAgreement) {
+      notFound(`Linked practice agreement not found: ${command.linkedPracticeAgreementId}`);
+    }
+
+    const workflow = await this.createWorkflowRun(actor, {
+      workflowId: "controlled_substance_stewardship_review",
+      input: {
+        title: command.title,
+        ownerRole: command.ownerRole,
+        supervisingPhysicianRole: command.supervisingPhysicianRole,
+        serviceLineIds: command.serviceLineIds,
+        linkedPracticeAgreementId: command.linkedPracticeAgreementId ?? null,
+        requestedBy: actor.actorId,
+        reviewCadenceDays: command.reviewCadenceDays ?? 45
+      }
+    });
+
+    await this.advanceWorkflowIfPossible(actor, workflow.id, ["scoped", "drafted"], "Controlled-substance stewardship packet drafted.");
+
+    const document = await this.createDocument(actor, {
+      title: command.title,
+      ownerRole: command.ownerRole,
+      approvalClass: "clinical_governance",
+      artifactType: "controlled_substance_stewardship_packet",
+      summary: `Controlled-substance stewardship packet for ${command.serviceLineIds.map((serviceLineId) => serviceLineId.replaceAll("_", " ")).join(", ")} guardrails.`,
+      workflowRunId: workflow.id,
+      serviceLines: command.serviceLineIds,
+      body: this.buildControlledSubstanceStewardshipBody(command)
+    });
+
+    const stewardship = await this.repository.createControlledSubstanceStewardship(
+      createControlledSubstanceStewardshipRecord({
+        ...command,
+        linkedPracticeAgreementId: command.linkedPracticeAgreementId ?? null,
+        reviewCadenceDays: command.reviewCadenceDays ?? 45,
+        notes: command.notes ?? null,
+        documentId: document.id,
+        workflowRunId: workflow.id,
+        createdBy: actor.actorId
+      })
+    );
+
+    await this.recordAudit(actor, "controlled_substance_stewardship.created", "controlled_substance_stewardship", stewardship.id, {
+      documentId: document.id,
+      workflowRunId: workflow.id,
+      serviceLineIds: stewardship.serviceLineIds,
+      linkedPracticeAgreementId: stewardship.linkedPracticeAgreementId
+    });
+
+    return {
+      stewardship,
+      document
+    };
+  }
+
+  async bootstrapControlledSubstanceStewardship(actor: ActorContext): Promise<{
+    created: ControlledSubstanceStewardshipRecord[];
+    existing: ControlledSubstanceStewardshipRecord[];
+  }> {
+    const existing = await this.repository.listControlledSubstanceStewardship();
+    if (existing.length > 0) {
+      return {
+        created: [],
+        existing
+      };
+    }
+
+    const practiceAgreements = await this.repository.listPracticeAgreements({ ownerRole: "medical_director" });
+    const linkedPracticeAgreement = practiceAgreements.find((agreement) =>
+      agreement.serviceLineIds.some((serviceLineId) => ["weight_management", "hrt", "primary_care", "telehealth"].includes(serviceLineId))
+    ) ?? null;
+    const serviceLineIds = linkedPracticeAgreement?.serviceLineIds.filter((serviceLineId) =>
+      ["weight_management", "hrt", "primary_care", "telehealth"].includes(serviceLineId)
+    ) ?? ["weight_management", "hrt", "primary_care"];
+
+    const created = await this.createControlledSubstanceStewardship(actor, {
+      title: "Controlled-substance stewardship packet",
+      ownerRole: linkedPracticeAgreement?.ownerRole ?? "medical_director",
+      supervisingPhysicianRole: linkedPracticeAgreement?.supervisingPhysicianRole ?? "patient_care_team_physician",
+      serviceLineIds,
+      linkedPracticeAgreementId: linkedPracticeAgreement?.id ?? null,
+      prescribingScopeSummary: "Define which controlled-substance workflows remain inside protocol-guided clinic scope, which require supervising-physician review, and which are out of scope for this pilot clinic.",
+      pdmpReviewSummary: "Require documented PDMP review before new controlled-substance starts, dose escalation, early refill consideration, or transfer-of-care continuation decisions.",
+      screeningProtocolSummary: "Document the standardized risk-screening, toxicology, contraindication, and monitoring checkpoints that must be completed before prescribing or renewing controlled medications.",
+      refillEscalationSummary: "Escalate early refill requests, lost-medication reports, dose exceptions, outside-prescriber overlap, and missed-monitoring events to supervising physician review the same day.",
+      inventoryControlSummary: "For any on-site stock or samples, define locked storage, access logging, discrepancy review, and immediate escalation expectations for suspected diversion or count variance.",
+      patientEducationSummary: "Provide consistent patient education covering controlled-substance expectations, refill timing, safe storage, no-sharing guidance, and the conditions that trigger reassessment or discontinuation.",
+      adverseEventEscalationSummary: "Escalate suspected misuse, overdose risk, sedation, withdrawal concern, or red-flag adverse effects immediately with documented warm handoff and physician notification.",
+      reviewCadenceDays: linkedPracticeAgreement?.reviewCadenceDays ?? 45,
+      effectiveDate: linkedPracticeAgreement?.effectiveDate ?? null,
+      notes: "Keep aligned with the current practice agreement, service-line governance packs, and any active delegation restrictions."
+    });
+
+    return {
+      created: [created.stewardship],
+      existing: []
+    };
+  }
+
+  async updateControlledSubstanceStewardship(
+    actor: ActorContext,
+    stewardshipId: string,
+    input: unknown
+  ): Promise<{
+    stewardship: ControlledSubstanceStewardshipRecord;
+    document: DocumentRecord | null;
+  }> {
+    const command = controlledSubstanceStewardshipUpdateSchema.parse(input);
+    const stewardship = await this.repository.getControlledSubstanceStewardship(stewardshipId);
+    if (!stewardship) {
+      notFound(`Controlled-substance stewardship packet not found: ${stewardshipId}`);
+    }
+    if (!["draft", "sent_back"].includes(stewardship.status)) {
+      badRequest("Only draft or sent-back controlled-substance stewardship packets can be edited.");
+    }
+
+    const linkedPracticeAgreement = command.linkedPracticeAgreementId
+      ? await this.repository.getPracticeAgreement(command.linkedPracticeAgreementId)
+      : null;
+    if (command.linkedPracticeAgreementId && !linkedPracticeAgreement) {
+      notFound(`Linked practice agreement not found: ${command.linkedPracticeAgreementId}`);
+    }
+
+    const updatedAt = new Date().toISOString();
+    const updated = await this.repository.updateControlledSubstanceStewardship(stewardship.id, {
+      title: command.title ?? stewardship.title,
+      ownerRole: command.ownerRole ?? stewardship.ownerRole,
+      supervisingPhysicianRole: command.supervisingPhysicianRole ?? stewardship.supervisingPhysicianRole,
+      serviceLineIds: command.serviceLineIds ?? stewardship.serviceLineIds,
+      linkedPracticeAgreementId: command.linkedPracticeAgreementId !== undefined
+        ? command.linkedPracticeAgreementId
+        : stewardship.linkedPracticeAgreementId,
+      prescribingScopeSummary: command.prescribingScopeSummary ?? stewardship.prescribingScopeSummary,
+      pdmpReviewSummary: command.pdmpReviewSummary ?? stewardship.pdmpReviewSummary,
+      screeningProtocolSummary: command.screeningProtocolSummary ?? stewardship.screeningProtocolSummary,
+      refillEscalationSummary: command.refillEscalationSummary ?? stewardship.refillEscalationSummary,
+      inventoryControlSummary: command.inventoryControlSummary ?? stewardship.inventoryControlSummary,
+      patientEducationSummary: command.patientEducationSummary ?? stewardship.patientEducationSummary,
+      adverseEventEscalationSummary: command.adverseEventEscalationSummary ?? stewardship.adverseEventEscalationSummary,
+      reviewCadenceDays: command.reviewCadenceDays ?? stewardship.reviewCadenceDays,
+      effectiveDate: command.effectiveDate !== undefined ? command.effectiveDate : stewardship.effectiveDate,
+      notes: command.notes !== undefined ? command.notes : stewardship.notes,
+      status: command.status ?? stewardship.status,
+      updatedAt
+    });
+
+    let document: DocumentRecord | null = null;
+    if (stewardship.documentId) {
+      const draftDocument = await this.repository.getDocument(stewardship.documentId);
+      if (!draftDocument) {
+        notFound(`Controlled-substance stewardship document not found: ${stewardship.documentId}`);
+      }
+      if (!["draft", "rejected"].includes(draftDocument.status)) {
+        badRequest("Controlled-substance stewardship draft is already under review or published.");
+      }
+
+      document = await this.repository.updateDocument(draftDocument.id, {
+        title: updated.title,
+        ownerRole: updated.ownerRole,
+        summary: `Controlled-substance stewardship packet for ${updated.serviceLineIds.map((serviceLineId) => serviceLineId.replaceAll("_", " ")).join(", ")} guardrails.`,
+        body: this.buildControlledSubstanceStewardshipBody(updated),
+        serviceLines: updated.serviceLineIds,
+        status: "draft",
+        updatedAt,
+        version: draftDocument.version + 1
+      });
+    }
+
+    await this.recordAudit(actor, "controlled_substance_stewardship.updated", "controlled_substance_stewardship", updated.id, {
+      documentId: stewardship.documentId,
+      serviceLineIds: updated.serviceLineIds,
+      linkedPracticeAgreementId: updated.linkedPracticeAgreementId
+    });
+
+    return {
+      stewardship: updated,
+      document
+    };
+  }
+
+  async submitControlledSubstanceStewardship(
+    actor: ActorContext,
+    stewardshipId: string
+  ): Promise<{
+    stewardship: ControlledSubstanceStewardshipRecord;
+    document: DocumentRecord;
+    approvals: ApprovalTask[];
+  }> {
+    const stewardship = await this.repository.getControlledSubstanceStewardship(stewardshipId);
+    if (!stewardship) {
+      notFound(`Controlled-substance stewardship packet not found: ${stewardshipId}`);
+    }
+    if (!stewardship.documentId) {
+      badRequest("Create a controlled-substance stewardship draft before routing it for approval.");
+    }
+    if (!["draft", "sent_back"].includes(stewardship.status)) {
+      badRequest("Controlled-substance stewardship packet is not ready for approval routing.");
+    }
+
+    await this.advanceWorkflowIfPossible(
+      actor,
+      stewardship.workflowRunId,
+      ["drafted", "quality_checked", "awaiting_human_review"],
+      "Controlled-substance stewardship packet routed for human review."
+    );
+
+    const result = await this.submitDocument(actor, stewardship.documentId);
+    const synced = await this.syncControlledSubstanceStewardshipFromDocument(result.document);
+
+    await this.recordAudit(actor, "controlled_substance_stewardship.submitted", "controlled_substance_stewardship", stewardship.id, {
+      documentId: stewardship.documentId,
+      approvalCount: result.approvals.length
+    });
+
+    return {
+      stewardship: synced ?? stewardship,
+      document: result.document,
+      approvals: result.approvals
+    };
+  }
+
+  async publishControlledSubstanceStewardship(
+    actor: ActorContext,
+    stewardshipId: string
+  ): Promise<{
+    stewardship: ControlledSubstanceStewardshipRecord;
+    document: DocumentRecord;
+  }> {
+    const stewardship = await this.repository.getControlledSubstanceStewardship(stewardshipId);
+    if (!stewardship) {
+      notFound(`Controlled-substance stewardship packet not found: ${stewardshipId}`);
+    }
+    if (!stewardship.documentId) {
+      badRequest("Controlled-substance stewardship packet is not available for publication.");
+    }
+
+    const document = await this.publishDocument(actor, stewardship.documentId);
+    const synced = await this.syncControlledSubstanceStewardshipFromDocument(document);
+
+    await this.recordAudit(actor, "controlled_substance_stewardship.publish_requested", "controlled_substance_stewardship", stewardship.id, {
+      documentId: stewardship.documentId
+    });
+
+    return {
+      stewardship: synced ?? stewardship,
+      document
+    };
+  }
+
+  async listStandardMappings(filters?: {
+    domain?: string;
+    ownerRole?: string;
+    status?: string;
+    sourceAuthority?: string;
+  }): Promise<StandardMappingRecord[]> {
+    return this.repository.listStandardMappings(filters);
+  }
+
+  async createStandardMapping(actor: ActorContext, input: unknown): Promise<StandardMappingRecord> {
+    const command = standardMappingCreateSchema.parse(input);
+    const existing = await this.repository.listStandardMappings({
+      sourceAuthority: command.sourceAuthority
+    });
+    if (existing.some((record) => record.standardCode === command.standardCode)) {
+      badRequest(`A standards mapping already exists for ${command.sourceAuthority} ${command.standardCode}.`);
+    }
+
+    const created = await this.repository.createStandardMapping(createStandardMappingRecord({
+      ...command,
+      evidenceDocumentIds: command.evidenceDocumentIds,
+      reviewCadenceDays: command.reviewCadenceDays ?? 90,
+      notes: command.notes ?? null
+    }));
+
+    await this.recordAudit(actor, "standard_mapping.created", "standard_mapping", created.id, {
+      standardCode: created.standardCode,
+      sourceAuthority: created.sourceAuthority,
+      domain: created.domain
+    });
+
+    return created;
+  }
+
+  async bootstrapStandards(actor: ActorContext): Promise<{
+    created: StandardMappingRecord[];
+    existing: StandardMappingRecord[];
+  }> {
+    const existingRecords = await this.repository.listStandardMappings({ sourceAuthority: "Joint Commission Mock Survey" });
+    const defaults = [
+      {
+        standardCode: "MM.03.01.01",
+        title: "Medication management oversight",
+        domain: "medication_management",
+        ownerRole: "quality_lead",
+        requirementSummary: "Define how the clinic governs medication handling, review cadence, escalation, and documentation for higher-risk medication workflows.",
+        evidenceExpectation: "Current stewardship policy, approval trail, recent review packet, and follow-up actions tied to medication-management oversight.",
+        reviewCadenceDays: 60,
+        notes: "Anchor medication-management survey prep with the controlled-substance stewardship packet."
+      },
+      {
+        standardCode: "HR.01.06.01",
+        title: "Staff competency oversight",
+        domain: "staff_competency",
+        ownerRole: "hr_lead",
+        requirementSummary: "Maintain evidence that staff performing regulated tasks have current competency expectations, review cadence, and remediation follow-up.",
+        evidenceExpectation: "Competency matrix, latest review packet, remediation tracking, and role-specific competency artifacts.",
+        reviewCadenceDays: 90,
+        notes: "Tie to delegation matrix and scorecard follow-up evidence."
+      },
+      {
+        standardCode: "IC.02.02.01",
+        title: "Infection prevention controls",
+        domain: "infection_prevention",
+        ownerRole: "quality_lead",
+        requirementSummary: "Document current infection-prevention expectations, escalation routines, and periodic review of compliance evidence.",
+        evidenceExpectation: "Current policy set, training proof, issue escalation records, and recent committee review references.",
+        reviewCadenceDays: 90,
+        notes: "Use committee/QAPI packets as evidence anchors."
+      },
+      {
+        standardCode: "EC.02.03.05",
+        title: "Environment and emergency readiness",
+        domain: "environment_of_care",
+        ownerRole: "office_manager",
+        requirementSummary: "Show that emergency equipment, closeout routines, and escalation pathways are documented, reviewed, and acted on.",
+        evidenceExpectation: "Daily packet artifacts, checklist evidence, action items, and recent committee follow-up.",
+        reviewCadenceDays: 90,
+        notes: "Pair with office-ops closeout evidence for survey readiness."
+      },
+      {
+        standardCode: "LD.04.01.05",
+        title: "Leadership quality oversight",
+        domain: "leadership",
+        ownerRole: "medical_director",
+        requirementSummary: "Demonstrate leadership review of incidents, CAPAs, committees, and other safety-governance artifacts on a defined cadence.",
+        evidenceExpectation: "QAPI meeting packets, leadership decisions, incident/CAPA summaries, and documented follow-up actions.",
+        reviewCadenceDays: 30,
+        notes: "Pair with the committee/QAPI engine for recurring evidence."
+      }
+    ] as const;
+
+    const created: StandardMappingRecord[] = [];
+    const existing: StandardMappingRecord[] = [];
+    for (const entry of defaults) {
+      const match = existingRecords.find((record) => record.standardCode === entry.standardCode);
+      if (match) {
+        existing.push(match);
+        continue;
+      }
+      created.push(await this.createStandardMapping(actor, {
+        ...entry,
+        sourceAuthority: "Joint Commission Mock Survey"
+      }));
+    }
+
+    return {
+      created,
+      existing
+    };
+  }
+
+  async updateStandardMapping(actor: ActorContext, standardId: string, input: unknown): Promise<StandardMappingRecord> {
+    const command = standardMappingUpdateSchema.parse(input);
+    const standard = await this.repository.getStandardMapping(standardId);
+    if (!standard) {
+      notFound(`Standard mapping not found: ${standardId}`);
+    }
+
+    const updated = await this.repository.updateStandardMapping(standard.id, {
+      standardCode: command.standardCode ?? standard.standardCode,
+      title: command.title ?? standard.title,
+      domain: command.domain ?? standard.domain,
+      sourceAuthority: command.sourceAuthority ?? standard.sourceAuthority,
+      ownerRole: command.ownerRole ?? standard.ownerRole,
+      status: command.status ?? standard.status,
+      requirementSummary: command.requirementSummary ?? standard.requirementSummary,
+      evidenceExpectation: command.evidenceExpectation ?? standard.evidenceExpectation,
+      evidenceDocumentIds: command.evidenceDocumentIds ?? standard.evidenceDocumentIds,
+      latestBinderId: command.latestBinderId !== undefined ? command.latestBinderId : standard.latestBinderId,
+      reviewCadenceDays: command.reviewCadenceDays ?? standard.reviewCadenceDays,
+      lastReviewedAt: command.lastReviewedAt !== undefined ? command.lastReviewedAt : standard.lastReviewedAt,
+      nextReviewDueAt: command.nextReviewDueAt !== undefined ? command.nextReviewDueAt : standard.nextReviewDueAt,
+      notes: command.notes !== undefined ? command.notes : standard.notes,
+      updatedAt: new Date().toISOString()
+    });
+
+    await this.recordAudit(actor, "standard_mapping.updated", "standard_mapping", updated.id, {
+      standardCode: updated.standardCode,
+      status: updated.status
+    });
+
+    return updated;
+  }
+
+  async listEvidenceBinders(filters?: {
+    status?: string;
+    ownerRole?: string;
+    sourceAuthority?: string;
+  }): Promise<EvidenceBinderRecord[]> {
+    return this.repository.listEvidenceBinders(filters);
+  }
+
+  async createEvidenceBinder(actor: ActorContext, input: unknown): Promise<{
+    binder: EvidenceBinderRecord;
+    document: DocumentRecord;
+  }> {
+    const command = evidenceBinderCreateSchema.parse(input);
+    const standards = await Promise.all(command.standardIds.map((standardId) => this.repository.getStandardMapping(standardId)));
+    const missingStandardId = command.standardIds.find((_id, index) => !standards[index]);
+    if (missingStandardId) {
+      notFound(`Standard mapping not found: ${missingStandardId}`);
+    }
+
+    const workflow = await this.createWorkflowRun(actor, {
+      workflowId: "evidence_binder_review",
+      input: {
+        title: command.title,
+        ownerRole: command.ownerRole,
+        sourceAuthority: command.sourceAuthority,
+        standardIds: command.standardIds,
+        surveyWindowLabel: command.surveyWindowLabel ?? null,
+        requestedBy: actor.actorId,
+        reviewCadenceDays: command.reviewCadenceDays ?? 90
+      }
+    });
+
+    await this.advanceWorkflowIfPossible(actor, workflow.id, ["scoped", "drafted"], "Evidence binder drafted.");
+
+    const mappedStandards = standards.filter(Boolean) as StandardMappingRecord[];
+    const document = await this.createDocument(actor, {
+      title: command.title,
+      ownerRole: command.ownerRole,
+      approvalClass: "clinical_governance",
+      artifactType: "evidence_binder",
+      summary: `Evidence binder covering ${command.standardIds.length} mapped standards for ${command.sourceAuthority}.`,
+      workflowRunId: workflow.id,
+      serviceLines: [],
+      body: this.buildEvidenceBinderBody(command, mappedStandards)
+    });
+
+    const binder = await this.repository.createEvidenceBinder(createEvidenceBinderRecord({
+      ...command,
+      surveyWindowLabel: command.surveyWindowLabel ?? null,
+      reviewCadenceDays: command.reviewCadenceDays ?? 90,
+      notes: command.notes ?? null,
+      documentId: document.id,
+      workflowRunId: workflow.id,
+      createdBy: actor.actorId
+    }));
+
+    await Promise.all(mappedStandards.map((standard) =>
+      this.repository.updateStandardMapping(standard.id, {
+        status: "evidence_ready",
+        latestBinderId: binder.id,
+        updatedAt: new Date().toISOString()
+      })
+    ));
+
+    await this.recordAudit(actor, "evidence_binder.created", "evidence_binder", binder.id, {
+      documentId: document.id,
+      workflowRunId: workflow.id,
+      standardCount: binder.standardIds.length,
+      sourceAuthority: binder.sourceAuthority
+    });
+
+    return {
+      binder,
+      document
+    };
+  }
+
+  async bootstrapEvidenceBinders(actor: ActorContext): Promise<{
+    created: EvidenceBinderRecord[];
+    existing: EvidenceBinderRecord[];
+  }> {
+    const existingBinders = await this.repository.listEvidenceBinders({ sourceAuthority: "Joint Commission Mock Survey" });
+    if (existingBinders.length > 0) {
+      return {
+        created: [],
+        existing: existingBinders
+      };
+    }
+
+    const standards = await this.bootstrapStandards(actor);
+    const available = [...standards.existing, ...standards.created];
+    const selected = available
+      .filter((standard) => ["medication_management", "staff_competency", "leadership", "environment_of_care"].includes(standard.domain))
+      .slice(0, 4);
+    const created = await this.createEvidenceBinder(actor, {
+      title: "Mock survey evidence binder",
+      ownerRole: "quality_lead",
+      sourceAuthority: "Joint Commission Mock Survey",
+      surveyWindowLabel: "Pilot readiness mock survey",
+      standardIds: selected.map((standard) => standard.id),
+      summary: "Assemble the core survey-readiness evidence trail across medication oversight, competency, leadership review, and environment-of-care controls.",
+      evidenceReadinessSummary: "Each mapped standard should point to a current artifact, recent review evidence, and a named owner responsible for keeping the binder current.",
+      openGapSummary: "Track any missing signatures, stale policy versions, delayed committee review artifacts, or competency follow-up gaps before treating the binder as survey-ready.",
+      reviewCadenceDays: 60,
+      notes: "Use this binder as the mock-survey packet until broader standards coverage is needed."
+    });
+
+    return {
+      created: [created.binder],
+      existing: []
+    };
+  }
+
+  async updateEvidenceBinder(actor: ActorContext, binderId: string, input: unknown): Promise<{
+    binder: EvidenceBinderRecord;
+    document: DocumentRecord | null;
+  }> {
+    const command = evidenceBinderUpdateSchema.parse(input);
+    const binder = await this.repository.getEvidenceBinder(binderId);
+    if (!binder) {
+      notFound(`Evidence binder not found: ${binderId}`);
+    }
+    if (!["draft", "sent_back"].includes(binder.status)) {
+      badRequest("Only draft or sent-back evidence binders can be edited.");
+    }
+
+    const standardIds = command.standardIds ?? binder.standardIds;
+    const standards = await Promise.all(standardIds.map((standardId) => this.repository.getStandardMapping(standardId)));
+    const missingStandardId = standardIds.find((_id, index) => !standards[index]);
+    if (missingStandardId) {
+      notFound(`Standard mapping not found: ${missingStandardId}`);
+    }
+
+    const updatedAt = new Date().toISOString();
+    const updated = await this.repository.updateEvidenceBinder(binder.id, {
+      title: command.title ?? binder.title,
+      ownerRole: command.ownerRole ?? binder.ownerRole,
+      status: command.status ?? binder.status,
+      sourceAuthority: command.sourceAuthority ?? binder.sourceAuthority,
+      surveyWindowLabel: command.surveyWindowLabel !== undefined ? command.surveyWindowLabel : binder.surveyWindowLabel,
+      standardIds,
+      summary: command.summary ?? binder.summary,
+      evidenceReadinessSummary: command.evidenceReadinessSummary ?? binder.evidenceReadinessSummary,
+      openGapSummary: command.openGapSummary ?? binder.openGapSummary,
+      reviewCadenceDays: command.reviewCadenceDays ?? binder.reviewCadenceDays,
+      notes: command.notes !== undefined ? command.notes : binder.notes,
+      updatedAt
+    });
+
+    let document: DocumentRecord | null = null;
+    if (binder.documentId) {
+      const draftDocument = await this.repository.getDocument(binder.documentId);
+      if (!draftDocument) {
+        notFound(`Evidence-binder document not found: ${binder.documentId}`);
+      }
+      if (!["draft", "rejected"].includes(draftDocument.status)) {
+        badRequest("Evidence-binder draft is already under review or published.");
+      }
+
+      document = await this.repository.updateDocument(draftDocument.id, {
+        title: updated.title,
+        ownerRole: updated.ownerRole,
+        summary: `Evidence binder covering ${updated.standardIds.length} mapped standards for ${updated.sourceAuthority}.`,
+        body: this.buildEvidenceBinderBody(updated, standards.filter(Boolean) as StandardMappingRecord[]),
+        serviceLines: [],
+        status: "draft",
+        updatedAt,
+        version: draftDocument.version + 1
+      });
+    }
+
+    await Promise.all((standards.filter(Boolean) as StandardMappingRecord[]).map((standard) =>
+      this.repository.updateStandardMapping(standard.id, {
+        latestBinderId: updated.id,
+        status: "evidence_ready",
+        updatedAt
+      })
+    ));
+
+    await this.recordAudit(actor, "evidence_binder.updated", "evidence_binder", updated.id, {
+      standardCount: updated.standardIds.length,
+      documentId: binder.documentId
+    });
+
+    return {
+      binder: updated,
+      document
+    };
+  }
+
+  async submitEvidenceBinder(actor: ActorContext, binderId: string): Promise<{
+    binder: EvidenceBinderRecord;
+    document: DocumentRecord;
+    approvals: ApprovalTask[];
+  }> {
+    const binder = await this.repository.getEvidenceBinder(binderId);
+    if (!binder) {
+      notFound(`Evidence binder not found: ${binderId}`);
+    }
+    if (!binder.documentId) {
+      badRequest("Create an evidence binder draft before routing it for approval.");
+    }
+    if (!["draft", "sent_back"].includes(binder.status)) {
+      badRequest("Evidence binder is not ready for approval routing.");
+    }
+
+    await this.advanceWorkflowIfPossible(
+      actor,
+      binder.workflowRunId,
+      ["drafted", "quality_checked", "awaiting_human_review"],
+      "Evidence binder routed for human review."
+    );
+
+    const result = await this.submitDocument(actor, binder.documentId);
+    const synced = await this.syncEvidenceBinderFromDocument(result.document);
+
+    const now = new Date().toISOString();
+    await Promise.all(binder.standardIds.map(async (standardId) => {
+      const standard = await this.repository.getStandardMapping(standardId);
+      if (!standard) return;
+      await this.repository.updateStandardMapping(standard.id, {
+        status: "review_pending",
+        latestBinderId: binder.id,
+        updatedAt: now
+      });
+    }));
+
+    await this.recordAudit(actor, "evidence_binder.submitted", "evidence_binder", binder.id, {
+      documentId: binder.documentId,
+      approvalCount: result.approvals.length
+    });
+
+    return {
+      binder: synced ?? binder,
+      document: result.document,
+      approvals: result.approvals
+    };
+  }
+
+  async publishEvidenceBinder(actor: ActorContext, binderId: string): Promise<{
+    binder: EvidenceBinderRecord;
+    document: DocumentRecord;
+  }> {
+    const binder = await this.repository.getEvidenceBinder(binderId);
+    if (!binder) {
+      notFound(`Evidence binder not found: ${binderId}`);
+    }
+    if (!binder.documentId) {
+      badRequest("Evidence binder is not available for publication.");
+    }
+
+    const document = await this.publishDocument(actor, binder.documentId);
+    const synced = await this.syncEvidenceBinderFromDocument(document);
+
+    await this.recordAudit(actor, "evidence_binder.publish_requested", "evidence_binder", binder.id, {
+      documentId: binder.documentId
+    });
+
+    return {
+      binder: synced ?? binder,
       document
     };
   }
@@ -4674,6 +5426,96 @@ export class ClinicApiService {
     ].filter((line): line is string => line !== null).join("\n");
   }
 
+  private buildControlledSubstanceStewardshipBody(
+    input:
+      | z.infer<typeof controlledSubstanceStewardshipCreateSchema>
+      | ControlledSubstanceStewardshipRecord
+  ): string {
+    return [
+      `# ${input.title}`,
+      "",
+      `Owner role: ${input.ownerRole}`,
+      `Supervising physician role: ${input.supervisingPhysicianRole.replaceAll("_", " ")}`,
+      `Linked practice agreement: ${input.linkedPracticeAgreementId ?? "None linked"}`,
+      "",
+      "## Service lines",
+      ...input.serviceLineIds.map((serviceLineId) => `- ${serviceLineId.replaceAll("_", " ")}`),
+      "",
+      "## Prescribing scope",
+      input.prescribingScopeSummary,
+      "",
+      "## PDMP review",
+      input.pdmpReviewSummary,
+      "",
+      "## Screening and monitoring protocol",
+      input.screeningProtocolSummary,
+      "",
+      "## Refill escalation",
+      input.refillEscalationSummary,
+      "",
+      "## Inventory and diversion controls",
+      input.inventoryControlSummary,
+      "",
+      "## Patient education expectations",
+      input.patientEducationSummary,
+      "",
+      "## Adverse-event escalation",
+      input.adverseEventEscalationSummary,
+      "",
+      "## Review cadence",
+      `Review every ${input.reviewCadenceDays ?? 45} days.`,
+      input.effectiveDate ? "" : null,
+      input.effectiveDate ? `Effective date: ${input.effectiveDate}` : null,
+      input.notes ? "" : null,
+      input.notes ? "## Notes" : null,
+      input.notes ?? null
+    ].filter((line): line is string => line !== null).join("\n");
+  }
+
+  private buildEvidenceBinderBody(
+    input:
+      | z.infer<typeof evidenceBinderCreateSchema>
+      | EvidenceBinderRecord,
+    standards: StandardMappingRecord[]
+  ): string {
+    const mappedStandards = standards.length > 0
+      ? standards.map((standard, index) => [
+        `${index + 1}. ${standard.standardCode} - ${standard.title}`,
+        `   domain: ${standard.domain}`,
+        `   owner role: ${standard.ownerRole}`,
+        `   status: ${standard.status}`,
+        `   requirement: ${standard.requirementSummary}`,
+        `   evidence expectation: ${standard.evidenceExpectation}`
+      ].join("\n")).join("\n\n")
+      : "No standards are currently linked.";
+
+    return [
+      `# ${input.title}`,
+      "",
+      `Owner role: ${input.ownerRole}`,
+      `Source authority: ${input.sourceAuthority}`,
+      input.surveyWindowLabel ? `Survey window: ${input.surveyWindowLabel}` : null,
+      "",
+      "## Binder summary",
+      input.summary,
+      "",
+      "## Evidence-readiness summary",
+      input.evidenceReadinessSummary,
+      "",
+      "## Open gaps",
+      input.openGapSummary,
+      "",
+      "## Standards included",
+      mappedStandards,
+      "",
+      "## Review cadence",
+      `Review every ${input.reviewCadenceDays ?? 90} days.`,
+      input.notes ? "" : null,
+      input.notes ? "## Notes" : null,
+      input.notes ?? null
+    ].filter((line): line is string => line !== null).join("\n");
+  }
+
   private async syncPublicAssetFromDocument(document: DocumentRecord): Promise<PublicAssetRecord | null> {
     const asset = await this.repository.getPublicAssetByDocumentId(document.id);
     if (!asset) {
@@ -4732,6 +5574,33 @@ export class ClinicApiService {
       title: document.title,
       ownerRole: document.ownerRole as TelehealthStewardshipRecord["ownerRole"],
       status: deriveTelehealthStewardshipStatus({
+        documentStatus: document.status,
+        currentStatus: stewardship.status
+      }),
+      effectiveDate: document.publishedAt ?? stewardship.effectiveDate,
+      reviewDueAt: document.publishedAt ? addDays(document.publishedAt, stewardship.reviewCadenceDays) : stewardship.reviewDueAt,
+      publishedAt: document.publishedAt,
+      publishedPath: document.publishedPath,
+      updatedAt: now
+    });
+  }
+
+  private async syncControlledSubstanceStewardshipFromDocument(
+    document: DocumentRecord
+  ): Promise<ControlledSubstanceStewardshipRecord | null> {
+    const stewardship = await this.repository.getControlledSubstanceStewardshipByDocumentId(document.id);
+    if (!stewardship) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    return this.repository.updateControlledSubstanceStewardship(stewardship.id, {
+      title: document.title,
+      ownerRole: document.ownerRole as ControlledSubstanceStewardshipRecord["ownerRole"],
+      serviceLineIds: document.serviceLines.length > 0
+        ? document.serviceLines as ControlledSubstanceStewardshipRecord["serviceLineIds"]
+        : stewardship.serviceLineIds,
+      status: deriveControlledSubstanceStewardshipStatus({
         documentStatus: document.status,
         currentStatus: stewardship.status
       }),
@@ -4804,6 +5673,58 @@ export class ClinicApiService {
     }
 
     return updatedPack;
+  }
+
+  private async syncEvidenceBinderFromDocument(document: DocumentRecord): Promise<EvidenceBinderRecord | null> {
+    const binder = await this.repository.getEvidenceBinderByDocumentId(document.id);
+    if (!binder) {
+      return null;
+    }
+
+    const updatedAt = new Date().toISOString();
+    const updatedBinder = await this.repository.updateEvidenceBinder(binder.id, {
+      title: document.title,
+      ownerRole: document.ownerRole as EvidenceBinderRecord["ownerRole"],
+      status: deriveEvidenceBinderStatus({
+        documentStatus: document.status,
+        currentStatus: binder.status
+      }),
+      publishedAt: document.publishedAt,
+      publishedPath: document.publishedPath,
+      updatedAt
+    });
+
+    const standardStatus =
+      document.status === "published"
+        ? "complete"
+        : document.status === "in_review" || document.status === "approved" || document.status === "publish_pending"
+          ? "review_pending"
+          : document.status === "rejected"
+            ? "attention_needed"
+            : "evidence_ready";
+
+    for (const standardId of binder.standardIds) {
+      const standard = await this.repository.getStandardMapping(standardId);
+      if (!standard) {
+        continue;
+      }
+
+      const nextEvidenceDocumentIds = document.status === "published"
+        ? Array.from(new Set([...standard.evidenceDocumentIds, document.id]))
+        : standard.evidenceDocumentIds;
+      await this.repository.updateStandardMapping(standard.id, {
+        status: standardStatus,
+        latestBinderId: binder.id,
+        evidenceDocumentIds: nextEvidenceDocumentIds,
+        lastReviewedAt: document.publishedAt ?? standard.lastReviewedAt,
+        nextReviewDueAt: document.publishedAt
+          ? addDays(document.publishedAt, standard.reviewCadenceDays)
+          : standard.nextReviewDueAt,
+        updatedAt
+      });
+    }
+
+    return updatedBinder;
   }
 
   private async syncIncidentSideEffects(actor: ActorContext, incident: IncidentRecord): Promise<void> {

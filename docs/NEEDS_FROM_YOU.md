@@ -53,6 +53,16 @@ Using the current local `.env` and repo code:
   - linkage to the telehealth practice agreement and delegated task coverage
   - explicit clinical-governance approval routing and controlled publication
   - publish-sync back into the telehealth stewardship record and a dedicated UI
+- the controlled-substance-stewardship slice is now implemented in the repo
+  - controlled-substance stewardship packet registry and default bootstrap
+  - linkage to supervising physician oversight and related practice-agreement coverage
+  - service-line coverage, explicit clinical-governance approval routing, and controlled publication
+  - publish-sync back into the stewardship record and a dedicated UI
+- the standards/evidence-binder slice is now implemented in the repo
+  - standards registry with deterministic mapping and review status
+  - evidence-binder registry with linked standards coverage and controlled clinical-governance approval
+  - binder publish-sync back into linked standards, evidence document history, and next-review scheduling
+  - dedicated standards/evidence UI and API routes
 
 That means the remaining pilot blockers are now mostly broader pilot validation, Render deployment consistency, and operations hardening.
 
@@ -134,8 +144,12 @@ The deployed Render stack is now healthy and pilot-usable, but there is still on
    - up to two backup profiles if needed
    - named office manager / quality lead / HR lead profiles when you want them added
 
-3. Redeploy the latest web, API, and worker services when you want the new telehealth-stewardship slice available in Render
-   - no new secrets or Microsoft tenant setup are required for the repo-side implementation
+3. Redeploy the latest web, API, and worker services when you want the newest local governance slices available in Render
+   - this now applies to:
+     - controlled-substance stewardship
+     - standards mappings
+     - evidence binders
+   - no new secrets or Microsoft tenant setup are required for these repo-side implementations
    - the external Postgres schema has already been updated locally from this machine
    - if you later want additional Microsoft-backed governance registers beyond the current pilot surfaces, we can add those as separate follow-up integrations
 
@@ -148,6 +162,13 @@ Postgres is still required even though Microsoft is now ready, because Clinic OS
 
 ## The next command I am waiting to run
 
-The next major engineering step after the new telehealth-stewardship slice is:
+Once the latest code is redeployed, the next bounded validation step is:
 
-- deeper clinic-specific governance modules such as controlled-substance stewardship or standards/evidence-binder tooling
+- a live smoke pass for:
+  - controlled-substance stewardship bootstrap, submit, approve, and publish
+  - standards bootstrap
+  - evidence-binder create, submit, approve, and publish
+
+After that, the next major engineering step should be:
+
+- deeper committee/QAPI reporting, evidence-gap remediation, or runtime-agent execution work

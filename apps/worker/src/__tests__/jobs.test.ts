@@ -5,12 +5,15 @@ import {
   createChecklistItemRecord,
   createChecklistRun,
   createChecklistTemplate,
+  createControlledSubstanceStewardshipRecord,
   createIncidentRecord,
   createPracticeAgreementRecord,
   createPublicAssetRecord,
+  createEvidenceBinderRecord,
   createServiceLinePackRecord,
   createServiceLineRecord,
   createScorecardReviewRecord,
+  createStandardMappingRecord,
   createTelehealthStewardshipRecord,
   createTrainingRequirement,
   createWorkerJob
@@ -657,6 +660,152 @@ describe("WorkerJobRunner", () => {
     expect(await repository.getTelehealthStewardship(stewardship.id)).toMatchObject({
       status: "published",
       publishedPath: expect.stringContaining("doc_telehealth_stewardship")
+    });
+  });
+
+  it("keeps linked controlled-substance stewardship packets in sync when publication completes", async () => {
+    const repository = new MemoryClinicRepository();
+    await repository.createDocument({
+      id: "doc_controlled_substance_stewardship",
+      title: "Controlled-substance stewardship packet",
+      ownerRole: "medical_director",
+      approvalClass: "clinical_governance",
+      artifactType: "controlled_substance_stewardship_packet",
+      summary: "Approved controlled-substance stewardship packet",
+      workflowRunId: "workflow_controlled_substance_stewardship",
+      serviceLines: ["weight_management", "hrt"],
+      createdBy: "medical-director",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: "approved",
+      body: "# Controlled-substance stewardship",
+      version: 1,
+      publishedAt: null,
+      publishedPath: null,
+      reviewDueAt: null
+    });
+    const stewardship = createControlledSubstanceStewardshipRecord({
+      title: "Controlled-substance stewardship packet",
+      ownerRole: "medical_director",
+      supervisingPhysicianRole: "patient_care_team_physician",
+      serviceLineIds: ["weight_management", "hrt"],
+      linkedPracticeAgreementId: "practice_agreement_weight_management",
+      prescribingScopeSummary: "Define controlled-substance prescribing scope.",
+      pdmpReviewSummary: "Document PDMP review expectations.",
+      screeningProtocolSummary: "Document screening and monitoring expectations.",
+      refillEscalationSummary: "Escalate refill exceptions same day.",
+      inventoryControlSummary: "Maintain locked storage and discrepancy review.",
+      patientEducationSummary: "Reinforce patient expectations and safe storage.",
+      adverseEventEscalationSummary: "Escalate suspected misuse or overdose risk immediately.",
+      createdBy: "medical-director",
+      documentId: "doc_controlled_substance_stewardship",
+      workflowRunId: "workflow_controlled_substance_stewardship"
+    });
+    await repository.createControlledSubstanceStewardship(stewardship);
+    await repository.enqueueWorkerJob(createWorkerJob({
+      type: "document.publish",
+      payload: {
+        actor: {
+          actorId: "medical-director",
+          role: "medical_director",
+          name: "Medical Director"
+        },
+        documentId: "doc_controlled_substance_stewardship"
+      },
+      sourceEntityType: "document",
+      sourceEntityId: "doc_controlled_substance_stewardship"
+    }));
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const summary = await runner.runOnce();
+
+    expect(summary.succeeded).toBeGreaterThanOrEqual(1);
+    expect(await repository.getControlledSubstanceStewardship(stewardship.id)).toMatchObject({
+      status: "published",
+      publishedPath: expect.stringContaining("doc_controlled_substance_stewardship")
+    });
+  });
+
+  it("keeps linked evidence binders and mapped standards in sync when publication completes", async () => {
+    const repository = new MemoryClinicRepository();
+    const standardA = createStandardMappingRecord({
+      standardCode: "MM.03.01.01",
+      title: "Medication management oversight",
+      domain: "medication_management",
+      sourceAuthority: "Joint Commission Mock Survey",
+      ownerRole: "quality_lead",
+      requirementSummary: "Track medication-governance oversight evidence.",
+      evidenceExpectation: "Current packet and recent review artifacts."
+    });
+    const standardB = createStandardMappingRecord({
+      standardCode: "LD.04.01.05",
+      title: "Leadership quality oversight",
+      domain: "leadership",
+      sourceAuthority: "Joint Commission Mock Survey",
+      ownerRole: "medical_director",
+      requirementSummary: "Track leadership review of safety-governance artifacts.",
+      evidenceExpectation: "Current committee packet and documented follow-up."
+    });
+    await repository.createStandardMapping(standardA);
+    await repository.createStandardMapping(standardB);
+    await repository.createDocument({
+      id: "doc_evidence_binder",
+      title: "Mock survey evidence binder",
+      ownerRole: "quality_lead",
+      approvalClass: "clinical_governance",
+      artifactType: "evidence_binder",
+      summary: "Approved evidence binder",
+      workflowRunId: "workflow_evidence_binder",
+      serviceLines: [],
+      createdBy: "quality-lead",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: "approved",
+      body: "# Evidence binder",
+      version: 1,
+      publishedAt: null,
+      publishedPath: null,
+      reviewDueAt: null
+    });
+    const binder = createEvidenceBinderRecord({
+      title: "Mock survey evidence binder",
+      ownerRole: "quality_lead",
+      sourceAuthority: "Joint Commission Mock Survey",
+      surveyWindowLabel: "Pilot readiness mock survey",
+      standardIds: [standardA.id, standardB.id],
+      summary: "Survey-ready packet.",
+      evidenceReadinessSummary: "Each standard has a mapped artifact.",
+      openGapSummary: "Close remaining signature gaps.",
+      createdBy: "quality-lead",
+      documentId: "doc_evidence_binder",
+      workflowRunId: "workflow_evidence_binder"
+    });
+    await repository.createEvidenceBinder(binder);
+    await repository.enqueueWorkerJob(createWorkerJob({
+      type: "document.publish",
+      payload: {
+        actor: {
+          actorId: "quality-lead",
+          role: "quality_lead",
+          name: "Quality Lead"
+        },
+        documentId: "doc_evidence_binder"
+      },
+      sourceEntityType: "document",
+      sourceEntityId: "doc_evidence_binder"
+    }));
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const summary = await runner.runOnce();
+
+    expect(summary.succeeded).toBeGreaterThanOrEqual(1);
+    expect(await repository.getEvidenceBinder(binder.id)).toMatchObject({
+      status: "published",
+      publishedPath: expect.stringContaining("doc_evidence_binder")
+    });
+    expect(await repository.getStandardMapping(standardA.id)).toMatchObject({
+      status: "complete",
+      latestBinderId: binder.id
     });
   });
 });

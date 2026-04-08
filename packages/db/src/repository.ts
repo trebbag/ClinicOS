@@ -8,6 +8,7 @@ import type {
   ChecklistTemplate,
   CommitteeMeetingRecord,
   CommitteeRecord,
+  ControlledSubstanceStewardshipRecord,
   DelegationRuleRecord,
   DeviceAllowedProfile,
   DeviceEnrollmentCode,
@@ -22,7 +23,9 @@ import type {
   ScorecardReviewRecord,
   ServiceLinePackRecord,
   ServiceLineRecord,
+  StandardMappingRecord,
   TelehealthStewardshipRecord,
+  EvidenceBinderRecord,
   TrainingCompletionRecord,
   TrainingRequirement,
   UserProfile,
@@ -39,6 +42,7 @@ import {
   checklistTemplateSchema,
   committeeMeetingRecordSchema,
   committeeRecordSchema,
+  controlledSubstanceStewardshipRecordSchema,
   delegationRuleRecordSchema,
   deviceAllowedProfileSchema,
   deviceEnrollmentCodeSchema,
@@ -53,7 +57,9 @@ import {
   scorecardReviewRecordSchema,
   serviceLinePackRecordSchema,
   serviceLineRecordSchema,
+  standardMappingRecordSchema,
   telehealthStewardshipRecordSchema,
+  evidenceBinderRecordSchema,
   trainingCompletionRecordSchema,
   trainingRequirementSchema,
   userProfileSchema,
@@ -182,6 +188,73 @@ type TelehealthStewardshipRow = {
   publishedAt: Date | null;
   publishedPath: string | null;
 };
+type ControlledSubstanceStewardshipRow = {
+  id: string;
+  title: string;
+  ownerRole: string;
+  supervisingPhysicianRole: string;
+  serviceLineIdsJson: Prisma.JsonValue;
+  status: string;
+  linkedPracticeAgreementId: string | null;
+  prescribingScopeSummary: string;
+  pdmpReviewSummary: string;
+  screeningProtocolSummary: string;
+  refillEscalationSummary: string;
+  inventoryControlSummary: string;
+  patientEducationSummary: string;
+  adverseEventEscalationSummary: string;
+  reviewCadenceDays: number;
+  effectiveDate: Date | null;
+  reviewDueAt: Date | null;
+  notes: string | null;
+  documentId: string | null;
+  workflowRunId: string | null;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+  publishedAt: Date | null;
+  publishedPath: string | null;
+};
+type StandardMappingRow = {
+  id: string;
+  standardCode: string;
+  title: string;
+  domain: string;
+  sourceAuthority: string;
+  ownerRole: string;
+  status: string;
+  requirementSummary: string;
+  evidenceExpectation: string;
+  evidenceDocumentIdsJson: Prisma.JsonValue;
+  latestBinderId: string | null;
+  reviewCadenceDays: number;
+  lastReviewedAt: Date | null;
+  nextReviewDueAt: Date | null;
+  notes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+type EvidenceBinderRow = {
+  id: string;
+  title: string;
+  ownerRole: string;
+  status: string;
+  sourceAuthority: string;
+  surveyWindowLabel: string | null;
+  standardIdsJson: Prisma.JsonValue;
+  summary: string;
+  evidenceReadinessSummary: string;
+  openGapSummary: string;
+  reviewCadenceDays: number;
+  notes: string | null;
+  documentId: string | null;
+  workflowRunId: string | null;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+  publishedAt: Date | null;
+  publishedPath: string | null;
+};
 
 export type ClinicRepository = {
   createWorkflowRun(run: WorkflowRun): Promise<WorkflowRun>;
@@ -286,6 +359,36 @@ export type ClinicRepository = {
     ownerRole?: string;
     supervisingPhysicianRole?: string;
   }): Promise<TelehealthStewardshipRecord[]>;
+  createControlledSubstanceStewardship(record: ControlledSubstanceStewardshipRecord): Promise<ControlledSubstanceStewardshipRecord>;
+  updateControlledSubstanceStewardship(
+    id: string,
+    patch: Partial<ControlledSubstanceStewardshipRecord>
+  ): Promise<ControlledSubstanceStewardshipRecord>;
+  getControlledSubstanceStewardship(id: string): Promise<ControlledSubstanceStewardshipRecord | null>;
+  getControlledSubstanceStewardshipByDocumentId(documentId: string): Promise<ControlledSubstanceStewardshipRecord | null>;
+  listControlledSubstanceStewardship(filters?: {
+    status?: string;
+    ownerRole?: string;
+    supervisingPhysicianRole?: string;
+  }): Promise<ControlledSubstanceStewardshipRecord[]>;
+  createStandardMapping(record: StandardMappingRecord): Promise<StandardMappingRecord>;
+  updateStandardMapping(id: string, patch: Partial<StandardMappingRecord>): Promise<StandardMappingRecord>;
+  getStandardMapping(id: string): Promise<StandardMappingRecord | null>;
+  listStandardMappings(filters?: {
+    domain?: string;
+    ownerRole?: string;
+    status?: string;
+    sourceAuthority?: string;
+  }): Promise<StandardMappingRecord[]>;
+  createEvidenceBinder(record: EvidenceBinderRecord): Promise<EvidenceBinderRecord>;
+  updateEvidenceBinder(id: string, patch: Partial<EvidenceBinderRecord>): Promise<EvidenceBinderRecord>;
+  getEvidenceBinder(id: string): Promise<EvidenceBinderRecord | null>;
+  getEvidenceBinderByDocumentId(documentId: string): Promise<EvidenceBinderRecord | null>;
+  listEvidenceBinders(filters?: {
+    status?: string;
+    ownerRole?: string;
+    sourceAuthority?: string;
+  }): Promise<EvidenceBinderRecord[]>;
   createDelegationRule(record: DelegationRuleRecord): Promise<DelegationRuleRecord>;
   updateDelegationRule(id: string, patch: Partial<DelegationRuleRecord>): Promise<DelegationRuleRecord>;
   getDelegationRule(id: string): Promise<DelegationRuleRecord | null>;
@@ -436,6 +539,20 @@ export class PrismaClinicRepository implements ClinicRepository {
 
   private get telehealthStewardshipClient(): UntypedPrismaDelegate {
     return (this.client as unknown as { telehealthStewardship: UntypedPrismaDelegate }).telehealthStewardship;
+  }
+
+  private get controlledSubstanceStewardshipClient(): UntypedPrismaDelegate {
+    return (
+      this.client as unknown as { controlledSubstanceStewardship: UntypedPrismaDelegate }
+    ).controlledSubstanceStewardship;
+  }
+
+  private get standardMappingClient(): UntypedPrismaDelegate {
+    return (this.client as unknown as { standardMapping: UntypedPrismaDelegate }).standardMapping;
+  }
+
+  private get evidenceBinderClient(): UntypedPrismaDelegate {
+    return (this.client as unknown as { evidenceBinder: UntypedPrismaDelegate }).evidenceBinder;
   }
 
   private get delegationRuleClient(): UntypedPrismaDelegate {
@@ -802,6 +919,53 @@ export class PrismaClinicRepository implements ClinicRepository {
       delegatedTaskCodes: record.delegatedTaskCodesJson,
       effectiveDate: record.effectiveDate?.toISOString() ?? null,
       reviewDueAt: record.reviewDueAt?.toISOString() ?? null,
+      notes: record.notes ?? null,
+      documentId: record.documentId ?? null,
+      workflowRunId: record.workflowRunId ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+      publishedAt: record.publishedAt?.toISOString() ?? null,
+      publishedPath: record.publishedPath ?? null
+    });
+  }
+
+  private mapControlledSubstanceStewardshipRecord(
+    record: ControlledSubstanceStewardshipRow
+  ): ControlledSubstanceStewardshipRecord {
+    return controlledSubstanceStewardshipRecordSchema.parse({
+      ...record,
+      serviceLineIds: record.serviceLineIdsJson,
+      linkedPracticeAgreementId: record.linkedPracticeAgreementId ?? null,
+      effectiveDate: record.effectiveDate?.toISOString() ?? null,
+      reviewDueAt: record.reviewDueAt?.toISOString() ?? null,
+      notes: record.notes ?? null,
+      documentId: record.documentId ?? null,
+      workflowRunId: record.workflowRunId ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+      publishedAt: record.publishedAt?.toISOString() ?? null,
+      publishedPath: record.publishedPath ?? null
+    });
+  }
+
+  private mapStandardMappingRecord(record: StandardMappingRow): StandardMappingRecord {
+    return standardMappingRecordSchema.parse({
+      ...record,
+      evidenceDocumentIds: record.evidenceDocumentIdsJson,
+      latestBinderId: record.latestBinderId ?? null,
+      lastReviewedAt: record.lastReviewedAt?.toISOString() ?? null,
+      nextReviewDueAt: record.nextReviewDueAt?.toISOString() ?? null,
+      notes: record.notes ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString()
+    });
+  }
+
+  private mapEvidenceBinderRecord(record: EvidenceBinderRow): EvidenceBinderRecord {
+    return evidenceBinderRecordSchema.parse({
+      ...record,
+      surveyWindowLabel: record.surveyWindowLabel ?? null,
+      standardIds: record.standardIdsJson,
       notes: record.notes ?? null,
       documentId: record.documentId ?? null,
       workflowRunId: record.workflowRunId ?? null,
@@ -2000,6 +2164,256 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
 
     return (records as TelehealthStewardshipRow[]).map((record) => this.mapTelehealthStewardshipRecord(record));
+  }
+
+  async createControlledSubstanceStewardship(
+    record: ControlledSubstanceStewardshipRecord
+  ): Promise<ControlledSubstanceStewardshipRecord> {
+    const created = await this.controlledSubstanceStewardshipClient.create({
+      data: {
+        id: record.id,
+        title: record.title,
+        ownerRole: record.ownerRole,
+        supervisingPhysicianRole: record.supervisingPhysicianRole,
+        serviceLineIdsJson: asJsonValue(record.serviceLineIds),
+        status: record.status,
+        linkedPracticeAgreementId: record.linkedPracticeAgreementId,
+        prescribingScopeSummary: record.prescribingScopeSummary,
+        pdmpReviewSummary: record.pdmpReviewSummary,
+        screeningProtocolSummary: record.screeningProtocolSummary,
+        refillEscalationSummary: record.refillEscalationSummary,
+        inventoryControlSummary: record.inventoryControlSummary,
+        patientEducationSummary: record.patientEducationSummary,
+        adverseEventEscalationSummary: record.adverseEventEscalationSummary,
+        reviewCadenceDays: record.reviewCadenceDays,
+        effectiveDate: isoToDate(record.effectiveDate),
+        reviewDueAt: isoToDate(record.reviewDueAt),
+        notes: record.notes,
+        documentId: record.documentId,
+        workflowRunId: record.workflowRunId,
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt),
+        publishedAt: isoToDate(record.publishedAt),
+        publishedPath: record.publishedPath
+      }
+    });
+
+    return this.mapControlledSubstanceStewardshipRecord(created as ControlledSubstanceStewardshipRow);
+  }
+
+  async updateControlledSubstanceStewardship(
+    id: string,
+    patch: Partial<ControlledSubstanceStewardshipRecord>
+  ): Promise<ControlledSubstanceStewardshipRecord> {
+    const updated = await this.controlledSubstanceStewardshipClient.update({
+      where: { id },
+      data: {
+        title: patch.title,
+        ownerRole: patch.ownerRole,
+        supervisingPhysicianRole: patch.supervisingPhysicianRole,
+        serviceLineIdsJson: patch.serviceLineIds ? asJsonValue(patch.serviceLineIds) : undefined,
+        status: patch.status,
+        linkedPracticeAgreementId: patch.linkedPracticeAgreementId,
+        prescribingScopeSummary: patch.prescribingScopeSummary,
+        pdmpReviewSummary: patch.pdmpReviewSummary,
+        screeningProtocolSummary: patch.screeningProtocolSummary,
+        refillEscalationSummary: patch.refillEscalationSummary,
+        inventoryControlSummary: patch.inventoryControlSummary,
+        patientEducationSummary: patch.patientEducationSummary,
+        adverseEventEscalationSummary: patch.adverseEventEscalationSummary,
+        reviewCadenceDays: patch.reviewCadenceDays,
+        effectiveDate: isoToDate(patch.effectiveDate),
+        reviewDueAt: isoToDate(patch.reviewDueAt),
+        notes: patch.notes,
+        documentId: patch.documentId,
+        workflowRunId: patch.workflowRunId,
+        createdBy: patch.createdBy,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt),
+        publishedAt: isoToDate(patch.publishedAt),
+        publishedPath: patch.publishedPath
+      }
+    });
+
+    return this.mapControlledSubstanceStewardshipRecord(updated as ControlledSubstanceStewardshipRow);
+  }
+
+  async getControlledSubstanceStewardship(id: string): Promise<ControlledSubstanceStewardshipRecord | null> {
+    const record = await this.controlledSubstanceStewardshipClient.findUnique({ where: { id } });
+    return record ? this.mapControlledSubstanceStewardshipRecord(record as ControlledSubstanceStewardshipRow) : null;
+  }
+
+  async getControlledSubstanceStewardshipByDocumentId(
+    documentId: string
+  ): Promise<ControlledSubstanceStewardshipRecord | null> {
+    const record = await this.controlledSubstanceStewardshipClient.findFirst?.({ where: { documentId } });
+    return record ? this.mapControlledSubstanceStewardshipRecord(record as ControlledSubstanceStewardshipRow) : null;
+  }
+
+  async listControlledSubstanceStewardship(filters?: {
+    status?: string;
+    ownerRole?: string;
+    supervisingPhysicianRole?: string;
+  }): Promise<ControlledSubstanceStewardshipRecord[]> {
+    const records = await this.controlledSubstanceStewardshipClient.findMany({
+      where: mapListFilters(filters),
+      orderBy: { createdAt: "desc" }
+    });
+
+    return (records as ControlledSubstanceStewardshipRow[]).map((record) =>
+      this.mapControlledSubstanceStewardshipRecord(record)
+    );
+  }
+
+  async createStandardMapping(record: StandardMappingRecord): Promise<StandardMappingRecord> {
+    const created = await this.standardMappingClient.create({
+      data: {
+        id: record.id,
+        standardCode: record.standardCode,
+        title: record.title,
+        domain: record.domain,
+        sourceAuthority: record.sourceAuthority,
+        ownerRole: record.ownerRole,
+        status: record.status,
+        requirementSummary: record.requirementSummary,
+        evidenceExpectation: record.evidenceExpectation,
+        evidenceDocumentIdsJson: asJsonValue(record.evidenceDocumentIds),
+        latestBinderId: record.latestBinderId,
+        reviewCadenceDays: record.reviewCadenceDays,
+        lastReviewedAt: isoToDate(record.lastReviewedAt),
+        nextReviewDueAt: isoToDate(record.nextReviewDueAt),
+        notes: record.notes,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt)
+      }
+    });
+
+    return this.mapStandardMappingRecord(created as StandardMappingRow);
+  }
+
+  async updateStandardMapping(id: string, patch: Partial<StandardMappingRecord>): Promise<StandardMappingRecord> {
+    const updated = await this.standardMappingClient.update({
+      where: { id },
+      data: {
+        standardCode: patch.standardCode,
+        title: patch.title,
+        domain: patch.domain,
+        sourceAuthority: patch.sourceAuthority,
+        ownerRole: patch.ownerRole,
+        status: patch.status,
+        requirementSummary: patch.requirementSummary,
+        evidenceExpectation: patch.evidenceExpectation,
+        evidenceDocumentIdsJson: patch.evidenceDocumentIds ? asJsonValue(patch.evidenceDocumentIds) : undefined,
+        latestBinderId: patch.latestBinderId,
+        reviewCadenceDays: patch.reviewCadenceDays,
+        lastReviewedAt: isoToDate(patch.lastReviewedAt),
+        nextReviewDueAt: isoToDate(patch.nextReviewDueAt),
+        notes: patch.notes,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt)
+      }
+    });
+
+    return this.mapStandardMappingRecord(updated as StandardMappingRow);
+  }
+
+  async getStandardMapping(id: string): Promise<StandardMappingRecord | null> {
+    const record = await this.standardMappingClient.findUnique({ where: { id } });
+    return record ? this.mapStandardMappingRecord(record as StandardMappingRow) : null;
+  }
+
+  async listStandardMappings(filters?: {
+    domain?: string;
+    ownerRole?: string;
+    status?: string;
+    sourceAuthority?: string;
+  }): Promise<StandardMappingRecord[]> {
+    const records = await this.standardMappingClient.findMany({
+      where: mapListFilters(filters),
+      orderBy: [{ domain: "asc" }, { standardCode: "asc" }]
+    });
+
+    return (records as StandardMappingRow[]).map((record) => this.mapStandardMappingRecord(record));
+  }
+
+  async createEvidenceBinder(record: EvidenceBinderRecord): Promise<EvidenceBinderRecord> {
+    const created = await this.evidenceBinderClient.create({
+      data: {
+        id: record.id,
+        title: record.title,
+        ownerRole: record.ownerRole,
+        status: record.status,
+        sourceAuthority: record.sourceAuthority,
+        surveyWindowLabel: record.surveyWindowLabel,
+        standardIdsJson: asJsonValue(record.standardIds),
+        summary: record.summary,
+        evidenceReadinessSummary: record.evidenceReadinessSummary,
+        openGapSummary: record.openGapSummary,
+        reviewCadenceDays: record.reviewCadenceDays,
+        notes: record.notes,
+        documentId: record.documentId,
+        workflowRunId: record.workflowRunId,
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt),
+        publishedAt: isoToDate(record.publishedAt),
+        publishedPath: record.publishedPath
+      }
+    });
+
+    return this.mapEvidenceBinderRecord(created as EvidenceBinderRow);
+  }
+
+  async updateEvidenceBinder(id: string, patch: Partial<EvidenceBinderRecord>): Promise<EvidenceBinderRecord> {
+    const updated = await this.evidenceBinderClient.update({
+      where: { id },
+      data: {
+        title: patch.title,
+        ownerRole: patch.ownerRole,
+        status: patch.status,
+        sourceAuthority: patch.sourceAuthority,
+        surveyWindowLabel: patch.surveyWindowLabel,
+        standardIdsJson: patch.standardIds ? asJsonValue(patch.standardIds) : undefined,
+        summary: patch.summary,
+        evidenceReadinessSummary: patch.evidenceReadinessSummary,
+        openGapSummary: patch.openGapSummary,
+        reviewCadenceDays: patch.reviewCadenceDays,
+        notes: patch.notes,
+        documentId: patch.documentId,
+        workflowRunId: patch.workflowRunId,
+        createdBy: patch.createdBy,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt),
+        publishedAt: isoToDate(patch.publishedAt),
+        publishedPath: patch.publishedPath
+      }
+    });
+
+    return this.mapEvidenceBinderRecord(updated as EvidenceBinderRow);
+  }
+
+  async getEvidenceBinder(id: string): Promise<EvidenceBinderRecord | null> {
+    const record = await this.evidenceBinderClient.findUnique({ where: { id } });
+    return record ? this.mapEvidenceBinderRecord(record as EvidenceBinderRow) : null;
+  }
+
+  async getEvidenceBinderByDocumentId(documentId: string): Promise<EvidenceBinderRecord | null> {
+    const record = await this.evidenceBinderClient.findFirst?.({ where: { documentId } });
+    return record ? this.mapEvidenceBinderRecord(record as EvidenceBinderRow) : null;
+  }
+
+  async listEvidenceBinders(filters?: {
+    status?: string;
+    ownerRole?: string;
+    sourceAuthority?: string;
+  }): Promise<EvidenceBinderRecord[]> {
+    const records = await this.evidenceBinderClient.findMany({
+      where: mapListFilters(filters),
+      orderBy: { createdAt: "desc" }
+    });
+
+    return (records as EvidenceBinderRow[]).map((record) => this.mapEvidenceBinderRecord(record));
   }
 
   async createDelegationRule(record: DelegationRuleRecord): Promise<DelegationRuleRecord> {
