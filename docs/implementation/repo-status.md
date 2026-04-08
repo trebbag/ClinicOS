@@ -43,7 +43,7 @@ The repository now has a working pilot backbone for:
 - a repeatable live pilot smoke harness that can exercise device auth, Lists sync, Planner sync, Teams delivery, and optional publish flows
 - a broader live role-validation command that can exercise synthetic office-manager, quality-lead, and HR-lead device flows against the deployed pilot
 - a pilot ops runbook with Render promotion, rollback, cleanup, and smoke instructions
-- real prompt loading groundwork for runtime agents is still partial, but the repo now has deployment-safe feature-flag scaffolding for a later pass
+- first-class runtime-agent execution with prompt-backed agent specs, bounded internal tool allowlists, a real Responses API tool loop, structured run results, audit events, capability-gated API routes, and a dedicated runtime-agents UI
 - live Microsoft validation now distinguishes between Graph-probed surfaces and config-only Teams webhook checks
 - the repo now has a working Microsoft-live local readiness path with external Postgres bootstrap, persisted integration validation records, API readiness checks, and worker startup on real env values
 - API and worker runtime now use `tsx` start scripts as the pilot-safe execution path while the workspace-package compiled ESM layout remains a later cleanup item
@@ -55,7 +55,7 @@ The following areas are still placeholders or partial:
 - broader HR/training workflows beyond manual requirements/completions and longer-range scorecard analytics
 - richer committee/QAPI trend history, standards-to-survey analytics, and evidence-gap remediation tooling beyond the new QAPI dashboard snapshot
 - deeper commercial claims-governance breadth, service-line-specific analytics, and clinic-specific governance breadth beyond the new practice-agreement slice
-- runtime agent structured tool execution loop and full eval-backed feature flag rollout
+- deeper runtime-agent eval coverage, approval-aware rollout policy, richer operator guardrails, and broader agent families beyond the first bounded execution slice
 - deeper deployment, observability, and environment promotion workflows
 
 Operational note from the latest live validation:
@@ -72,3 +72,4 @@ Operational note from the latest live validation:
 - the worker loop now records periodic heartbeat and batch events into the shared audit stream and no longer exits the whole process on a single transient batch error
 - that means the remaining worker question can now be diagnosed from Clinic OS itself instead of relying only on Render logs
 - the repo now also includes a bounded operator fallback: if Render worker pickup stalls again, Pilot Ops can trigger one worker batch intentionally without needing shell access
+- the repo now also includes a first bounded runtime-agent slice with live OpenAI-backed execution through internal tool wrappers, so the remaining gap there is no longer “can it run at all,” but “how much eval coverage and rollout discipline do we want before broader enablement”

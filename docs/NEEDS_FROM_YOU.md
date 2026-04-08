@@ -65,6 +65,11 @@ Using the current local `.env` and repo code:
   - dedicated standards/evidence UI and API routes
 - the committee/QAPI slice now also includes a live dashboard summary
   - incidents, CAPAs, approvals, worker queue, standards, binders, stewardship packets, and expiring practice agreements are visible in one QAPI snapshot
+- the runtime-agent slice is now implemented in the repo
+  - bounded agent registry with prompt-backed specs
+  - approved internal tool allowlists and structured output requirements
+  - OpenAI Responses API tool-loop execution through internal wrappers instead of direct business-logic calls
+  - capability-gated API routes and a dedicated runtime-agents UI
 
 That means the remaining pilot blockers are now mostly broader pilot validation, Render deployment consistency, and operations hardening.
 
@@ -158,6 +163,10 @@ The deployed Render stack is still healthy and pilot-usable, but the main remain
 4. Controlled-substance stewardship and standards/evidence-binder routes are implemented, tested, deployed, and reachable.
    - The remaining open item for those slices is worker steadiness during full live smoke, not missing product code.
 
+5. Runtime agents are no longer a future placeholder.
+   - The first bounded execution slice is implemented and verified locally.
+   - Broader enablement now depends on rollout comfort, eval coverage, and whether you want it enabled in the deployed environment.
+
 ## What I still need from you next
 
 1. A decision on whether to keep the optional trusted-proxy path documented as a later hardening phase
@@ -177,6 +186,11 @@ The deployed Render stack is still healthy and pilot-usable, but the main remain
    - if the queue is stuck and you need an immediate recovery path, use `Run one worker batch now` in Pilot Ops
    - no new secrets or Microsoft tenant setup are required for this step
 
+4. Optional runtime-agent rollout choice
+   - decide whether you want the new runtime-agent slice enabled in the deployed environment now
+   - if yes, confirm Render has `OPENAI_API_KEY` and either leave `RUNTIME_AGENTS_ENABLED` unset or set it to `true`
+   - if no, set `RUNTIME_AGENTS_ENABLED=false` and treat runtime agents as a later rollout
+
 ## Database rule
 
 Postgres is still required even though Microsoft is now ready, because Clinic OS stores its system-of-record state in Postgres and uses Microsoft 365 as connected publication and operations surfaces.
@@ -194,4 +208,4 @@ The next bounded validation step is:
 
 After that, the next major engineering step should be:
 
-- evidence-gap remediation, richer trend/history reporting, or runtime-agent execution work
+- evidence-gap remediation, richer trend/history reporting, or broader runtime-agent eval/rollout work

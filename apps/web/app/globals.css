@@ -33,7 +33,8 @@ main {
   gap: 16px;
 }
 
-.grid.cols-2 {
+.grid.cols-2,
+.grid.two-column {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
@@ -45,7 +46,8 @@ main {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.card {
+.card,
+.panel {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -163,7 +165,8 @@ pre {
   letter-spacing: 0.06em;
 }
 
-.badge {
+.badge,
+.status-chip {
   display: inline-flex;
   align-items: center;
   padding: 4px 8px;
@@ -179,7 +182,8 @@ pre {
 .badge-done,
 .badge-signed_off,
 .badge-succeeded,
-.badge-ready {
+.badge-ready,
+.status-chip.approved {
   background: rgba(22, 91, 72, 0.35);
 }
 
@@ -208,7 +212,9 @@ pre {
 .badge-needs_review,
 .badge-publish_pending,
 .badge-processing,
-.badge-degraded {
+.badge-degraded,
+.status-chip.pending,
+.status-chip.warning {
   background: rgba(112, 85, 22, 0.4);
 }
 
@@ -240,6 +246,12 @@ pre {
   color: #ffd9e1;
 }
 
+.panel.danger {
+  border-color: #8b3d56;
+  color: #ffd9e1;
+  background: rgba(124, 37, 55, 0.22);
+}
+
 .button-link {
   appearance: none;
   background: transparent;
@@ -252,6 +264,7 @@ pre {
 
 @media (max-width: 960px) {
   .grid.cols-2,
+  .grid.two-column,
   .grid.cols-3,
   .grid.cols-4,
   .table-row {
