@@ -142,6 +142,78 @@ model PublicAsset {
   @@index([serviceLine])
 }
 
+model PayerIssue {
+  id                     String   @id
+  title                  String
+  payerName              String
+  issueType              String
+  serviceLineId          String?
+  ownerRole              String
+  status                 String
+  summary                String
+  financialImpactSummary String?
+  dueDate                DateTime?
+  resolutionNote         String?
+  actionItemId           String?
+  createdBy              String
+  createdAt              DateTime
+  updatedAt              DateTime
+  resolvedAt             DateTime?
+  closedAt               DateTime?
+
+  @@index([status, ownerRole])
+  @@index([serviceLineId, status])
+  @@index([dueDate])
+}
+
+model PricingGovernance {
+  id                       String   @id
+  title                    String
+  serviceLineId            String?
+  ownerRole                String
+  status                   String
+  pricingSummary           String
+  marginGuardrailsSummary  String
+  discountGuardrailsSummary String
+  payerAlignmentSummary    String
+  claimsConstraintSummary  String
+  effectiveDate            DateTime?
+  reviewDueAt              DateTime?
+  notes                    String?
+  documentId               String?  @unique
+  workflowRunId            String?  @unique
+  createdBy                String
+  createdAt                DateTime
+  updatedAt                DateTime
+  publishedAt              DateTime?
+  publishedPath            String?
+
+  @@index([status, ownerRole])
+  @@index([serviceLineId, status])
+  @@index([reviewDueAt])
+}
+
+model RevenueReview {
+  id                String   @id
+  title             String
+  status            String
+  ownerRole         String
+  serviceLineId     String?
+  reviewWindowLabel String
+  targetReviewDate  DateTime?
+  completedAt       DateTime?
+  summaryNote       String?
+  linkedCommitteeId String?
+  snapshotJson      Json
+  createdBy         String
+  createdAt         DateTime
+  updatedAt         DateTime
+
+  @@index([status, ownerRole])
+  @@index([serviceLineId, status])
+  @@index([targetReviewDate])
+}
+
 model Committee {
   id           String   @id
   name         String

@@ -474,6 +474,197 @@ describe("Clinic API", () => {
     expect(summary.practiceAgreementsExpiringSoon).toBeGreaterThanOrEqual(0);
   });
 
+  it("manages revenue governance records and includes them in revenue committee packets", async () => {
+    const bootstrapCommittees = await app.inject({
+      method: "POST",
+      url: "/committees/bootstrap-defaults",
+      headers: headers("quality_lead")
+    });
+    expect(bootstrapCommittees.statusCode).toBe(200);
+
+    const bootstrapServiceLines = await app.inject({
+      method: "POST",
+      url: "/service-lines/bootstrap-defaults",
+      headers: headers("medical_director")
+    });
+    expect(bootstrapServiceLines.statusCode).toBe(200);
+
+    const revenueCommittee = repository.committees.find((committee) => committee.category === "revenue_commercial");
+    expect(revenueCommittee).toBeDefined();
+
+    const payerIssueResponse = await app.inject({
+      method: "POST",
+      url: "/payer-issues",
+      headers: headers("cfo"),
+      payload: {
+        title: "Telehealth reimbursement ambiguity",
+        payerName: "Regional Commercial Plan",
+        issueType: "coverage_policy",
+        serviceLineId: "telehealth",
+        ownerRole: "cfo",
+        summary: "Clarify reimbursement posture for telehealth follow-up bundles before the next campaign launches.",
+        financialImpactSummary: "Potential reimbursement leakage if commercial policy language stays unresolved.",
+        dueDate: "2026-04-20T00:00:00.000Z"
+      }
+    });
+    expect(payerIssueResponse.statusCode).toBe(200);
+    const payerIssue = payerIssueResponse.json<{ id: string; actionItemId: string | null; status: string }>();
+    expect(payerIssue.actionItemId).toBeNull();
+
+    const escalatedIssue = await app.inject({
+      method: "PATCH",
+      url: `/payer-issues/${payerIssue.id}`,
+      headers: headers("cfo"),
+      payload: {
+        status: "escalated"
+      }
+    });
+    expect(escalatedIssue.statusCode).toBe(200);
+    const escalatedBody = escalatedIssue.json<{ actionItemId: string | null; status: string }>();
+    expect(escalatedBody.status).toBe("escalated");
+    expect(escalatedBody.actionItemId).toBeTruthy();
+    expect(repository.actionItems.find((item) => item.id === escalatedBody.actionItemId)).toBeDefined();
+
+    const pricingResponse = await app.inject({
+      method: "POST",
+      url: "/pricing-governance",
+      headers: headers("cfo"),
+      payload: {
+        title: "Telehealth pricing governance",
+        serviceLineId: "telehealth",
+        ownerRole: "cfo",
+        pricingSummary: "Define telehealth pricing tiers and bundled follow-up boundaries.",
+        marginGuardrailsSummary: "Maintain target gross margin guardrails unless a documented exception is approved.",
+        discountGuardrailsSummary: "Limit discounts to approved campaigns and documented retention workflows.",
+        payerAlignmentSummary: "Align self-pay rules with current payer coverage posture.",
+        claimsConstraintSummary: "Do not promise reimbursement outcomes or unsupported clinical benefits.",
+        reviewDueAt: "2026-07-01T00:00:00.000Z"
+      }
+    });
+    expect(pricingResponse.statusCode).toBe(200);
+    const pricing = pricingResponse.json<{
+      pricingGovernance: { id: string; status: string };
+      document: { id: string };
+    }>();
+
+    const submitPricing = await app.inject({
+      method: "POST",
+      url: `/pricing-governance/${pricing.pricingGovernance.id}/submit`,
+      headers: headers("cfo")
+    });
+    expect(submitPricing.statusCode).toBe(200);
+    const submitBody = submitPricing.json<{ approvals: Array<{ id: string; reviewerRole: string }> }>();
+    expect(submitBody.approvals).toHaveLength(2);
+
+    const medApproval = submitBody.approvals.find((approval) => approval.reviewerRole === "medical_director");
+    const cfoApproval = submitBody.approvals.find((approval) => approval.reviewerRole === "cfo");
+    expect(medApproval).toBeDefined();
+    expect(cfoApproval).toBeDefined();
+
+    const cfoDecision = await app.inject({
+      method: "POST",
+      url: `/approvals/${cfoApproval!.id}/decide`,
+      headers: headers("cfo"),
+      payload: { decision: "approved" }
+    });
+    expect(cfoDecision.statusCode).toBe(200);
+
+    const medDecision = await app.inject({
+      method: "POST",
+      url: `/approvals/${medApproval!.id}/decide`,
+      headers: headers("medical_director"),
+      payload: { decision: "approved" }
+    });
+    expect(medDecision.statusCode).toBe(200);
+
+    const publishPricing = await app.inject({
+      method: "POST",
+      url: `/pricing-governance/${pricing.pricingGovernance.id}/publish`,
+      headers: headers("medical_director")
+    });
+    expect(publishPricing.statusCode).toBe(200);
+    expect(publishPricing.json<{ status: string }>().status).toBe("publish_pending");
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const workerSummary = await runner.runOnce();
+    expect(workerSummary.succeeded).toBeGreaterThanOrEqual(1);
+    expect(repository.pricingGovernanceRecords.find((record) => record.id === pricing.pricingGovernance.id)?.status).toBe("published");
+
+    const revenueReviewResponse = await app.inject({
+      method: "POST",
+      url: "/revenue-reviews",
+      headers: headers("cfo"),
+      payload: {
+        title: "April revenue review",
+        ownerRole: "cfo",
+        serviceLineId: "telehealth",
+        reviewWindowLabel: "April 2026",
+        targetReviewDate: "2026-04-30T00:00:00.000Z",
+        summaryNote: "Review payer friction, pricing posture, and commercial readiness together."
+      }
+    });
+    expect(revenueReviewResponse.statusCode).toBe(200);
+    const revenueReview = revenueReviewResponse.json<{ id: string; snapshot: { openPayerIssues: number; escalatedPayerIssues: number } }>();
+    expect(revenueReview.snapshot.openPayerIssues).toBeGreaterThanOrEqual(1);
+    expect(revenueReview.snapshot.escalatedPayerIssues).toBeGreaterThanOrEqual(1);
+
+    const summaryResponse = await app.inject({
+      method: "GET",
+      url: "/revenue/summary?serviceLineId=telehealth",
+      headers: headers("medical_director")
+    });
+    expect(summaryResponse.statusCode).toBe(200);
+    expect(summaryResponse.json<{ openPayerIssues: number; pricingPendingApproval: number }>().openPayerIssues).toBeGreaterThanOrEqual(1);
+
+    const createMeeting = await app.inject({
+      method: "POST",
+      url: "/committee-meetings",
+      headers: headers("cfo"),
+      payload: {
+        committeeId: revenueCommittee!.id,
+        scheduledFor: "2026-04-21T15:00:00.000Z",
+        notes: "Review commercial readiness.",
+        agendaItems: [
+          {
+            title: "Payer escalation follow-up",
+            ownerRole: "cfo",
+            summary: "Confirm next payer follow-up and timeline."
+          },
+          {
+            title: "Pricing governance review",
+            ownerRole: "medical_director",
+            summary: "Confirm pricing governance and claims constraints are aligned."
+          }
+        ]
+      }
+    });
+    expect(createMeeting.statusCode).toBe(200);
+    const meeting = createMeeting.json<{ id: string }>();
+
+    const generatePacket = await app.inject({
+      method: "POST",
+      url: `/committee-meetings/${meeting.id}/generate-packet`,
+      headers: headers("cfo")
+    });
+    expect(generatePacket.statusCode).toBe(200);
+    const packet = generatePacket.json<{ document: { id: string } }>();
+    expect(repository.documents.find((document) => document.id === packet.document.id)?.body).toContain("Revenue / Commercial Snapshot");
+
+    const forbiddenManage = await app.inject({
+      method: "POST",
+      url: "/payer-issues",
+      headers: headers("hr_lead"),
+      payload: {
+        title: "Blocked attempt",
+        payerName: "Payer",
+        issueType: "other",
+        ownerRole: "hr_lead",
+        summary: "This should not be allowed."
+      }
+    });
+    expect(forbiddenManage.statusCode).toBe(403);
+  });
+
   it("rejects workflow creation for a role outside the workflow owner set", async () => {
     const response = await app.inject({
       method: "POST",
@@ -993,6 +1184,44 @@ describe("Clinic API", () => {
     });
 
     expect(response.statusCode).toBe(403);
+  });
+
+  it("reports runtime agents as disabled when the API key exists but rollout is turned off", async () => {
+    const runtimeRepository = new MemoryClinicRepository();
+    const runtimeService = new ClinicApiService(runtimeRepository, new LocalApprovedDocumentPublisher(), {
+      authMode: "dev_headers",
+      integrationMode: "stub",
+      openaiApiKey: "present-for-status-check",
+      runtimeAgentsEnabled: false,
+      microsoftPreflight: {
+        getMissingConfigKeys: () => [],
+        validate: async () => ({
+          mode: "stub",
+          configComplete: true,
+          overallStatus: "ready",
+          readyForLive: true,
+          missingConfigKeys: [],
+          surfaces: []
+        })
+      }
+    });
+    const runtimeApp = buildApp({
+      authMode: "dev_headers",
+      service: runtimeService,
+      repository: runtimeRepository
+    });
+
+    const response = await runtimeApp.inject({
+      method: "GET",
+      url: "/runtime-agents",
+      headers: headers("medical_director")
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ enabled: boolean; reason: string | null }>().enabled).toBe(false);
+    expect(response.json<{ enabled: boolean; reason: string | null }>().reason).toContain("disabled by configuration");
+
+    await runtimeApp.close();
   });
 
   it("returns whoami and worker summary in dev header mode", async () => {
@@ -1746,6 +1975,10 @@ describe("Clinic API", () => {
     expect(workerHealth.statusCode).toBe(200);
     const workerHealthBody = workerHealth.json<{
       health: string;
+      thresholds: {
+        stalledHeartbeatMinutes: number;
+        staleProcessingMinutes: number;
+      };
       lastCompletedBatch: { processed: number } | null;
       backlog: {
         queued: number;
@@ -1755,6 +1988,8 @@ describe("Clinic API", () => {
       };
     }>();
     expect(workerHealthBody.health).toBe("critical");
+    expect(workerHealthBody.thresholds.stalledHeartbeatMinutes).toBeGreaterThanOrEqual(2);
+    expect(workerHealthBody.thresholds.staleProcessingMinutes).toBeGreaterThanOrEqual(15);
     expect(workerHealthBody.lastCompletedBatch?.processed).toBe(3);
     expect(workerHealthBody.backlog.queued).toBe(1);
     expect(workerHealthBody.backlog.processing).toBe(1);

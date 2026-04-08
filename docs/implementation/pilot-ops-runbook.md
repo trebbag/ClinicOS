@@ -120,11 +120,46 @@ The live smoke script:
 - verifies public web and proxied API readiness
 - enrolls a device if needed
 - logs into the allowed device profile
+- confirms `/runtime-agents` stays explicitly disabled when `RUNTIME_AGENTS_ENABLED=false`
 - revalidates Microsoft live status
 - creates a smoke issue for Lists sync
 - creates a smoke follow-through item for Planner plus List sync
 - imports a de-identified smoke scorecard row for import-status List plus Teams notification
 - requests planner reconciliation
+- exercises the revenue/commercial slice through payer issues, pricing governance, and revenue review creation when CFO + medical-director access is available
+
+## Dedicated worker-health diagnostic
+
+For a faster authenticated worker check without running the full live smoke:
+
+```bash
+npm run smoke:worker-health -- https://your-pilot-url.example.com
+```
+
+This command:
+
+- signs in through the same device-profile flow used by the live smoke harness
+- fetches `/ops/worker-health`
+- prints:
+  - `lastHeartbeatAt`
+  - `lastCompletedBatchAt`
+  - oldest queued and processing ages
+  - queue counts
+  - the configured stalled-heartbeat and stale-processing thresholds
+- exits nonzero only when worker health is `critical`
+
+Interpret the result this way:
+
+- `healthy`
+  - heartbeat is recent
+  - queue ages are low
+  - there is no evidence of stale processing locks
+- `warning`
+  - the worker is degraded but still moving
+  - compare queue age against the printed thresholds and watch whether backlog keeps draining
+- `critical`
+  - heartbeat is stale and queued or processing work is no longer clearing normally
+  - use the bounded fallback steps below
 
 ### Optional publish smoke
 
@@ -202,12 +237,16 @@ If the queue stalls during pilot operations and you need a bounded operator reco
 
 1. Open Pilot Ops.
 2. Confirm the worker-health surface shows a stale heartbeat or rising oldest queued job age.
-3. Use `Run one worker batch now`.
-4. Confirm:
+3. If you want a CLI-friendly check first, run:
+   - `npm run smoke:worker-health -- https://your-pilot-url.example.com`
+4. Use `Run one worker batch now`.
+5. Confirm:
    - the batch processed at least one job
    - oldest queued job age drops
    - the specific stuck job moves out of `queued`
-5. Keep using Render logs to diagnose the background worker, but do not block pilot operations on shell-only access.
+6. If `processing` jobs remain stale after that, run cleanup for stale processing locks from Pilot Ops.
+7. Recheck `/ops/worker-health` and queue counts after each intervention.
+8. Keep using Render logs to diagnose the background worker, but do not block pilot operations on shell-only access.
 
 ## Rollback checklist
 

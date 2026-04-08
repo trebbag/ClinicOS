@@ -25,6 +25,7 @@ import { registerOpsRoutes } from "./routes/ops";
 import { registerIncidentRoutes } from "./routes/incidents";
 import { registerPublicAssetRoutes } from "./routes/public-assets";
 import { registerPracticeAgreementRoutes } from "./routes/practice-agreements";
+import { registerRevenueRoutes } from "./routes/revenue";
 import { registerRuntimeAgentRoutes } from "./routes/runtime-agents";
 import { registerScorecardReviewRoutes } from "./routes/scorecard-reviews";
 import { registerServiceLineRoutes } from "./routes/service-lines";
@@ -198,6 +199,7 @@ export function buildApp(options?: {
   registerIncidentRoutes(app);
   registerCapaRoutes(app);
   registerRuntimeAgentRoutes(app);
+  registerRevenueRoutes(app);
   registerCommitteeRoutes(app);
   registerCommitteeMeetingRoutes(app);
   registerServiceLineRoutes(app);

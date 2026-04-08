@@ -270,6 +270,25 @@ async function ensureAuthenticated() {
   };
 }
 
+async function verifyRuntimeAgentsDisabled() {
+  const expectRuntimeAgentsDisabled = process.env.PILOT_SMOKE_EXPECT_RUNTIME_AGENTS_DISABLED !== "false";
+  const runtimeAgentStatus = (await apiRequest("runtime agent status", "/runtime-agents")).json;
+  if (!expectRuntimeAgentsDisabled) {
+    return runtimeAgentStatus;
+  }
+
+  if (runtimeAgentStatus?.enabled) {
+    throw new Error("Runtime agents were expected to stay disabled in the deployed pilot environment.");
+  }
+
+  const reason = String(runtimeAgentStatus?.reason ?? "").toLowerCase();
+  if (!reason.includes("disabled") && !reason.includes("not configured")) {
+    throw new Error(`Runtime agents are disabled, but the reason was not clear enough: ${runtimeAgentStatus?.reason ?? "missing reason"}`);
+  }
+
+  return runtimeAgentStatus;
+}
+
 async function waitForWorkerSuccess(sourceEntityId, expectedTypes) {
   return poll(
     `worker success for ${sourceEntityId}`,
@@ -521,11 +540,156 @@ async function runGovernanceSmoke(authState, whoami) {
   }
 }
 
+async function runRevenueSmoke(authState, whoami) {
+  const suffix = nowSuffix();
+  const originalRole = whoami?.actor?.role ?? authState?.session?.role ?? null;
+  const canRunRevenueSmoke = chooseProfile(authState, process.env.PILOT_SMOKE_PROFILE_ID, "cfo")
+    && chooseProfile(authState, process.env.PILOT_SMOKE_PROFILE_ID, "medical_director")
+    && pinForRole("cfo")
+    && pinForRole("medical_director");
+
+  if (!canRunRevenueSmoke) {
+    console.log(JSON.stringify({
+      label: "revenue smoke skipped",
+      reason: "CFO and medical director role access plus PIN values are required."
+    }));
+    return;
+  }
+
+  await switchToRole(authState, "medical_director", "switch to medical director for revenue bootstrap");
+  await apiRequest("service lines bootstrap", "/service-lines/bootstrap-defaults", {
+    method: "POST"
+  });
+  await apiRequest("committees bootstrap", "/committees/bootstrap-defaults", {
+    method: "POST"
+  });
+
+  await switchToRole(authState, "cfo", "switch to cfo for revenue governance");
+  const payerIssue = (
+    await apiRequest("create payer issue", "/payer-issues", {
+      method: "POST",
+      json: {
+        title: `Telehealth reimbursement ambiguity ${suffix}`,
+        payerName: "Regional Commercial Plan",
+        issueType: "coverage_policy",
+        serviceLineId: "telehealth",
+        ownerRole: "cfo",
+        summary: "Clarify reimbursement posture for telehealth follow-up bundles before the next campaign window.",
+        financialImpactSummary: "Potential reimbursement leakage if the current reimbursement language remains ambiguous.",
+        dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
+      }
+    })
+  ).json;
+
+  await apiRequest("escalate payer issue", `/payer-issues/${payerIssue.id}`, {
+    method: "PATCH",
+    json: {
+      status: "escalated",
+      resolutionNote: "Escalated during live smoke validation."
+    }
+  });
+
+  const pricingResponse = (
+    await apiRequest("create pricing governance", "/pricing-governance", {
+      method: "POST",
+      json: {
+        title: `Telehealth pricing governance ${suffix}`,
+        serviceLineId: "telehealth",
+        ownerRole: "cfo",
+        pricingSummary: "Define visit tiers, package boundaries, and approved self-pay guardrails for telehealth follow-up care.",
+        marginGuardrailsSummary: "Maintain target margin guardrails unless a documented pilot exception is approved by both finance and clinical leadership.",
+        discountGuardrailsSummary: "Limit discounts to approved campaigns and documented retention cases.",
+        payerAlignmentSummary: "Tie self-pay offers to the current payer reimbursement posture and escalation notes.",
+        claimsConstraintSummary: "Do not promise reimbursement outcomes or clinical effectiveness beyond approved claims inventory.",
+        reviewDueAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
+        notes: `Live smoke pricing governance ${suffix}.`
+      }
+    })
+  ).json;
+
+  const submittedPricing = (
+    await apiRequest("submit pricing governance", `/pricing-governance/${pricingResponse.pricingGovernance.id}/submit`, {
+      method: "POST"
+    })
+  ).json;
+  await approveAll(authState, submittedPricing.approvals, "pricing governance approval");
+
+  await switchToRole(authState, "medical_director", "switch to medical director for pricing publish");
+  await apiRequest("publish pricing governance", `/pricing-governance/${pricingResponse.pricingGovernance.id}/publish`, {
+    method: "POST"
+  });
+  await poll("pricing governance publish", async () => {
+    const records = (await apiRequest("pricing governance poll", "/pricing-governance")).json;
+    const published = records.find((record) => record.id === pricingResponse.pricingGovernance.id);
+    return {
+      done: published?.status === "published",
+      value: published,
+      detail: "waiting for pricing-governance publication"
+    };
+  }, { attempts: 30, delayMs: 1500 });
+
+  await switchToRole(authState, "cfo", "switch to cfo for revenue review");
+  const revenueReview = (
+    await apiRequest("create revenue review", "/revenue-reviews", {
+      method: "POST",
+      json: {
+        title: `Revenue review ${suffix}`,
+        ownerRole: "cfo",
+        serviceLineId: "telehealth",
+        reviewWindowLabel: `Live smoke ${suffix}`,
+        targetReviewDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+        summaryNote: "Validate payer ambiguity, pricing governance posture, and commercial readiness together."
+      }
+    })
+  ).json;
+
+  const summary = (await apiRequest("revenue summary", "/revenue/summary?serviceLineId=telehealth")).json;
+  if (!summary || typeof summary.openPayerIssues !== "number" || typeof summary.pricingPendingApproval !== "number") {
+    throw new Error("Revenue summary did not return the expected dashboard structure.");
+  }
+
+  const committees = (await apiRequest("revenue committees", "/committees?category=revenue_commercial")).json;
+  const revenueCommittee = committees.find((committee) => committee.category === "revenue_commercial");
+  if (revenueCommittee) {
+    const meeting = (
+      await apiRequest("create revenue committee meeting", "/committee-meetings", {
+        method: "POST",
+        json: {
+          committeeId: revenueCommittee.id,
+          scheduledFor: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+          notes: "Live smoke commercial review packet.",
+          agendaItems: [
+            {
+              title: "Review open payer ambiguity",
+              ownerRole: "cfo",
+              summary: "Confirm payer escalation plan and next follow-up date."
+            },
+            {
+              title: "Review published pricing governance",
+              ownerRole: "medical_director",
+              summary: `Review linked revenue review ${revenueReview.id} before committee approval routing.`
+            }
+          ]
+        }
+      })
+    ).json;
+
+    await apiRequest("generate revenue committee packet", `/committee-meetings/${meeting.id}/generate-packet`, {
+      method: "POST"
+    });
+  }
+
+  if (originalRole && originalRole !== "cfo") {
+    await switchToRole(authState, originalRole, "restore original role after revenue smoke");
+  }
+}
+
 async function main() {
   const { authState, whoami } = await ensureAuthenticated();
 
   await apiRequest("ops config", "/ops/config-status");
   await apiRequest("worker health", "/ops/worker-health");
+  await verifyRuntimeAgentsDisabled();
   await apiRequest("microsoft status", "/integrations/microsoft/status");
   await apiRequest("microsoft validate", "/integrations/microsoft/validate", {
     method: "POST"
@@ -542,6 +706,7 @@ async function main() {
 
   await runLiveMutations(authState, whoami);
   await runGovernanceSmoke(authState, whoami);
+  await runRevenueSmoke(authState, whoami);
   await apiRequest("worker health after governance smoke", "/ops/worker-health");
   await apiRequest("worker summary after governance smoke", "/worker-jobs/summary");
 }

@@ -97,6 +97,10 @@ type WorkerHealth = {
   health: "unknown" | "healthy" | "warning" | "critical";
   pollIntervalMs: number;
   heartbeatIntervalMs: number;
+  thresholds: {
+    stalledHeartbeatMinutes: number;
+    staleProcessingMinutes: number;
+  };
   lastStartedAt: string | null;
   lastHeartbeatAt: string | null;
   lastCompletedBatchAt: string | null;
@@ -683,12 +687,18 @@ export default function PilotOpsPage(): JSX.Element {
           <div className="table-row">
             <span>Heartbeat cadence</span>
             <span>{Math.round((workerHealth?.heartbeatIntervalMs ?? 0) / 1000)} sec</span>
-            <span>Poll interval {Math.round((workerHealth?.pollIntervalMs ?? 0) / 1000)} sec</span>
+            <span>
+              Poll interval {Math.round((workerHealth?.pollIntervalMs ?? 0) / 1000)} sec.
+              {" "}Stalled after about {workerHealth?.thresholds.stalledHeartbeatMinutes ?? 0} min without a heartbeat.
+            </span>
           </div>
           <div className="table-row">
             <span>Oldest processing lock</span>
             <span>{workerHealth?.backlog.oldestProcessingMinutes != null ? `${workerHealth.backlog.oldestProcessingMinutes} min` : "None"}</span>
-            <span>{workerHealth?.backlog.oldestProcessingType ?? "No processing jobs."}</span>
+            <span>
+              {workerHealth?.backlog.oldestProcessingType ?? "No processing jobs."}
+              {" "}Locks older than {workerHealth?.thresholds.staleProcessingMinutes ?? 0} min are treated as stale.
+            </span>
           </div>
           <div className="table-row">
             <span>Recent batch failure</span>

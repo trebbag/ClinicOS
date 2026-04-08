@@ -22,6 +22,10 @@ export const workerRuntimeStatusSchema = z.object({
   health: workerRuntimeHealthSchema,
   pollIntervalMs: z.number().int().positive(),
   heartbeatIntervalMs: z.number().int().positive(),
+  thresholds: z.object({
+    stalledHeartbeatMinutes: z.number().int().positive(),
+    staleProcessingMinutes: z.number().int().positive()
+  }),
   lastStartedAt: z.string().nullable(),
   lastHeartbeatAt: z.string().nullable(),
   lastCompletedBatchAt: z.string().nullable(),

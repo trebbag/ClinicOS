@@ -20,6 +20,7 @@
     "codex:prompts": "node ./scripts/print-codex-kickoff.mjs",
     "smoke:render": "node ./scripts/render-smoke.mjs",
     "smoke:pilot-live": "node ./scripts/pilot-live-smoke.mjs",
+    "smoke:worker-health": "node ./scripts/worker-health-smoke.mjs",
     "validate:pilot-roles": "tsx ./scripts/pilot-role-validation.ts"
   },
   "devDependencies": {

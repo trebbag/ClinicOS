@@ -73,3 +73,13 @@ Operational note from the latest live validation:
 - that means the remaining worker question can now be diagnosed from Clinic OS itself instead of relying only on Render logs
 - the repo now also includes a bounded operator fallback: if Render worker pickup stalls again, Pilot Ops can trigger one worker batch intentionally without needing shell access
 - the repo now also includes a first bounded runtime-agent slice with live OpenAI-backed execution through internal tool wrappers, so the remaining gap there is no longer “can it run at all,” but “how much eval coverage and rollout discipline do we want before broader enablement”
+- runtime agents can now stay shipped but explicitly disabled in deployed environments, and the live smoke path now checks that disabled state instead of assuming rollout
+- the repo now also ships an authenticated worker-health diagnostic command:
+  - `npm run smoke:worker-health -- https://your-pilot-url.example.com`
+  - it signs in through device-profile auth, fetches `/ops/worker-health`, prints thresholds plus queue ages, and returns a nonzero exit code if worker health is `critical`
+- the repo now includes first-class revenue / commercial governance:
+  - payer issue register with escalation-linked action items
+  - pricing-governance packets that reuse the existing approval and publication path
+  - revenue-review records with live commercial snapshots
+  - revenue/commercial committee packets that now include a dedicated revenue section
+  - a dedicated `/revenue` dashboard wired to those new records

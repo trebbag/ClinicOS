@@ -28,6 +28,9 @@ import {
   createIncidentRecord,
   createMicrosoftIntegrationValidationRecord,
   createPublicAssetRecord,
+  createPayerIssueRecord,
+  createPricingGovernanceRecord,
+  createRevenueReviewRecord,
   createActionItemRecord,
   createAuditEvent,
   createDraftDocument,
@@ -56,6 +59,12 @@ import {
   opsCleanupResultSchema,
   publicAssetCreateSchema,
   publicAssetUpdateSchema,
+  payerIssueCreateSchema,
+  payerIssueUpdateSchema,
+  pricingGovernanceCreateSchema,
+  pricingGovernanceUpdateSchema,
+  revenueReviewCreateSchema,
+  revenueReviewUpdateSchema,
   claimsReviewDecisionCommandSchema,
   controlledSubstanceStewardshipCreateSchema,
   controlledSubstanceStewardshipUpdateSchema,
@@ -110,7 +119,11 @@ import {
   type OfficeOpsDailyStatus,
   type PublicationMode,
   type PublicAssetRecord,
+  type PayerIssueRecord,
+  type PricingGovernanceRecord,
   type PracticeAgreementRecord,
+  type RevenueDashboardSummary,
+  type RevenueReviewRecord,
   type RoleCapabilityRecord,
   type RuntimeAgentRunCommand,
   type RuntimeAgentRunResult,
@@ -362,6 +375,27 @@ function deriveServiceLinePackStatus(input: {
     case "archived":
       return "archived";
     case "draft":
+    default:
+      return "draft";
+  }
+}
+
+function derivePricingGovernanceStatus(input: {
+  documentStatus: DocumentRecord["status"];
+}): PricingGovernanceRecord["status"] {
+  switch (input.documentStatus) {
+    case "in_review":
+      return "approval_pending";
+    case "approved":
+      return "approved";
+    case "publish_pending":
+      return "publish_pending";
+    case "published":
+      return "published";
+    case "rejected":
+      return "attention_needed";
+    case "draft":
+    case "archived":
     default:
       return "draft";
   }
@@ -1142,6 +1176,7 @@ export class ClinicApiService {
     await this.syncControlledSubstanceStewardshipFromDocument(updatedDocument);
     await this.syncCommitteeMeetingFromDocument(updatedDocument);
     await this.syncServiceLinePackFromDocument(updatedDocument);
+    await this.syncPricingGovernanceFromDocument(updatedDocument);
     await this.syncEvidenceBinderFromDocument(updatedDocument);
 
     return {
@@ -1187,6 +1222,7 @@ export class ClinicApiService {
     await this.syncControlledSubstanceStewardshipFromDocument(updatedDocument);
     await this.syncCommitteeMeetingFromDocument(updatedDocument);
     await this.syncServiceLinePackFromDocument(updatedDocument);
+    await this.syncPricingGovernanceFromDocument(updatedDocument);
     await this.syncEvidenceBinderFromDocument(updatedDocument);
 
     return updatedDocument;
@@ -1437,6 +1473,391 @@ export class ClinicApiService {
     return synced ?? asset;
   }
 
+  async listPayerIssues(filters?: {
+    status?: string;
+    ownerRole?: string;
+    serviceLineId?: string;
+    issueType?: string;
+    payerName?: string;
+  }): Promise<PayerIssueRecord[]> {
+    return this.repository.listPayerIssues(filters);
+  }
+
+  async createPayerIssue(actor: ActorContext, input: unknown): Promise<PayerIssueRecord> {
+    const command = payerIssueCreateSchema.parse(input);
+    const created = await this.repository.createPayerIssue(createPayerIssueRecord({
+      title: command.title,
+      payerName: command.payerName,
+      issueType: command.issueType,
+      serviceLineId: command.serviceLineId ?? null,
+      ownerRole: command.ownerRole,
+      summary: command.summary,
+      financialImpactSummary: command.financialImpactSummary ?? null,
+      dueDate: command.dueDate ?? null,
+      createdBy: actor.actorId
+    }));
+
+    await this.recordAudit(actor, "payer_issue.created", "payer_issue", created.id, {
+      payerName: created.payerName,
+      issueType: created.issueType,
+      serviceLineId: created.serviceLineId
+    });
+
+    return created;
+  }
+
+  async updatePayerIssue(actor: ActorContext, payerIssueId: string, input: unknown): Promise<PayerIssueRecord> {
+    const command = payerIssueUpdateSchema.parse(input);
+    const record = await this.repository.getPayerIssue(payerIssueId);
+    if (!record) {
+      notFound(`Payer issue not found: ${payerIssueId}`);
+    }
+
+    const now = new Date().toISOString();
+    const nextStatus = command.status ?? record.status;
+    let actionItemId = record.actionItemId;
+    let resolvedAt = record.resolvedAt;
+    let closedAt = record.closedAt;
+
+    if (nextStatus === "escalated") {
+      const title = `Resolve payer issue: ${command.title ?? record.title}`;
+      const dueDate = command.dueDate ?? record.dueDate ?? addDays(now, 7);
+      if (record.actionItemId) {
+        await this.repository.updateActionItem(record.actionItemId, {
+          title,
+          description: command.summary ?? record.summary,
+          ownerRole: command.ownerRole ?? record.ownerRole,
+          dueDate,
+          status: "open",
+          resolutionNote: null,
+          updatedAt: now
+        });
+      } else {
+        const createdActionItem = await this.repository.createActionItem(createActionItemRecord({
+          kind: "action_item",
+          title,
+          description: command.summary ?? record.summary,
+          ownerRole: command.ownerRole ?? record.ownerRole,
+          createdBy: actor.actorId,
+          dueDate
+        }));
+        actionItemId = createdActionItem.id;
+      }
+    }
+
+    if (["resolved", "closed"].includes(nextStatus)) {
+      resolvedAt = record.resolvedAt ?? now;
+      closedAt = nextStatus === "closed" ? (record.closedAt ?? now) : null;
+      if (record.actionItemId) {
+        await this.repository.updateActionItem(record.actionItemId, {
+          status: "done",
+          resolutionNote: command.resolutionNote ?? record.resolutionNote ?? "Payer issue resolved.",
+          closedAt: now,
+          updatedAt: now
+        });
+      }
+    } else {
+      resolvedAt = null;
+      closedAt = null;
+    }
+
+    const updated = await this.repository.updatePayerIssue(record.id, {
+      title: command.title ?? record.title,
+      payerName: command.payerName ?? record.payerName,
+      issueType: command.issueType ?? record.issueType,
+      serviceLineId: command.serviceLineId !== undefined ? command.serviceLineId : record.serviceLineId,
+      ownerRole: command.ownerRole ?? record.ownerRole,
+      status: nextStatus,
+      summary: command.summary ?? record.summary,
+      financialImpactSummary: command.financialImpactSummary !== undefined
+        ? command.financialImpactSummary
+        : record.financialImpactSummary,
+      dueDate: command.dueDate !== undefined ? command.dueDate : record.dueDate,
+      resolutionNote: command.resolutionNote !== undefined ? command.resolutionNote : record.resolutionNote,
+      actionItemId,
+      resolvedAt,
+      closedAt,
+      updatedAt: now
+    });
+
+    await this.recordAudit(actor, "payer_issue.updated", "payer_issue", updated.id, {
+      status: updated.status,
+      ownerRole: updated.ownerRole,
+      actionItemId: updated.actionItemId
+    });
+
+    return updated;
+  }
+
+  async listPricingGovernance(filters?: {
+    status?: string;
+    ownerRole?: string;
+    serviceLineId?: string;
+  }): Promise<PricingGovernanceRecord[]> {
+    return this.repository.listPricingGovernance(filters);
+  }
+
+  async createPricingGovernance(actor: ActorContext, input: unknown): Promise<{
+    pricingGovernance: PricingGovernanceRecord;
+    document: DocumentRecord;
+  }> {
+    const command = pricingGovernanceCreateSchema.parse(input);
+    const publicAssetCount = command.serviceLineId
+      ? (await this.repository.listPublicAssets({ serviceLine: command.serviceLineId })).length
+      : 0;
+    const workflow = await this.createWorkflowRun(actor, {
+      workflowId: "pricing_governance_review",
+      input: {
+        title: command.title ?? `${command.serviceLineId ? command.serviceLineId.replaceAll("_", " ") : "clinic-wide"} pricing governance`,
+        ownerRole: command.ownerRole,
+        serviceLineId: command.serviceLineId ?? null,
+        requestedBy: actor.actorId,
+        reviewDueAt: command.reviewDueAt ?? null,
+        publicAssetCount
+      }
+    });
+
+    await this.advanceWorkflowIfPossible(actor, workflow.id, ["scoped", "drafted"], "Pricing-governance packet drafted.");
+
+    const title = command.title ?? `${command.serviceLineId ? command.serviceLineId.replaceAll("_", " ") : "Clinic-wide"} pricing governance`;
+    const document = await this.createDocument(actor, {
+      title,
+      ownerRole: command.ownerRole,
+      approvalClass: "policy_effective",
+      artifactType: "pricing_governance_packet",
+      summary: `Pricing governance review for ${command.serviceLineId ? command.serviceLineId.replaceAll("_", " ") : "cross-service commercial offers"}.`,
+      workflowRunId: workflow.id,
+      serviceLines: command.serviceLineId ? [command.serviceLineId] : [],
+      body: this.buildPricingGovernanceBody(command)
+    });
+
+    const created = await this.repository.createPricingGovernance(createPricingGovernanceRecord({
+      title,
+      serviceLineId: command.serviceLineId ?? null,
+      ownerRole: command.ownerRole,
+      pricingSummary: command.pricingSummary,
+      marginGuardrailsSummary: command.marginGuardrailsSummary,
+      discountGuardrailsSummary: command.discountGuardrailsSummary,
+      payerAlignmentSummary: command.payerAlignmentSummary,
+      claimsConstraintSummary: command.claimsConstraintSummary,
+      effectiveDate: command.effectiveDate ?? null,
+      reviewDueAt: command.reviewDueAt ?? null,
+      notes: command.notes ?? null,
+      documentId: document.id,
+      workflowRunId: workflow.id,
+      createdBy: actor.actorId
+    }));
+
+    await this.recordAudit(actor, "pricing_governance.created", "pricing_governance", created.id, {
+      documentId: created.documentId,
+      workflowRunId: created.workflowRunId,
+      serviceLineId: created.serviceLineId
+    });
+
+    return {
+      pricingGovernance: created,
+      document
+    };
+  }
+
+  async updatePricingGovernance(actor: ActorContext, pricingGovernanceId: string, input: unknown): Promise<PricingGovernanceRecord> {
+    const command = pricingGovernanceUpdateSchema.parse(input);
+    const record = await this.repository.getPricingGovernance(pricingGovernanceId);
+    if (!record) {
+      notFound(`Pricing governance not found: ${pricingGovernanceId}`);
+    }
+    if (["approval_pending", "approved", "publish_pending", "published"].includes(record.status)) {
+      badRequest("Pricing governance cannot be edited after approval routing begins.");
+    }
+
+    const now = new Date().toISOString();
+    const updated = await this.repository.updatePricingGovernance(record.id, {
+      title: command.title ?? record.title,
+      serviceLineId: command.serviceLineId !== undefined ? command.serviceLineId : record.serviceLineId,
+      ownerRole: command.ownerRole ?? record.ownerRole,
+      status: command.status ?? record.status,
+      pricingSummary: command.pricingSummary ?? record.pricingSummary,
+      marginGuardrailsSummary: command.marginGuardrailsSummary ?? record.marginGuardrailsSummary,
+      discountGuardrailsSummary: command.discountGuardrailsSummary ?? record.discountGuardrailsSummary,
+      payerAlignmentSummary: command.payerAlignmentSummary ?? record.payerAlignmentSummary,
+      claimsConstraintSummary: command.claimsConstraintSummary ?? record.claimsConstraintSummary,
+      effectiveDate: command.effectiveDate !== undefined ? command.effectiveDate : record.effectiveDate,
+      reviewDueAt: command.reviewDueAt !== undefined ? command.reviewDueAt : record.reviewDueAt,
+      notes: command.notes !== undefined ? command.notes : record.notes,
+      updatedAt: now
+    });
+
+    if (record.documentId) {
+      const document = await this.repository.getDocument(record.documentId);
+      if (document) {
+        await this.repository.updateDocument(document.id, {
+          title: updated.title,
+          ownerRole: updated.ownerRole,
+          summary: `Pricing governance review for ${updated.serviceLineId ? updated.serviceLineId.replaceAll("_", " ") : "cross-service commercial offers"}.`,
+          body: this.buildPricingGovernanceBody({
+            title: updated.title,
+            serviceLineId: updated.serviceLineId,
+            ownerRole: updated.ownerRole,
+            pricingSummary: updated.pricingSummary,
+            marginGuardrailsSummary: updated.marginGuardrailsSummary,
+            discountGuardrailsSummary: updated.discountGuardrailsSummary,
+            payerAlignmentSummary: updated.payerAlignmentSummary,
+            claimsConstraintSummary: updated.claimsConstraintSummary,
+            effectiveDate: updated.effectiveDate ?? undefined,
+            reviewDueAt: updated.reviewDueAt ?? undefined,
+            notes: updated.notes ?? undefined
+          }),
+          serviceLines: updated.serviceLineId ? [updated.serviceLineId] : [],
+          status: document.status === "rejected" ? "draft" : document.status,
+          version: document.version + 1,
+          updatedAt: now
+        });
+      }
+    }
+
+    await this.recordAudit(actor, "pricing_governance.updated", "pricing_governance", updated.id, {
+      status: updated.status,
+      ownerRole: updated.ownerRole
+    });
+
+    return updated;
+  }
+
+  async submitPricingGovernance(actor: ActorContext, pricingGovernanceId: string): Promise<{
+    pricingGovernance: PricingGovernanceRecord;
+    document: DocumentRecord;
+    approvals: ApprovalTask[];
+  }> {
+    const record = await this.repository.getPricingGovernance(pricingGovernanceId);
+    if (!record) {
+      notFound(`Pricing governance not found: ${pricingGovernanceId}`);
+    }
+    if (!record.documentId) {
+      badRequest("Pricing governance is missing its linked document.");
+    }
+
+    await this.advanceWorkflowIfPossible(
+      actor,
+      record.workflowRunId,
+      ["quality_checked", "awaiting_human_review"],
+      "Pricing-governance packet routed for human review."
+    );
+
+    const result = await this.submitDocument(actor, record.documentId);
+    const synced = await this.syncPricingGovernanceFromDocument(result.document);
+
+    await this.recordAudit(actor, "pricing_governance.submitted", "pricing_governance", record.id, {
+      documentId: record.documentId,
+      approvalCount: result.approvals.length
+    });
+
+    return {
+      pricingGovernance: synced ?? record,
+      document: result.document,
+      approvals: result.approvals
+    };
+  }
+
+  async publishPricingGovernance(actor: ActorContext, pricingGovernanceId: string): Promise<PricingGovernanceRecord> {
+    const record = await this.repository.getPricingGovernance(pricingGovernanceId);
+    if (!record) {
+      notFound(`Pricing governance not found: ${pricingGovernanceId}`);
+    }
+    if (!record.documentId) {
+      badRequest("Pricing governance is missing its linked document.");
+    }
+
+    const document = await this.publishDocument(actor, record.documentId);
+    const synced = await this.syncPricingGovernanceFromDocument(document);
+
+    await this.recordAudit(actor, "pricing_governance.publish_requested", "pricing_governance", record.id, {
+      documentId: record.documentId
+    });
+
+    return synced ?? record;
+  }
+
+  async getRevenueDashboardSummary(filters?: {
+    serviceLineId?: string;
+  }): Promise<RevenueDashboardSummary> {
+    return this.buildRevenueDashboardSummary(filters);
+  }
+
+  async listRevenueReviews(filters?: {
+    status?: string;
+    ownerRole?: string;
+    serviceLineId?: string;
+    linkedCommitteeId?: string;
+  }): Promise<RevenueReviewRecord[]> {
+    return this.repository.listRevenueReviews(filters);
+  }
+
+  async createRevenueReview(actor: ActorContext, input: unknown): Promise<RevenueReviewRecord> {
+    const command = revenueReviewCreateSchema.parse(input);
+    const linkedCommitteeId = command.linkedCommitteeId
+      ? await this.resolveRevenueCommitteeId(command.linkedCommitteeId)
+      : await this.resolveRevenueCommitteeId(null);
+    const snapshot = await this.buildRevenueDashboardSummary({
+      serviceLineId: command.serviceLineId ?? undefined
+    });
+    const title = command.title ?? `${command.reviewWindowLabel} revenue review`;
+    const created = await this.repository.createRevenueReview(createRevenueReviewRecord({
+      title,
+      ownerRole: command.ownerRole,
+      serviceLineId: command.serviceLineId ?? null,
+      reviewWindowLabel: command.reviewWindowLabel,
+      targetReviewDate: command.targetReviewDate ?? null,
+      summaryNote: command.summaryNote ?? null,
+      linkedCommitteeId,
+      snapshot,
+      createdBy: actor.actorId
+    }));
+
+    await this.recordAudit(actor, "revenue_review.created", "revenue_review", created.id, {
+      linkedCommitteeId: created.linkedCommitteeId,
+      serviceLineId: created.serviceLineId,
+      reviewWindowLabel: created.reviewWindowLabel
+    });
+
+    return created;
+  }
+
+  async updateRevenueReview(actor: ActorContext, revenueReviewId: string, input: unknown): Promise<RevenueReviewRecord> {
+    const command = revenueReviewUpdateSchema.parse(input);
+    const record = await this.repository.getRevenueReview(revenueReviewId);
+    if (!record) {
+      notFound(`Revenue review not found: ${revenueReviewId}`);
+    }
+
+    const now = new Date().toISOString();
+    const nextStatus = command.status ?? record.status;
+    const linkedCommitteeId = command.linkedCommitteeId === undefined
+      ? record.linkedCommitteeId
+      : await this.resolveRevenueCommitteeId(command.linkedCommitteeId);
+    const updated = await this.repository.updateRevenueReview(record.id, {
+      title: command.title ?? record.title,
+      ownerRole: command.ownerRole ?? record.ownerRole,
+      serviceLineId: command.serviceLineId !== undefined ? command.serviceLineId : record.serviceLineId,
+      status: nextStatus,
+      reviewWindowLabel: command.reviewWindowLabel ?? record.reviewWindowLabel,
+      targetReviewDate: command.targetReviewDate !== undefined ? command.targetReviewDate : record.targetReviewDate,
+      completedAt: nextStatus === "completed" ? (record.completedAt ?? now) : nextStatus === "archived" ? (record.completedAt ?? now) : null,
+      summaryNote: command.summaryNote !== undefined ? command.summaryNote : record.summaryNote,
+      linkedCommitteeId,
+      snapshot: await this.buildRevenueDashboardSummary({
+        serviceLineId: (command.serviceLineId !== undefined ? command.serviceLineId : record.serviceLineId) ?? undefined
+      }),
+      updatedAt: now
+    });
+
+    await this.recordAudit(actor, "revenue_review.updated", "revenue_review", updated.id, {
+      status: updated.status,
+      linkedCommitteeId: updated.linkedCommitteeId
+    });
+
+    return updated;
+  }
+
   async listCommittees(filters?: {
     category?: string;
     isActive?: boolean;
@@ -1618,10 +2039,13 @@ export class ClinicApiService {
     const qapiSnapshot = committee.qapiFocus
       ? await this.buildCommitteeQapiSnapshot(meeting.qapiSnapshot?.summaryNote ?? null)
       : null;
+    const revenueSection = committee.category === "revenue_commercial"
+      ? await this.buildRevenueCommitteePacketSection(committee)
+      : null;
     const packetBody = this.buildCommitteePacketBody(committee, {
       ...meeting,
       qapiSnapshot
-    });
+    }, revenueSection);
 
     const workflow = meeting.workflowRunId
       ? await this.repository.getWorkflowRun(meeting.workflowRunId)
@@ -3963,6 +4387,10 @@ export class ClinicApiService {
       health,
       pollIntervalMs,
       heartbeatIntervalMs,
+      thresholds: {
+        stalledHeartbeatMinutes,
+        staleProcessingMinutes
+      },
       lastStartedAt: latestStarted?.createdAt ?? null,
       lastHeartbeatAt: latestHeartbeat?.createdAt ?? null,
       lastCompletedBatchAt: latestCompleted?.createdAt ?? null,
@@ -5554,9 +5982,87 @@ export class ClinicApiService {
     };
   }
 
+  private async buildRevenueDashboardSummary(input?: {
+    serviceLineId?: string;
+  }): Promise<RevenueDashboardSummary> {
+    const serviceLineId = input?.serviceLineId;
+    const now = new Date().toISOString();
+    const [payerIssues, pricingGovernance, revenueReviews, serviceLines, publicAssets] = await Promise.all([
+      this.repository.listPayerIssues(serviceLineId ? { serviceLineId } : undefined),
+      this.repository.listPricingGovernance(serviceLineId ? { serviceLineId } : undefined),
+      this.repository.listRevenueReviews(serviceLineId ? { serviceLineId } : undefined),
+      this.repository.listServiceLines(),
+      this.repository.listPublicAssets(serviceLineId ? { serviceLine: serviceLineId } : undefined)
+    ]);
+
+    const scopedServiceLines = serviceLineId
+      ? serviceLines.filter((serviceLine) => serviceLine.id === serviceLineId)
+      : serviceLines;
+    const openPayerIssues = payerIssues.filter((issue) => !["resolved", "closed"].includes(issue.status));
+    const escalatedPayerIssues = openPayerIssues.filter((issue) => issue.status === "escalated");
+    const overduePayerIssues = openPayerIssues.filter((issue) => issue.dueDate && issue.dueDate < now);
+    const activePricing = pricingGovernance.filter((record) => ["approval_pending", "approved", "publish_pending", "published"].includes(record.status));
+    const pricingPendingApproval = pricingGovernance.filter((record) => ["approval_pending", "publish_pending"].includes(record.status));
+    const pricingAttentionNeeded = pricingGovernance.filter((record) => record.status === "attention_needed");
+    const overdueRevenueReviews = revenueReviews.filter((review) =>
+      !["completed", "archived"].includes(review.status)
+      && Boolean(review.targetReviewDate && review.targetReviewDate < now)
+    );
+    const publishedServiceLines = scopedServiceLines.filter((serviceLine) => serviceLine.governanceStatus === "published");
+    const serviceLinesMissingPricingGovernance = publishedServiceLines.filter((serviceLine) =>
+      !activePricing.some((record) => record.serviceLineId === serviceLine.id)
+    );
+    const publishedAssets = publicAssets.filter((asset) => asset.status === "published" && asset.serviceLine);
+    const serviceLinesWeakClaimsGovernance = scopedServiceLines.filter((serviceLine) =>
+      !serviceLine.hasClaimsInventory
+      && publishedAssets.some((asset) => asset.serviceLine === serviceLine.id)
+    );
+    const publicAssetsAtRisk = publishedAssets.filter((asset) =>
+      scopedServiceLines.some((serviceLine) => serviceLine.id === asset.serviceLine && !serviceLine.hasClaimsInventory)
+    );
+
+    return {
+      openPayerIssues: openPayerIssues.length,
+      escalatedPayerIssues: escalatedPayerIssues.length,
+      overduePayerIssues: overduePayerIssues.length,
+      pricingPendingApproval: pricingPendingApproval.length,
+      pricingAttentionNeeded: pricingAttentionNeeded.length,
+      overdueRevenueReviews: overdueRevenueReviews.length,
+      serviceLinesMissingPricingGovernance: serviceLinesMissingPricingGovernance.length,
+      serviceLinesWeakClaimsGovernance: serviceLinesWeakClaimsGovernance.length,
+      publicAssetsAtRisk: publicAssetsAtRisk.length,
+      attentionItems: [
+        ...escalatedPayerIssues.slice(0, 3).map((issue) => `Escalated payer issue: ${issue.title}`),
+        ...pricingAttentionNeeded.slice(0, 3).map((record) => `Pricing governance needs attention: ${record.title}`),
+        ...serviceLinesMissingPricingGovernance.slice(0, 3).map((serviceLine) => `Published service line missing pricing governance: ${serviceLine.id.replaceAll("_", " ")}`),
+        ...serviceLinesWeakClaimsGovernance.slice(0, 3).map((serviceLine) => `Published public assets outpace claims governance for ${serviceLine.id.replaceAll("_", " ")}`)
+      ].slice(0, 6)
+    };
+  }
+
+  private async resolveRevenueCommitteeId(committeeId: string | null | undefined): Promise<string | null> {
+    if (committeeId === null) {
+      return null;
+    }
+    if (committeeId) {
+      const committee = await this.repository.getCommittee(committeeId);
+      if (!committee || committee.category !== "revenue_commercial" || !committee.isActive) {
+        badRequest(`Revenue / commercial committee is not available: ${committeeId}`);
+      }
+      return committee.id;
+    }
+
+    const committees = await this.repository.listCommittees({
+      category: "revenue_commercial",
+      isActive: true
+    });
+    return committees[0]?.id ?? null;
+  }
+
   private buildCommitteePacketBody(
     committee: CommitteeRecord,
-    meeting: CommitteeMeetingRecord
+    meeting: CommitteeMeetingRecord,
+    revenueSection?: string | null
   ): string {
     const agenda = meeting.agendaItems.map((item, index) => [
       `${index + 1}. ${item.title}`,
@@ -5618,6 +6124,8 @@ export class ClinicApiService {
       "",
       qapiSection,
       qapiSection ? "" : null,
+      revenueSection,
+      revenueSection ? "" : null,
       "## Decisions",
       decisions
     ].filter((line): line is string => line !== null).join("\n");
@@ -5663,6 +6171,77 @@ export class ClinicApiService {
       input.notes ? "## Notes" : null,
       input.notes ?? null
     ].filter((line): line is string => line !== null).join("\n");
+  }
+
+  private buildPricingGovernanceBody(
+    input:
+      | z.infer<typeof pricingGovernanceCreateSchema>
+      | PricingGovernanceRecord
+  ): string {
+    return [
+      `# ${input.title}`,
+      "",
+      `Owner role: ${input.ownerRole}`,
+      `Service line: ${input.serviceLineId ?? "cross-service commercial offer"}`,
+      "",
+      "## Pricing summary",
+      input.pricingSummary,
+      "",
+      "## Margin guardrails",
+      input.marginGuardrailsSummary,
+      "",
+      "## Discount guardrails",
+      input.discountGuardrailsSummary,
+      "",
+      "## Payer alignment",
+      input.payerAlignmentSummary,
+      "",
+      "## Claims and offer constraints",
+      input.claimsConstraintSummary,
+      input.effectiveDate ? "" : null,
+      input.effectiveDate ? `Effective date: ${input.effectiveDate}` : null,
+      input.reviewDueAt ? `Review due: ${input.reviewDueAt}` : null,
+      input.notes ? "" : null,
+      input.notes ? "## Notes" : null,
+      input.notes ?? null
+    ].filter((line): line is string => line !== null).join("\n");
+  }
+
+  private async buildRevenueCommitteePacketSection(committee: CommitteeRecord): Promise<string> {
+    const summary = await this.buildRevenueDashboardSummary({
+      serviceLineId: committee.serviceLine ?? undefined
+    });
+    const reviews = await this.repository.listRevenueReviews({
+      linkedCommitteeId: committee.id
+    });
+    const relevantReviews = reviews
+      .filter((review) => !committee.serviceLine || review.serviceLineId === committee.serviceLine)
+      .slice(0, 3);
+
+    return [
+      "## Revenue / Commercial Snapshot",
+      `- Open payer issues: ${summary.openPayerIssues}`,
+      `- Escalated payer issues: ${summary.escalatedPayerIssues}`,
+      `- Overdue payer issues: ${summary.overduePayerIssues}`,
+      `- Pricing items needing review: ${summary.pricingPendingApproval}`,
+      `- Pricing items needing attention: ${summary.pricingAttentionNeeded}`,
+      `- Overdue revenue reviews: ${summary.overdueRevenueReviews}`,
+      `- Service lines missing pricing governance: ${summary.serviceLinesMissingPricingGovernance}`,
+      `- Service lines with weak claims governance: ${summary.serviceLinesWeakClaimsGovernance}`,
+      `- Public assets at risk: ${summary.publicAssetsAtRisk}`,
+      "",
+      "### Current attention items",
+      ...(summary.attentionItems.length > 0
+        ? summary.attentionItems.map((item) => `- ${item}`)
+        : ["- No active commercial attention items."]),
+      "",
+      "### Recent revenue reviews",
+      ...(relevantReviews.length > 0
+        ? relevantReviews.map((review) =>
+            `- ${review.title} (${review.status})${review.targetReviewDate ? ` due ${review.targetReviewDate.slice(0, 10)}` : ""}`
+          )
+        : ["- No linked revenue reviews yet."])
+    ].join("\n");
   }
 
   private buildPracticeAgreementBody(
@@ -6000,6 +6579,24 @@ export class ClinicApiService {
     }
 
     return updatedPack;
+  }
+
+  private async syncPricingGovernanceFromDocument(document: DocumentRecord): Promise<PricingGovernanceRecord | null> {
+    const record = await this.repository.getPricingGovernanceByDocumentId(document.id);
+    if (!record) {
+      return null;
+    }
+
+    return this.repository.updatePricingGovernance(record.id, {
+      title: document.title,
+      ownerRole: document.ownerRole as PricingGovernanceRecord["ownerRole"],
+      serviceLineId: document.serviceLines[0] ?? record.serviceLineId,
+      status: derivePricingGovernanceStatus({ documentStatus: document.status }),
+      effectiveDate: document.publishedAt ?? record.effectiveDate,
+      publishedAt: document.publishedAt,
+      publishedPath: document.publishedPath,
+      updatedAt: new Date().toISOString()
+    });
   }
 
   private async syncEvidenceBinderFromDocument(document: DocumentRecord): Promise<EvidenceBinderRecord | null> {

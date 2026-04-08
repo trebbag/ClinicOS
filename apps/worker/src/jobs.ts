@@ -745,6 +745,17 @@ export class WorkerJobRunner {
       }
     }
 
+    const linkedPricingGovernance = await this.repository.getPricingGovernanceByDocumentId(document.id);
+    if (linkedPricingGovernance) {
+      await this.repository.updatePricingGovernance(linkedPricingGovernance.id, {
+        status: "published",
+        effectiveDate: linkedPricingGovernance.effectiveDate ?? now,
+        publishedAt: now,
+        publishedPath: publishResult.path,
+        updatedAt: now
+      });
+    }
+
     const linkedPracticeAgreement = await this.repository.getPracticeAgreementByDocumentId(document.id);
     if (linkedPracticeAgreement) {
       await this.repository.updatePracticeAgreement(linkedPracticeAgreement.id, {

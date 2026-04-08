@@ -7,6 +7,7 @@ import {
   createChecklistTemplate,
   createControlledSubstanceStewardshipRecord,
   createIncidentRecord,
+  createPricingGovernanceRecord,
   createPracticeAgreementRecord,
   createPublicAssetRecord,
   createEvidenceBinderRecord,
@@ -597,6 +598,65 @@ describe("WorkerJobRunner", () => {
     expect(await repository.getPracticeAgreement(practiceAgreement.id)).toMatchObject({
       status: "published",
       publishedPath: expect.stringContaining("doc_practice_agreement")
+    });
+  });
+
+  it("keeps linked pricing governance packets in sync when publication completes", async () => {
+    const repository = new MemoryClinicRepository();
+    await repository.createDocument({
+      id: "doc_pricing_governance",
+      title: "Telehealth pricing governance",
+      ownerRole: "cfo",
+      approvalClass: "policy_effective",
+      artifactType: "pricing_governance_packet",
+      summary: "Approved pricing governance packet",
+      workflowRunId: "workflow_pricing_governance",
+      serviceLines: ["telehealth"],
+      createdBy: "cfo-user",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: "approved",
+      body: "# Pricing governance",
+      version: 1,
+      publishedAt: null,
+      publishedPath: null,
+      reviewDueAt: null
+    });
+    const pricingGovernance = createPricingGovernanceRecord({
+      title: "Telehealth pricing governance",
+      serviceLineId: "telehealth",
+      ownerRole: "cfo",
+      pricingSummary: "Telehealth follow-up pricing summary.",
+      marginGuardrailsSummary: "Maintain target gross margin guardrails.",
+      discountGuardrailsSummary: "No ad hoc discounts outside approved campaigns.",
+      payerAlignmentSummary: "Confirm payer carve-outs before launch.",
+      claimsConstraintSummary: "Keep claims aligned with approved evidence.",
+      createdBy: "cfo-user",
+      documentId: "doc_pricing_governance",
+      workflowRunId: "workflow_pricing_governance"
+    });
+    await repository.createPricingGovernance(pricingGovernance);
+    await repository.enqueueWorkerJob(createWorkerJob({
+      type: "document.publish",
+      payload: {
+        actor: {
+          actorId: "cfo-user",
+          role: "cfo",
+          name: "Chief Financial Officer"
+        },
+        documentId: "doc_pricing_governance"
+      },
+      sourceEntityType: "document",
+      sourceEntityId: "doc_pricing_governance"
+    }));
+
+    const runner = new WorkerJobRunner(repository, buildMicrosoftPilotOps({ mode: "stub" }));
+    const summary = await runner.runOnce();
+
+    expect(summary.succeeded).toBeGreaterThanOrEqual(1);
+    expect(await repository.getPricingGovernance(pricingGovernance.id)).toMatchObject({
+      status: "published",
+      publishedPath: expect.stringContaining("doc_pricing_governance")
     });
   });
 

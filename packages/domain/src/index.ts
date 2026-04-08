@@ -25,6 +25,7 @@ export * from "./schemas/capa";
 export * from "./schemas/committee";
 export * from "./schemas/serviceLine";
 export * from "./schemas/publicAsset";
+export * from "./schemas/revenue";
 export * from "./schemas/delegation";
 export * from "./schemas/practiceAgreement";
 export * from "./schemas/telehealthStewardship";

@@ -47,6 +47,8 @@ export type AppCapability =
   | "standards.manage"
   | "public_assets.view"
   | "public_assets.manage"
+  | "revenue.view"
+  | "revenue.manage"
   | "scorecards.view"
   | "pilot_ops.view"
   | "runtime_agents.view"
@@ -147,6 +149,7 @@ type NavigationLink = {
     | "/controlled-substances"
     | "/delegation"
     | "/standards"
+    | "/revenue"
     | "/scorecards"
     | "/public-assets"
     | "/runtime-agents";
@@ -229,6 +232,12 @@ export const navigationLinks: NavigationLink[] = [
     label: "Standards",
     allowedRoles: ["medical_director", "quality_lead", "hr_lead", "cfo"] as ActorRole[],
     requiredCapability: "standards.view" as const
+  },
+  {
+    href: "/revenue" as const,
+    label: "Revenue",
+    allowedRoles: ["medical_director", "quality_lead", "office_manager", "cfo"] as ActorRole[],
+    requiredCapability: "revenue.view" as const
   },
   {
     href: "/public-assets" as const,

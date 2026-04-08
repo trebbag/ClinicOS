@@ -19,7 +19,10 @@ import type {
   MetricRun,
   MicrosoftIntegrationValidationRecord,
   PublicAssetRecord,
+  PayerIssueRecord,
+  PricingGovernanceRecord,
   PracticeAgreementRecord,
+  RevenueReviewRecord,
   ScorecardReviewRecord,
   ServiceLinePackRecord,
   ServiceLineRecord,
@@ -49,7 +52,10 @@ export class MemoryClinicRepository implements ClinicRepository {
   public readonly incidents: IncidentRecord[] = [];
   public readonly capas: CapaRecord[] = [];
   public readonly publicAssets: PublicAssetRecord[] = [];
+  public readonly payerIssues: PayerIssueRecord[] = [];
+  public readonly pricingGovernanceRecords: PricingGovernanceRecord[] = [];
   public readonly practiceAgreements: PracticeAgreementRecord[] = [];
+  public readonly revenueReviews: RevenueReviewRecord[] = [];
   public readonly telehealthStewardshipRecords: TelehealthStewardshipRecord[] = [];
   public readonly controlledSubstanceStewardshipRecords: ControlledSubstanceStewardshipRecord[] = [];
   public readonly committees: CommitteeRecord[] = [];
@@ -231,6 +237,82 @@ export class MemoryClinicRepository implements ClinicRepository {
     serviceLine?: string;
   }): Promise<PublicAssetRecord[]> {
     return this.publicAssets.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createPayerIssue(record: PayerIssueRecord): Promise<PayerIssueRecord> {
+    this.payerIssues.unshift(record);
+    return record;
+  }
+
+  async updatePayerIssue(id: string, patch: Partial<PayerIssueRecord>): Promise<PayerIssueRecord> {
+    const index = this.payerIssues.findIndex((record) => record.id === id);
+    this.payerIssues[index] = { ...this.payerIssues[index], ...patch };
+    return this.payerIssues[index];
+  }
+
+  async getPayerIssue(id: string): Promise<PayerIssueRecord | null> {
+    return this.payerIssues.find((record) => record.id === id) ?? null;
+  }
+
+  async listPayerIssues(filters?: {
+    status?: string;
+    ownerRole?: string;
+    serviceLineId?: string;
+    issueType?: string;
+    payerName?: string;
+  }): Promise<PayerIssueRecord[]> {
+    return this.payerIssues.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createPricingGovernance(record: PricingGovernanceRecord): Promise<PricingGovernanceRecord> {
+    this.pricingGovernanceRecords.unshift(record);
+    return record;
+  }
+
+  async updatePricingGovernance(id: string, patch: Partial<PricingGovernanceRecord>): Promise<PricingGovernanceRecord> {
+    const index = this.pricingGovernanceRecords.findIndex((record) => record.id === id);
+    this.pricingGovernanceRecords[index] = { ...this.pricingGovernanceRecords[index], ...patch };
+    return this.pricingGovernanceRecords[index];
+  }
+
+  async getPricingGovernance(id: string): Promise<PricingGovernanceRecord | null> {
+    return this.pricingGovernanceRecords.find((record) => record.id === id) ?? null;
+  }
+
+  async getPricingGovernanceByDocumentId(documentId: string): Promise<PricingGovernanceRecord | null> {
+    return this.pricingGovernanceRecords.find((record) => record.documentId === documentId) ?? null;
+  }
+
+  async listPricingGovernance(filters?: {
+    status?: string;
+    ownerRole?: string;
+    serviceLineId?: string;
+  }): Promise<PricingGovernanceRecord[]> {
+    return this.pricingGovernanceRecords.filter((record) => matchesFilters(record, filters));
+  }
+
+  async createRevenueReview(record: RevenueReviewRecord): Promise<RevenueReviewRecord> {
+    this.revenueReviews.unshift(record);
+    return record;
+  }
+
+  async updateRevenueReview(id: string, patch: Partial<RevenueReviewRecord>): Promise<RevenueReviewRecord> {
+    const index = this.revenueReviews.findIndex((record) => record.id === id);
+    this.revenueReviews[index] = { ...this.revenueReviews[index], ...patch };
+    return this.revenueReviews[index];
+  }
+
+  async getRevenueReview(id: string): Promise<RevenueReviewRecord | null> {
+    return this.revenueReviews.find((record) => record.id === id) ?? null;
+  }
+
+  async listRevenueReviews(filters?: {
+    status?: string;
+    ownerRole?: string;
+    serviceLineId?: string;
+    linkedCommitteeId?: string;
+  }): Promise<RevenueReviewRecord[]> {
+    return this.revenueReviews.filter((record) => matchesFilters(record, filters));
   }
 
   async createPracticeAgreement(record: PracticeAgreementRecord): Promise<PracticeAgreementRecord> {

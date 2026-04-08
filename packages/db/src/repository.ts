@@ -19,7 +19,11 @@ import type {
   MetricRun,
   MicrosoftIntegrationValidationRecord,
   PublicAssetRecord,
+  PayerIssueRecord,
+  PricingGovernanceRecord,
   PracticeAgreementRecord,
+  RevenueReviewRecord,
+  RevenueDashboardSummary,
   ScorecardReviewRecord,
   ServiceLinePackRecord,
   ServiceLineRecord,
@@ -53,7 +57,10 @@ import {
   metricRunSchema,
   microsoftIntegrationValidationRecordSchema,
   publicAssetRecordSchema,
+  payerIssueRecordSchema,
+  pricingGovernanceRecordSchema,
   practiceAgreementRecordSchema,
+  revenueReviewRecordSchema,
   scorecardReviewRecordSchema,
   serviceLinePackRecordSchema,
   serviceLineRecordSchema,
@@ -113,6 +120,63 @@ type ServiceLinePackRow = {
   updatedAt: Date;
   publishedAt: Date | null;
   publishedPath: string | null;
+};
+type PayerIssueRow = {
+  id: string;
+  title: string;
+  payerName: string;
+  issueType: string;
+  serviceLineId: string | null;
+  ownerRole: string;
+  status: string;
+  summary: string;
+  financialImpactSummary: string | null;
+  dueDate: Date | null;
+  resolutionNote: string | null;
+  actionItemId: string | null;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+  resolvedAt: Date | null;
+  closedAt: Date | null;
+};
+type PricingGovernanceRow = {
+  id: string;
+  title: string;
+  serviceLineId: string | null;
+  ownerRole: string;
+  status: string;
+  pricingSummary: string;
+  marginGuardrailsSummary: string;
+  discountGuardrailsSummary: string;
+  payerAlignmentSummary: string;
+  claimsConstraintSummary: string;
+  effectiveDate: Date | null;
+  reviewDueAt: Date | null;
+  notes: string | null;
+  documentId: string | null;
+  workflowRunId: string | null;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+  publishedAt: Date | null;
+  publishedPath: string | null;
+};
+type RevenueReviewRow = {
+  id: string;
+  title: string;
+  status: string;
+  ownerRole: string;
+  serviceLineId: string | null;
+  reviewWindowLabel: string;
+  targetReviewDate: Date | null;
+  completedAt: Date | null;
+  summaryNote: string | null;
+  linkedCommitteeId: string | null;
+  snapshotJson: Prisma.JsonValue;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
 };
 type PracticeAgreementRow = {
   id: string;
@@ -307,6 +371,34 @@ export type ClinicRepository = {
     assetType?: string;
     serviceLine?: string;
   }): Promise<PublicAssetRecord[]>;
+  createPayerIssue(record: PayerIssueRecord): Promise<PayerIssueRecord>;
+  updatePayerIssue(id: string, patch: Partial<PayerIssueRecord>): Promise<PayerIssueRecord>;
+  getPayerIssue(id: string): Promise<PayerIssueRecord | null>;
+  listPayerIssues(filters?: {
+    status?: string;
+    ownerRole?: string;
+    serviceLineId?: string;
+    issueType?: string;
+    payerName?: string;
+  }): Promise<PayerIssueRecord[]>;
+  createPricingGovernance(record: PricingGovernanceRecord): Promise<PricingGovernanceRecord>;
+  updatePricingGovernance(id: string, patch: Partial<PricingGovernanceRecord>): Promise<PricingGovernanceRecord>;
+  getPricingGovernance(id: string): Promise<PricingGovernanceRecord | null>;
+  getPricingGovernanceByDocumentId(documentId: string): Promise<PricingGovernanceRecord | null>;
+  listPricingGovernance(filters?: {
+    status?: string;
+    ownerRole?: string;
+    serviceLineId?: string;
+  }): Promise<PricingGovernanceRecord[]>;
+  createRevenueReview(record: RevenueReviewRecord): Promise<RevenueReviewRecord>;
+  updateRevenueReview(id: string, patch: Partial<RevenueReviewRecord>): Promise<RevenueReviewRecord>;
+  getRevenueReview(id: string): Promise<RevenueReviewRecord | null>;
+  listRevenueReviews(filters?: {
+    status?: string;
+    ownerRole?: string;
+    serviceLineId?: string;
+    linkedCommitteeId?: string;
+  }): Promise<RevenueReviewRecord[]>;
   createCommittee(record: CommitteeRecord): Promise<CommitteeRecord>;
   updateCommittee(id: string, patch: Partial<CommitteeRecord>): Promise<CommitteeRecord>;
   getCommittee(id: string): Promise<CommitteeRecord | null>;
@@ -801,6 +893,51 @@ export class PrismaClinicRepository implements ClinicRepository {
       workflowRunId: record.workflowRunId ?? null,
       publishedAt: record.publishedAt?.toISOString() ?? null,
       publishedPath: record.publishedPath ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString()
+    });
+  }
+
+  private mapPayerIssueRecord(record: PayerIssueRow): PayerIssueRecord {
+    return payerIssueRecordSchema.parse({
+      ...record,
+      serviceLineId: record.serviceLineId ?? null,
+      financialImpactSummary: record.financialImpactSummary ?? null,
+      dueDate: record.dueDate?.toISOString() ?? null,
+      resolutionNote: record.resolutionNote ?? null,
+      actionItemId: record.actionItemId ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+      resolvedAt: record.resolvedAt?.toISOString() ?? null,
+      closedAt: record.closedAt?.toISOString() ?? null
+    });
+  }
+
+  private mapPricingGovernanceRecord(record: PricingGovernanceRow): PricingGovernanceRecord {
+    return pricingGovernanceRecordSchema.parse({
+      ...record,
+      serviceLineId: record.serviceLineId ?? null,
+      effectiveDate: record.effectiveDate?.toISOString() ?? null,
+      reviewDueAt: record.reviewDueAt?.toISOString() ?? null,
+      notes: record.notes ?? null,
+      documentId: record.documentId ?? null,
+      workflowRunId: record.workflowRunId ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+      publishedAt: record.publishedAt?.toISOString() ?? null,
+      publishedPath: record.publishedPath ?? null
+    });
+  }
+
+  private mapRevenueReviewRecord(record: RevenueReviewRow): RevenueReviewRecord {
+    return revenueReviewRecordSchema.parse({
+      ...record,
+      serviceLineId: record.serviceLineId ?? null,
+      targetReviewDate: record.targetReviewDate?.toISOString() ?? null,
+      completedAt: record.completedAt?.toISOString() ?? null,
+      summaryNote: record.summaryNote ?? null,
+      linkedCommitteeId: record.linkedCommitteeId ?? null,
+      snapshot: record.snapshotJson as RevenueDashboardSummary,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString()
     });
@@ -1697,6 +1834,224 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
 
     return records.map((record) => this.mapPublicAssetRecord(record as any));
+  }
+
+  async createPayerIssue(record: PayerIssueRecord): Promise<PayerIssueRecord> {
+    const created = await this.client.payerIssue.create({
+      data: {
+        id: record.id,
+        title: record.title,
+        payerName: record.payerName,
+        issueType: record.issueType,
+        serviceLineId: record.serviceLineId,
+        ownerRole: record.ownerRole,
+        status: record.status,
+        summary: record.summary,
+        financialImpactSummary: record.financialImpactSummary,
+        dueDate: isoToDate(record.dueDate),
+        resolutionNote: record.resolutionNote,
+        actionItemId: record.actionItemId,
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt),
+        resolvedAt: isoToDate(record.resolvedAt),
+        closedAt: isoToDate(record.closedAt)
+      } as any
+    });
+
+    return this.mapPayerIssueRecord(created as any);
+  }
+
+  async updatePayerIssue(id: string, patch: Partial<PayerIssueRecord>): Promise<PayerIssueRecord> {
+    const updated = await this.client.payerIssue.update({
+      where: { id },
+      data: {
+        title: patch.title,
+        payerName: patch.payerName,
+        issueType: patch.issueType,
+        serviceLineId: patch.serviceLineId,
+        ownerRole: patch.ownerRole,
+        status: patch.status,
+        summary: patch.summary,
+        financialImpactSummary: patch.financialImpactSummary,
+        dueDate: isoToDate(patch.dueDate),
+        resolutionNote: patch.resolutionNote,
+        actionItemId: patch.actionItemId,
+        createdBy: patch.createdBy,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt),
+        resolvedAt: isoToDate(patch.resolvedAt),
+        closedAt: isoToDate(patch.closedAt)
+      } as any
+    });
+
+    return this.mapPayerIssueRecord(updated as any);
+  }
+
+  async getPayerIssue(id: string): Promise<PayerIssueRecord | null> {
+    const record = await this.client.payerIssue.findUnique({ where: { id } });
+    return record ? this.mapPayerIssueRecord(record as any) : null;
+  }
+
+  async listPayerIssues(filters?: {
+    status?: string;
+    ownerRole?: string;
+    serviceLineId?: string;
+    issueType?: string;
+    payerName?: string;
+  }): Promise<PayerIssueRecord[]> {
+    const records = await this.client.payerIssue.findMany({
+      where: mapListFilters(filters) as any,
+      orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }]
+    });
+
+    return records.map((record) => this.mapPayerIssueRecord(record as any));
+  }
+
+  async createPricingGovernance(record: PricingGovernanceRecord): Promise<PricingGovernanceRecord> {
+    const created = await this.client.pricingGovernance.create({
+      data: {
+        id: record.id,
+        title: record.title,
+        serviceLineId: record.serviceLineId,
+        ownerRole: record.ownerRole,
+        status: record.status,
+        pricingSummary: record.pricingSummary,
+        marginGuardrailsSummary: record.marginGuardrailsSummary,
+        discountGuardrailsSummary: record.discountGuardrailsSummary,
+        payerAlignmentSummary: record.payerAlignmentSummary,
+        claimsConstraintSummary: record.claimsConstraintSummary,
+        effectiveDate: isoToDate(record.effectiveDate),
+        reviewDueAt: isoToDate(record.reviewDueAt),
+        notes: record.notes,
+        documentId: record.documentId,
+        workflowRunId: record.workflowRunId,
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt),
+        publishedAt: isoToDate(record.publishedAt),
+        publishedPath: record.publishedPath
+      } as any
+    });
+
+    return this.mapPricingGovernanceRecord(created as any);
+  }
+
+  async updatePricingGovernance(id: string, patch: Partial<PricingGovernanceRecord>): Promise<PricingGovernanceRecord> {
+    const updated = await this.client.pricingGovernance.update({
+      where: { id },
+      data: {
+        title: patch.title,
+        serviceLineId: patch.serviceLineId,
+        ownerRole: patch.ownerRole,
+        status: patch.status,
+        pricingSummary: patch.pricingSummary,
+        marginGuardrailsSummary: patch.marginGuardrailsSummary,
+        discountGuardrailsSummary: patch.discountGuardrailsSummary,
+        payerAlignmentSummary: patch.payerAlignmentSummary,
+        claimsConstraintSummary: patch.claimsConstraintSummary,
+        effectiveDate: isoToDate(patch.effectiveDate),
+        reviewDueAt: isoToDate(patch.reviewDueAt),
+        notes: patch.notes,
+        documentId: patch.documentId,
+        workflowRunId: patch.workflowRunId,
+        createdBy: patch.createdBy,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt),
+        publishedAt: isoToDate(patch.publishedAt),
+        publishedPath: patch.publishedPath
+      } as any
+    });
+
+    return this.mapPricingGovernanceRecord(updated as any);
+  }
+
+  async getPricingGovernance(id: string): Promise<PricingGovernanceRecord | null> {
+    const record = await this.client.pricingGovernance.findUnique({ where: { id } });
+    return record ? this.mapPricingGovernanceRecord(record as any) : null;
+  }
+
+  async getPricingGovernanceByDocumentId(documentId: string): Promise<PricingGovernanceRecord | null> {
+    const record = await this.client.pricingGovernance.findFirst({ where: { documentId } });
+    return record ? this.mapPricingGovernanceRecord(record as any) : null;
+  }
+
+  async listPricingGovernance(filters?: {
+    status?: string;
+    ownerRole?: string;
+    serviceLineId?: string;
+  }): Promise<PricingGovernanceRecord[]> {
+    const records = await this.client.pricingGovernance.findMany({
+      where: mapListFilters(filters) as any,
+      orderBy: [{ reviewDueAt: "asc" }, { createdAt: "desc" }]
+    });
+
+    return records.map((record) => this.mapPricingGovernanceRecord(record as any));
+  }
+
+  async createRevenueReview(record: RevenueReviewRecord): Promise<RevenueReviewRecord> {
+    const created = await this.client.revenueReview.create({
+      data: {
+        id: record.id,
+        title: record.title,
+        status: record.status,
+        ownerRole: record.ownerRole,
+        serviceLineId: record.serviceLineId,
+        reviewWindowLabel: record.reviewWindowLabel,
+        targetReviewDate: isoToDate(record.targetReviewDate),
+        completedAt: isoToDate(record.completedAt),
+        summaryNote: record.summaryNote,
+        linkedCommitteeId: record.linkedCommitteeId,
+        snapshotJson: asJsonValue(record.snapshot),
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt)
+      } as any
+    });
+
+    return this.mapRevenueReviewRecord(created as any);
+  }
+
+  async updateRevenueReview(id: string, patch: Partial<RevenueReviewRecord>): Promise<RevenueReviewRecord> {
+    const updated = await this.client.revenueReview.update({
+      where: { id },
+      data: {
+        title: patch.title,
+        status: patch.status,
+        ownerRole: patch.ownerRole,
+        serviceLineId: patch.serviceLineId,
+        reviewWindowLabel: patch.reviewWindowLabel,
+        targetReviewDate: isoToDate(patch.targetReviewDate),
+        completedAt: isoToDate(patch.completedAt),
+        summaryNote: patch.summaryNote,
+        linkedCommitteeId: patch.linkedCommitteeId,
+        snapshotJson: patch.snapshot ? asJsonValue(patch.snapshot) : undefined,
+        createdBy: patch.createdBy,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt)
+      } as any
+    });
+
+    return this.mapRevenueReviewRecord(updated as any);
+  }
+
+  async getRevenueReview(id: string): Promise<RevenueReviewRecord | null> {
+    const record = await this.client.revenueReview.findUnique({ where: { id } });
+    return record ? this.mapRevenueReviewRecord(record as any) : null;
+  }
+
+  async listRevenueReviews(filters?: {
+    status?: string;
+    ownerRole?: string;
+    serviceLineId?: string;
+    linkedCommitteeId?: string;
+  }): Promise<RevenueReviewRecord[]> {
+    const records = await this.client.revenueReview.findMany({
+      where: mapListFilters(filters) as any,
+      orderBy: [{ targetReviewDate: "asc" }, { createdAt: "desc" }]
+    });
+
+    return records.map((record) => this.mapRevenueReviewRecord(record as any));
   }
 
   async createCommittee(record: CommitteeRecord): Promise<CommitteeRecord> {

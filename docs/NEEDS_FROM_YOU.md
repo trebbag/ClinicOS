@@ -70,6 +70,15 @@ Using the current local `.env` and repo code:
   - approved internal tool allowlists and structured output requirements
   - OpenAI Responses API tool-loop execution through internal wrappers instead of direct business-logic calls
   - capability-gated API routes and a dedicated runtime-agents UI
+- the revenue/commercial slice is now implemented in the repo
+  - payer issue register with deterministic escalation into linked action items
+  - pricing-governance packets that reuse the existing approval and publication path
+  - revenue-review records with live commercial snapshots and committee linkage
+  - a dedicated `/revenue` dashboard for commercial governance
+- the live smoke path now also checks that deployed runtime agents remain intentionally disabled
+- the repo now ships an authenticated worker-health diagnostic command:
+  - `npm run smoke:worker-health -- https://your-pilot-url.example.com`
+  - it signs in through device-profile auth, reads `/ops/worker-health`, prints queue ages and thresholds, and exits nonzero only for `critical` worker health
 
 That means the remaining pilot blockers are now mostly broader pilot validation, Render deployment consistency, and operations hardening.
 
@@ -114,6 +123,7 @@ The deployed Render stack is still healthy and pilot-usable, but the main remain
   - controlled-substance stewardship bootstrap, submit, approve, and publish
   - standards bootstrap
   - evidence-binder create, submit, approve, and publish
+  - a runtime-agent status check that confirms deployed agents stay disabled
 - Pilot Ops now also exposes worker heartbeat/runtime detail directly:
   - last worker heartbeat
   - last completed batch summary
@@ -145,6 +155,16 @@ The deployed Render stack is still healthy and pilot-usable, but the main remain
 - There is now also a bounded operator fallback:
   - Pilot Ops can run one worker batch intentionally through the API
   - that means a stalled queue no longer requires local shell access just to confirm or drain one batch
+- The dedicated authenticated worker-health smoke now confirms the current deployed worker concern is still real:
+  - `health: critical`
+  - `lastHeartbeatAt: null`
+  - `lastCompletedBatchAt: null`
+  - `queued: 2`
+  - `oldestQueuedMinutes: 67`
+  - recommendation: run one bounded batch, then inspect Render worker pickup/heartbeat behavior
+- The deployed runtime-agent status check succeeded, but the disabled reason is currently:
+  - `OPENAI_API_KEY is not configured for runtime-agent execution.`
+  - if you want the freeze to stay explicit even after adding the key later, also set `RUNTIME_AGENTS_ENABLED=false` on Render
 
 ## What is now effectively closed
 
@@ -165,7 +185,7 @@ The deployed Render stack is still healthy and pilot-usable, but the main remain
 
 5. Runtime agents are no longer a future placeholder.
    - The first bounded execution slice is implemented and verified locally.
-   - Broader enablement now depends on rollout comfort, eval coverage, and whether you want it enabled in the deployed environment.
+   - The current chosen default is to keep them deployed but disabled until a later rollout.
 
 ## What I still need from you next
 
@@ -186,10 +206,11 @@ The deployed Render stack is still healthy and pilot-usable, but the main remain
    - if the queue is stuck and you need an immediate recovery path, use `Run one worker batch now` in Pilot Ops
    - no new secrets or Microsoft tenant setup are required for this step
 
-4. Optional runtime-agent rollout choice
-   - decide whether you want the new runtime-agent slice enabled in the deployed environment now
-   - if yes, confirm Render has `OPENAI_API_KEY` and either leave `RUNTIME_AGENTS_ENABLED` unset or set it to `true`
-   - if no, set `RUNTIME_AGENTS_ENABLED=false` and treat runtime agents as a later rollout
+4. Keep `RUNTIME_AGENTS_ENABLED=false` in deployed environments for now
+   - this matches the current rollout choice
+   - the live smoke path now verifies that runtime agents stay disabled
+   - current deployed status is disabled because `OPENAI_API_KEY` is absent, not because the explicit flag is set
+   - if you want the freeze to stay explicit even after later adding the key, set `RUNTIME_AGENTS_ENABLED=false` on Render now
 
 ## Database rule
 
@@ -202,8 +223,14 @@ Postgres is still required even though Microsoft is now ready, because Clinic OS
 
 The next bounded validation step is:
 
-- rerun the expanded deployed live smoke once the Render worker is confidently draining fresh queued jobs on its own
+- rerun the expanded deployed live smoke once the latest revenue-governance code is deployed
 - use the new `/ops/worker-health` surface to confirm the worker is heartbeating before and after that smoke run
+- use `npm run smoke:worker-health -- https://your-pilot-url.example.com` when you want an auth-backed, shell-friendly worker diagnostic without opening Pilot Ops
+- because the current worker-health smoke is still `critical`, the next operational check should be:
+  - open Pilot Ops
+  - use `Run one worker batch now`
+  - confirm queued work drops and heartbeat timestamps begin advancing
+  - if they do not, inspect the Render `clinic-os-worker` service logs for pickup/loop failures
 - if needed during pilot operations, use the new `/worker-jobs/run-once` operator action as a bounded fallback while continuing to diagnose Render worker pickup
 
 After that, the next major engineering step should be:
