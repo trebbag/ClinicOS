@@ -14,6 +14,7 @@ The repository now has a working pilot backbone for:
 - persisted Microsoft preflight validation records and pilot-ops status endpoints
 - a pilot-ops admin page for auth, worker, and Microsoft readiness checks
 - a first-class pilot-ops alert summary for runtime, Microsoft, worker, auth, office-ops, and scorecard risks
+- a first-class worker runtime health surface with last heartbeat, last completed batch, recent failure detail, and oldest queued/processing job age visible through Pilot Ops and `/ops/worker-health`
 - office-ops dashboard reads, daily closeout artifacts, overdue maintenance sweeps, and scorecard history views
 - room-readiness checklist templates/runs/items with closeout gating and office-manager inline updates
 - Planner task reconciliation back into Clinic OS action-item status and sync health
@@ -21,6 +22,7 @@ The repository now has a working pilot backbone for:
 - scorecard history enrichment with rolling averages and open training-gap counts
 - first-class incident and CAPA records with deterministic review/resolution commands, linked workflow runs, audit events, and quality UI management
 - first-class committee and QAPI records with committee registry, meeting scheduling, packet generation, approval routing, QAPI snapshotting, and decision-to-action-item follow-through
+- a live QAPI dashboard summary route and UI view that rolls incidents, CAPAs, approvals, worker queue, standards, binders, stewardship packets, and practice-agreement expiry into one governance snapshot
 - first-class public-asset inventory with explicit structured claims, claims-review commands, linked `public_facing` document approvals, and approved archive visibility
 - first-class service-line registry and governance packs with default bootstrap, pack drafting, approval routing, controlled publication, and publish-sync back into service-line review status
 - first-class delegation-matrix rules with service-line/task-role matching, deterministic allowed/not-allowed evaluation, bootstrap defaults, API management, and a dedicated governance UI
@@ -50,7 +52,7 @@ The following areas are still placeholders or partial:
 - richer alert delivery integrations beyond the new cleanup/runbook/dashboard baseline
 - multi-room office master data, richer checklist analytics, and fuller Planner reconciliation breadth
 - broader HR/training workflows beyond manual requirements/completions and longer-range scorecard analytics
-- deeper committee/QAPI reporting, standards-to-survey analytics, and evidence-gap remediation tooling beyond the new committee packet slice
+- richer committee/QAPI trend history, standards-to-survey analytics, and evidence-gap remediation tooling beyond the new QAPI dashboard snapshot
 - deeper commercial claims-governance breadth, service-line-specific analytics, and clinic-specific governance breadth beyond the new practice-agreement slice
 - runtime agent structured tool execution loop and full eval-backed feature flag rollout
 - deeper deployment, observability, and environment promotion workflows
@@ -64,4 +66,7 @@ Operational note from the latest live validation:
 - a live practice-agreement smoke run reached `publish_pending` and then sat queued until a one-off local worker batch against the same live DB drained it successfully
 - that means the document publish logic is healthy, but the deployed worker's steady-state queue leasing still deserves monitoring during broader pilot usage
 - the local repo and live external Postgres schema now also include controlled-substance stewardship plus standards/evidence-binder slices
-- those two newest slices still need the latest web/API/worker redeploy before they can be smoke-tested in Render
+- those two newest slices are now deployed, but the full deployed live smoke still stalls on a fresh queued worker job rather than on the route logic itself
+- a one-off local worker batch against the same live database processed the stuck job successfully, which points to Render worker steady-state pickup/lease behavior rather than broken publish or sync logic
+- the worker loop now records periodic heartbeat and batch events into the shared audit stream and no longer exits the whole process on a single transient batch error
+- that means the remaining worker question can now be diagnosed from Clinic OS itself instead of relying only on Render logs

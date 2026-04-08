@@ -25,6 +25,12 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
     return app.clinicService.getOpsMaintenanceSummary();
   });
 
+  app.get("/ops/worker-health", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "ops.view_config");
+    return app.clinicService.getWorkerRuntimeStatus();
+  });
+
   app.get("/ops/alerts", async (request) => {
     const actor = actorFromRequest(request);
     requireCapability(actor, "ops.view_config");

@@ -38,6 +38,7 @@ import {
   createWorkflowRun,
   createServiceLinePackRecord,
   createServiceLineRecord,
+  defaultWorkerHeartbeatIntervalMs,
   deidentifiedOperationalRowSchema,
   delegationEvaluationQuerySchema,
   delegationRuleCreateSchema,
@@ -89,6 +90,7 @@ import {
   type ChecklistRun,
   type ChecklistTemplate,
   type CommitteeDecisionRecord,
+  type CommitteeQapiDashboardSummary,
   type CommitteeMeetingRecord,
   type CommitteeQapiSnapshot,
   type CommitteeRecord,
@@ -123,10 +125,14 @@ import {
   type RoleScorecard,
   type ScorecardHistoryPoint,
   type ScorecardReviewRecord,
+  type WorkerBatchSummary,
   type WorkerJobSummary,
+  type WorkerRuntimeStatus,
   type WorkerJobRecord,
   type WorkflowDefinition,
-  type WorkflowRun
+  type WorkflowRun,
+  workerBatchSummarySchema,
+  workerRuntimeEntityId
 } from "@clinic-os/domain";
 import { randomId } from "@clinic-os/domain";
 import { calculateRoleScorecard } from "@clinic-os/metrics";
@@ -163,6 +169,19 @@ function subtractDays(input: string, days: number): string {
 
 function subtractMinutes(input: string, minutes: number): string {
   return new Date(new Date(input).getTime() - minutes * 60_000).toISOString();
+}
+
+function ageMinutes(now: string, earlier: string | null): number | null {
+  if (!earlier) {
+    return null;
+  }
+
+  return Math.max(0, Math.round((new Date(now).getTime() - new Date(earlier).getTime()) / 60_000));
+}
+
+function parseWorkerBatchSummary(input: unknown): WorkerBatchSummary | null {
+  const parsed = workerBatchSummarySchema.safeParse(input);
+  return parsed.success ? parsed.data : null;
 }
 
 function derivePublicAssetStatus(input: {
@@ -1524,6 +1543,10 @@ export class ClinicApiService {
       created,
       existing: alreadyPresent
     };
+  }
+
+  async getCommitteeQapiDashboardSummary(): Promise<CommitteeQapiDashboardSummary> {
+    return this.buildCommitteeQapiDashboardSummary();
   }
 
   async listCommitteeMeetings(filters?: {
@@ -3858,6 +3881,93 @@ export class ClinicApiService {
     };
   }
 
+  async getWorkerRuntimeStatus(input?: {
+    now?: string;
+    pollIntervalMs?: number;
+    heartbeatIntervalMs?: number;
+    staleProcessingMinutes?: number;
+  }): Promise<WorkerRuntimeStatus> {
+    const checkedAt = input?.now ?? new Date().toISOString();
+    const pollIntervalMs = input?.pollIntervalMs ?? Number(process.env.WORKER_POLL_INTERVAL_MS ?? 5_000);
+    const heartbeatIntervalMs = input?.heartbeatIntervalMs ?? Number(process.env.WORKER_HEARTBEAT_INTERVAL_MS ?? defaultWorkerHeartbeatIntervalMs);
+    const staleProcessingMinutes = input?.staleProcessingMinutes ?? 15;
+
+    const [jobs, workerEvents] = await Promise.all([
+      this.repository.listWorkerJobs(),
+      this.repository.listAuditEvents({
+        entityType: "worker_runtime",
+        entityId: workerRuntimeEntityId
+      })
+    ]);
+
+    const relevantEvents = workerEvents.filter((event) => event.eventType.startsWith("worker."));
+    const latestStarted = relevantEvents.find((event) => event.eventType === "worker.started") ?? null;
+    const latestCompleted = relevantEvents.find((event) => event.eventType === "worker.batch.completed") ?? null;
+    const latestFailed = relevantEvents.find((event) => event.eventType === "worker.batch.failed") ?? null;
+    const latestHeartbeat = latestCompleted ?? latestFailed ?? latestStarted;
+
+    const queuedJobs = jobs
+      .filter((job) => job.status === "queued")
+      .sort((left, right) => left.scheduledAt.localeCompare(right.scheduledAt) || left.createdAt.localeCompare(right.createdAt));
+    const processingJobs = jobs
+      .filter((job) => job.status === "processing")
+      .sort((left, right) => (left.lockedAt ?? left.updatedAt).localeCompare(right.lockedAt ?? right.updatedAt));
+
+    const oldestQueued = queuedJobs[0] ?? null;
+    const oldestProcessing = processingJobs[0] ?? null;
+    const summary = await this.getWorkerJobSummary();
+    const oldestQueuedMinutes = ageMinutes(checkedAt, oldestQueued?.scheduledAt ?? null);
+    const oldestProcessingAt = oldestProcessing?.lockedAt ?? oldestProcessing?.updatedAt ?? null;
+    const oldestProcessingMinutes = ageMinutes(checkedAt, oldestProcessingAt);
+    const lastHeartbeatMinutes = ageMinutes(checkedAt, latestHeartbeat?.createdAt ?? null);
+    const lastFailedBatchMessage = typeof latestFailed?.payload?.message === "string"
+      ? latestFailed.payload.message
+      : latestFailed?.payload?.message == null
+        ? null
+        : String(latestFailed.payload.message);
+
+    let health: WorkerRuntimeStatus["health"] = "unknown";
+    if (latestHeartbeat) {
+      health = "healthy";
+    }
+    if ((summary.failed + summary.deadLetter) > 0 || (oldestProcessingMinutes ?? 0) >= staleProcessingMinutes) {
+      health = "warning";
+    }
+
+    const stalledHeartbeatMinutes = Math.max(
+      Math.round((heartbeatIntervalMs * 2) / 60_000),
+      Math.round((pollIntervalMs * 20) / 60_000),
+      2
+    );
+    const queueStalled = summary.queued > 0 && (lastHeartbeatMinutes === null || lastHeartbeatMinutes >= stalledHeartbeatMinutes);
+    const processingStalled = summary.processing > 0 && (oldestProcessingMinutes ?? 0) >= staleProcessingMinutes;
+    if (queueStalled || processingStalled) {
+      health = "critical";
+    }
+
+    return {
+      checkedAt,
+      health,
+      pollIntervalMs,
+      heartbeatIntervalMs,
+      lastStartedAt: latestStarted?.createdAt ?? null,
+      lastHeartbeatAt: latestHeartbeat?.createdAt ?? null,
+      lastCompletedBatchAt: latestCompleted?.createdAt ?? null,
+      lastCompletedBatch: parseWorkerBatchSummary(latestCompleted?.payload?.summary),
+      lastFailedBatchAt: latestFailed?.createdAt ?? null,
+      lastFailedBatchMessage,
+      backlog: {
+        ...summary,
+        oldestQueuedAt: oldestQueued?.scheduledAt ?? null,
+        oldestQueuedType: oldestQueued?.type ?? null,
+        oldestQueuedMinutes,
+        oldestProcessingAt,
+        oldestProcessingType: oldestProcessing?.type ?? null,
+        oldestProcessingMinutes
+      }
+    };
+  }
+
   getRoleCapabilities(): RoleCapabilityRecord[] {
     return listRoleCapabilities();
   }
@@ -3986,13 +4096,14 @@ export class ClinicApiService {
     databaseReady?: boolean;
   }): Promise<OpsAlertSummary> {
     const checkedAt = new Date().toISOString();
-    const [runtime, maintenance, overview, authEvents] = await Promise.all([
+    const [runtime, maintenance, workerRuntime, overview, authEvents] = await Promise.all([
       this.getRuntimeConfigStatus({
         nodeEnv: input?.nodeEnv ?? process.env.NODE_ENV ?? "development",
         publicAppOrigin: input?.publicAppOrigin ?? process.env.PUBLIC_APP_ORIGIN ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? null,
         databaseReady: input?.databaseReady ?? true
       }),
       this.getOpsMaintenanceSummary({ now: checkedAt }),
+      this.getWorkerRuntimeStatus({ now: checkedAt }),
       this.getOverviewStats(),
       this.listAuditEvents({ eventTypePrefix: "auth." })
     ]);
@@ -4051,6 +4162,30 @@ export class ClinicApiService {
         detail: `${maintenance.worker.staleProcessing} processing jobs are older than the stale-processing threshold.`,
         action: "Run pilot cleanup or retry after confirming the worker is healthy.",
         count: maintenance.worker.staleProcessing
+      });
+    }
+
+    if (workerRuntime.health === "critical" && maintenance.worker.queued > 0) {
+      pushAlert({
+        key: "worker.heartbeat_stalled",
+        scope: "worker",
+        severity: "critical",
+        title: "Worker heartbeat is stale while jobs are queued",
+        detail: workerRuntime.lastHeartbeatAt
+          ? `The oldest queued job has been waiting ${workerRuntime.backlog.oldestQueuedMinutes ?? 0} minutes, and the worker last reported activity at ${workerRuntime.lastHeartbeatAt}.`
+          : "No worker heartbeat has been recorded yet even though queued jobs exist.",
+        action: "Check the Render worker service logs and confirm the worker loop is polling and claiming jobs on schedule.",
+        count: maintenance.worker.queued
+      });
+    } else if (workerRuntime.health === "warning" && workerRuntime.lastFailedBatchAt) {
+      pushAlert({
+        key: "worker.recent_batch_failure",
+        scope: "worker",
+        severity: "warning",
+        title: "The worker recently failed a batch",
+        detail: workerRuntime.lastFailedBatchMessage ?? "A recent batch failure was recorded by the worker runtime.",
+        action: "Review the latest worker failure, then confirm the queue is draining afterward.",
+        count: null
       });
     }
 
@@ -5202,17 +5337,48 @@ export class ClinicApiService {
     }
   }
 
-  private async buildCommitteeQapiSnapshot(summaryNote: string | null): Promise<CommitteeQapiSnapshot> {
+  private async buildCommitteeQapiDashboardSummary(): Promise<CommitteeQapiDashboardSummary> {
     const now = new Date().toISOString();
-    const [overview, incidents, capas, workerSummary] = await Promise.all([
+    const practiceAgreementExpiryThreshold = addDays(now, 45);
+    const [
+      overview,
+      incidents,
+      capas,
+      workerSummary,
+      standards,
+      binders,
+      controlledSubstancePackets,
+      telehealthPackets,
+      practiceAgreements
+    ] = await Promise.all([
       this.getOverviewStats(),
       this.repository.listIncidents(),
       this.repository.listCapas(),
-      this.getWorkerJobSummary()
+      this.getWorkerJobSummary(),
+      this.repository.listStandardMappings(),
+      this.repository.listEvidenceBinders(),
+      this.repository.listControlledSubstanceStewardship(),
+      this.repository.listTelehealthStewardship(),
+      this.repository.listPracticeAgreements()
     ]);
 
     const openIncidents = incidents.filter((incident) => incident.status !== "closed");
     const openCapas = capas.filter((capa) => capa.status !== "closed");
+    const overdueStandardsReviews = standards.filter((standard) =>
+      standard.nextReviewDueAt !== null && standard.nextReviewDueAt < now
+    );
+    const evidenceBindersInReview = binders.filter((binder) =>
+      ["approval_pending", "approved", "publish_pending"].includes(binder.status)
+    );
+    const controlledSubstancePacketsNeedingReview = controlledSubstancePackets.filter((packet) =>
+      ["approval_pending", "approved", "publish_pending"].includes(packet.status)
+    );
+    const telehealthPacketsNeedingReview = telehealthPackets.filter((packet) =>
+      ["approval_pending", "approved", "publish_pending"].includes(packet.status)
+    );
+    const practiceAgreementsExpiringSoon = practiceAgreements.filter((agreement) =>
+      agreement.expiresAt !== null && agreement.expiresAt <= practiceAgreementExpiryThreshold
+    );
 
     return {
       openIncidents: openIncidents.length,
@@ -5223,6 +5389,30 @@ export class ClinicApiService {
       pendingApprovals: overview.openApprovals,
       overdueScorecardReviews: overview.overdueScorecardReviews,
       queuedJobs: workerSummary.queued + workerSummary.processing,
+      standardsAttentionNeeded: standards.filter((standard) => standard.status === "attention_needed").length,
+      standardsReviewPending: standards.filter((standard) => standard.status === "review_pending").length,
+      overdueStandardsReviews: overdueStandardsReviews.length,
+      evidenceBindersDraft: binders.filter((binder) => binder.status === "draft").length,
+      evidenceBindersInReview: evidenceBindersInReview.length,
+      controlledSubstancePacketsNeedingReview: controlledSubstancePacketsNeedingReview.length,
+      controlledSubstancePacketsPublished: controlledSubstancePackets.filter((packet) => packet.status === "published").length,
+      telehealthPacketsNeedingReview: telehealthPacketsNeedingReview.length,
+      practiceAgreementsExpiringSoon: practiceAgreementsExpiringSoon.length
+    };
+  }
+
+  private async buildCommitteeQapiSnapshot(summaryNote: string | null): Promise<CommitteeQapiSnapshot> {
+    const dashboard = await this.buildCommitteeQapiDashboardSummary();
+
+    return {
+      openIncidents: dashboard.openIncidents,
+      criticalIncidents: dashboard.criticalIncidents,
+      openCapas: dashboard.openCapas,
+      overdueCapas: dashboard.overdueCapas,
+      overdueActionItems: dashboard.overdueActionItems,
+      pendingApprovals: dashboard.pendingApprovals,
+      overdueScorecardReviews: dashboard.overdueScorecardReviews,
+      queuedJobs: dashboard.queuedJobs,
       summaryNote
     };
   }

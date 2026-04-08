@@ -74,6 +74,26 @@ export const committeeQapiSnapshotSchema = z.object({
   summaryNote: z.string().nullable().default(null)
 });
 
+export const committeeQapiDashboardSummarySchema = z.object({
+  openIncidents: z.number().int().nonnegative(),
+  criticalIncidents: z.number().int().nonnegative(),
+  openCapas: z.number().int().nonnegative(),
+  overdueCapas: z.number().int().nonnegative(),
+  overdueActionItems: z.number().int().nonnegative(),
+  pendingApprovals: z.number().int().nonnegative(),
+  overdueScorecardReviews: z.number().int().nonnegative(),
+  queuedJobs: z.number().int().nonnegative(),
+  standardsAttentionNeeded: z.number().int().nonnegative(),
+  standardsReviewPending: z.number().int().nonnegative(),
+  overdueStandardsReviews: z.number().int().nonnegative(),
+  evidenceBindersDraft: z.number().int().nonnegative(),
+  evidenceBindersInReview: z.number().int().nonnegative(),
+  controlledSubstancePacketsNeedingReview: z.number().int().nonnegative(),
+  controlledSubstancePacketsPublished: z.number().int().nonnegative(),
+  telehealthPacketsNeedingReview: z.number().int().nonnegative(),
+  practiceAgreementsExpiringSoon: z.number().int().nonnegative()
+});
+
 export const committeeMeetingRecordSchema = z.object({
   id: z.string(),
   committeeId: z.string(),
@@ -163,6 +183,7 @@ export type CommitteeRecord = z.infer<typeof committeeRecordSchema>;
 export type CommitteeAgendaItem = z.infer<typeof committeeAgendaItemSchema>;
 export type CommitteeDecisionRecord = z.infer<typeof committeeDecisionRecordSchema>;
 export type CommitteeQapiSnapshot = z.infer<typeof committeeQapiSnapshotSchema>;
+export type CommitteeQapiDashboardSummary = z.infer<typeof committeeQapiDashboardSummarySchema>;
 export type CommitteeMeetingRecord = z.infer<typeof committeeMeetingRecordSchema>;
 export type Committee = CommitteeRecord;
 

@@ -92,6 +92,36 @@ type MaintenanceSummary = {
   };
 };
 
+type WorkerHealth = {
+  checkedAt: string;
+  health: "unknown" | "healthy" | "warning" | "critical";
+  pollIntervalMs: number;
+  heartbeatIntervalMs: number;
+  lastStartedAt: string | null;
+  lastHeartbeatAt: string | null;
+  lastCompletedBatchAt: string | null;
+  lastCompletedBatch: {
+    processed: number;
+    succeeded: number;
+    failed: number;
+  } | null;
+  lastFailedBatchAt: string | null;
+  lastFailedBatchMessage: string | null;
+  backlog: {
+    queued: number;
+    processing: number;
+    failed: number;
+    deadLetter: number;
+    succeeded: number;
+    oldestQueuedAt: string | null;
+    oldestQueuedType: string | null;
+    oldestQueuedMinutes: number | null;
+    oldestProcessingAt: string | null;
+    oldestProcessingType: string | null;
+    oldestProcessingMinutes: number | null;
+  };
+};
+
 type OpsAlert = {
   key: string;
   scope: "runtime" | "microsoft" | "worker" | "auth" | "office_ops" | "scorecards";
@@ -200,6 +230,7 @@ export default function PilotOpsPage(): JSX.Element {
   const [integrationStatus, setIntegrationStatus] = useState<MicrosoftStatus | null>(null);
   const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
   const [maintenanceSummary, setMaintenanceSummary] = useState<MaintenanceSummary | null>(null);
+  const [workerHealth, setWorkerHealth] = useState<WorkerHealth | null>(null);
   const [opsAlerts, setOpsAlerts] = useState<OpsAlertSummary | null>(null);
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null);
   const [roleCapabilities, setRoleCapabilities] = useState<RoleCapabilityRecord[]>([]);
@@ -230,11 +261,12 @@ export default function PilotOpsPage(): JSX.Element {
     }
 
     try {
-      const [currentUser, microsoft, runtimeStatus, maintenance, alerts, capabilityRows, overviewStats, profileRows, deviceRows, authAudit] = await Promise.all([
+      const [currentUser, microsoft, runtimeStatus, maintenance, workerRuntime, alerts, capabilityRows, overviewStats, profileRows, deviceRows, authAudit] = await Promise.all([
         apiRequest<WhoAmI>("/auth/whoami", actor),
         apiRequest<MicrosoftStatus>("/integrations/microsoft/status", actor),
         apiRequest<ConfigStatus>("/ops/config-status", actor),
         apiRequest<MaintenanceSummary>("/ops/maintenance-summary", actor),
+        apiRequest<WorkerHealth>("/ops/worker-health", actor),
         apiRequest<OpsAlertSummary>("/ops/alerts", actor),
         apiRequest<RoleCapabilityRecord[]>("/ops/role-capabilities", actor),
         apiRequest<OverviewStats>("/dashboard/overview", actor),
@@ -246,6 +278,7 @@ export default function PilotOpsPage(): JSX.Element {
       setIntegrationStatus(microsoft);
       setConfigStatus(runtimeStatus);
       setMaintenanceSummary(maintenance);
+      setWorkerHealth(workerRuntime);
       setOpsAlerts(alerts);
       setRoleCapabilities(capabilityRows);
       setOverview(overviewStats);
@@ -545,12 +578,10 @@ export default function PilotOpsPage(): JSX.Element {
           </div>
         </div>
         <div className="card">
-          <div className="muted">Worker backlog</div>
-          <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>
-            {(configStatus?.worker.queued ?? 0) + (configStatus?.worker.processing ?? 0)}
-          </div>
+          <div className="muted">Worker health</div>
+          <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>{workerHealth?.health ?? "unknown"}</div>
           <div className="muted" style={{ marginTop: 8 }}>
-            Failed/dead-letter: {(configStatus?.worker.failed ?? 0) + (configStatus?.worker.deadLetter ?? 0)}
+            Last heartbeat: {workerHealth?.lastHeartbeatAt ? new Date(workerHealth.lastHeartbeatAt).toLocaleString() : "Not recorded yet"}
           </div>
         </div>
       </div>
@@ -567,6 +598,65 @@ export default function PilotOpsPage(): JSX.Element {
         <div className="card">
           <div className="muted">Info alerts</div>
           <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>{opsAlerts?.infoCount ?? 0}</div>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2>Worker runtime</h2>
+        <div className="grid cols-3">
+          <div>
+            <div className="muted">Backlog</div>
+            <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>
+              {(workerHealth?.backlog.queued ?? 0) + (workerHealth?.backlog.processing ?? 0)}
+            </div>
+            <div className="muted">
+              queued {workerHealth?.backlog.queued ?? 0}, processing {workerHealth?.backlog.processing ?? 0}
+            </div>
+          </div>
+          <div>
+            <div className="muted">Last completed batch</div>
+            <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>
+              {workerHealth?.lastCompletedBatchAt ? new Date(workerHealth.lastCompletedBatchAt).toLocaleTimeString() : "Never"}
+            </div>
+            <div className="muted">
+              {workerHealth?.lastCompletedBatch
+                ? `${workerHealth.lastCompletedBatch.processed} processed / ${workerHealth.lastCompletedBatch.succeeded} succeeded / ${workerHealth.lastCompletedBatch.failed} failed`
+                : "No batch completion recorded yet."}
+            </div>
+          </div>
+          <div>
+            <div className="muted">Oldest queued job</div>
+            <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>
+              {workerHealth?.backlog.oldestQueuedMinutes != null ? `${workerHealth.backlog.oldestQueuedMinutes} min` : "None"}
+            </div>
+            <div className="muted">
+              {workerHealth?.backlog.oldestQueuedType
+                ? `${workerHealth.backlog.oldestQueuedType} since ${new Date(workerHealth.backlog.oldestQueuedAt ?? "").toLocaleString()}`
+                : "No queued jobs."}
+            </div>
+          </div>
+        </div>
+        <div className="table" style={{ marginTop: 12 }}>
+          <div className="table-row table-head">
+            <span>Signal</span>
+            <span>Value</span>
+            <span>Detail</span>
+          </div>
+          <div className="table-row">
+            <span>Heartbeat cadence</span>
+            <span>{Math.round((workerHealth?.heartbeatIntervalMs ?? 0) / 1000)} sec</span>
+            <span>Poll interval {Math.round((workerHealth?.pollIntervalMs ?? 0) / 1000)} sec</span>
+          </div>
+          <div className="table-row">
+            <span>Oldest processing lock</span>
+            <span>{workerHealth?.backlog.oldestProcessingMinutes != null ? `${workerHealth.backlog.oldestProcessingMinutes} min` : "None"}</span>
+            <span>{workerHealth?.backlog.oldestProcessingType ?? "No processing jobs."}</span>
+          </div>
+          <div className="table-row">
+            <span>Recent batch failure</span>
+            <span>{workerHealth?.lastFailedBatchAt ? new Date(workerHealth.lastFailedBatchAt).toLocaleString() : "None"}</span>
+            <span>{workerHealth?.lastFailedBatchMessage ?? "No recent worker batch failure recorded."}</span>
+          </div>
         </div>
       </div>
 

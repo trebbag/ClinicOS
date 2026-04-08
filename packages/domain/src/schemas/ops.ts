@@ -1,4 +1,42 @@
 import { z } from "zod";
+import { workerJobSummarySchema, workerJobTypeSchema } from "./worker";
+
+export const workerRuntimeEntityId = "clinic-os-worker";
+export const defaultWorkerHeartbeatIntervalMs = 5 * 60_000;
+
+export const workerRuntimeHealthSchema = z.enum([
+  "unknown",
+  "healthy",
+  "warning",
+  "critical"
+]);
+
+export const workerBatchSummarySchema = z.object({
+  processed: z.number().int().nonnegative(),
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative()
+});
+
+export const workerRuntimeStatusSchema = z.object({
+  checkedAt: z.string(),
+  health: workerRuntimeHealthSchema,
+  pollIntervalMs: z.number().int().positive(),
+  heartbeatIntervalMs: z.number().int().positive(),
+  lastStartedAt: z.string().nullable(),
+  lastHeartbeatAt: z.string().nullable(),
+  lastCompletedBatchAt: z.string().nullable(),
+  lastCompletedBatch: workerBatchSummarySchema.nullable(),
+  lastFailedBatchAt: z.string().nullable(),
+  lastFailedBatchMessage: z.string().nullable(),
+  backlog: workerJobSummarySchema.extend({
+    oldestQueuedAt: z.string().nullable(),
+    oldestQueuedType: workerJobTypeSchema.nullable(),
+    oldestQueuedMinutes: z.number().nonnegative().nullable(),
+    oldestProcessingAt: z.string().nullable(),
+    oldestProcessingType: workerJobTypeSchema.nullable(),
+    oldestProcessingMinutes: z.number().nonnegative().nullable()
+  })
+});
 
 export const opsCleanupTargetSchema = z.enum([
   "enrollment_codes",
@@ -99,6 +137,9 @@ export type OpsCleanupTarget = z.infer<typeof opsCleanupTargetSchema>;
 export type OpsAlertSeverity = z.infer<typeof opsAlertSeveritySchema>;
 export type OpsAlert = z.infer<typeof opsAlertSchema>;
 export type OpsAlertSummary = z.infer<typeof opsAlertSummarySchema>;
+export type WorkerBatchSummary = z.infer<typeof workerBatchSummarySchema>;
+export type WorkerRuntimeHealth = z.infer<typeof workerRuntimeHealthSchema>;
+export type WorkerRuntimeStatus = z.infer<typeof workerRuntimeStatusSchema>;
 export type OpsMaintenanceSummary = z.infer<typeof opsMaintenanceSummarySchema>;
 export type OpsCleanupCommand = z.infer<typeof opsCleanupCommandSchema>;
 export type OpsCleanupResult = z.infer<typeof opsCleanupResultSchema>;

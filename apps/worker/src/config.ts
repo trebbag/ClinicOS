@@ -1,4 +1,5 @@
 import { config as loadDotenv } from "dotenv";
+import { defaultWorkerHeartbeatIntervalMs } from "@clinic-os/domain";
 import type { MicrosoftIntegrationMode } from "@clinic-os/msgraph";
 
 if (!process.env.VITEST && process.env.NODE_ENV !== "test") {
@@ -11,6 +12,7 @@ const integrationMode: MicrosoftIntegrationMode =
 export const workerConfig = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   pollIntervalMs: Number(process.env.WORKER_POLL_INTERVAL_MS ?? 5000),
+  heartbeatIntervalMs: Number(process.env.WORKER_HEARTBEAT_INTERVAL_MS ?? defaultWorkerHeartbeatIntervalMs),
   batchSize: Number(process.env.WORKER_BATCH_SIZE ?? 10),
   microsoft: {
     integrationMode,
@@ -35,5 +37,17 @@ export const workerConfig = {
 export function assertWorkerConfig(): void {
   if (workerConfig.nodeEnv === "production" && !process.env.DATABASE_URL) {
     throw new Error("Missing required env var: DATABASE_URL");
+  }
+
+  if (!Number.isFinite(workerConfig.pollIntervalMs) || workerConfig.pollIntervalMs <= 0) {
+    throw new Error("WORKER_POLL_INTERVAL_MS must be a positive number");
+  }
+
+  if (!Number.isFinite(workerConfig.heartbeatIntervalMs) || workerConfig.heartbeatIntervalMs <= 0) {
+    throw new Error("WORKER_HEARTBEAT_INTERVAL_MS must be a positive number");
+  }
+
+  if (!Number.isFinite(workerConfig.batchSize) || workerConfig.batchSize <= 0) {
+    throw new Error("WORKER_BATCH_SIZE must be a positive number");
   }
 }

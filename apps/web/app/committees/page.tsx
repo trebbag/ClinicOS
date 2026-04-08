@@ -52,6 +52,26 @@ type CommitteeQapiSnapshot = {
   summaryNote: string | null;
 };
 
+type CommitteeQapiDashboardSummary = {
+  openIncidents: number;
+  criticalIncidents: number;
+  openCapas: number;
+  overdueCapas: number;
+  overdueActionItems: number;
+  pendingApprovals: number;
+  overdueScorecardReviews: number;
+  queuedJobs: number;
+  standardsAttentionNeeded: number;
+  standardsReviewPending: number;
+  overdueStandardsReviews: number;
+  evidenceBindersDraft: number;
+  evidenceBindersInReview: number;
+  controlledSubstancePacketsNeedingReview: number;
+  controlledSubstancePacketsPublished: number;
+  telehealthPacketsNeedingReview: number;
+  practiceAgreementsExpiringSoon: number;
+};
+
 type CommitteeMeetingRecord = {
   id: string;
   committeeId: string;
@@ -149,6 +169,7 @@ export default function CommitteesPage(): JSX.Element {
   const [committees, setCommittees] = useState<CommitteeRecord[]>([]);
   const [meetings, setMeetings] = useState<CommitteeMeetingRecord[]>([]);
   const [approvals, setApprovals] = useState<ApprovalTask[]>([]);
+  const [qapiSummary, setQapiSummary] = useState<CommitteeQapiDashboardSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -203,15 +224,17 @@ export default function CommitteesPage(): JSX.Element {
 
     setLoading(true);
     try {
-      const [committeeRows, meetingRows, approvalRows] = await Promise.all([
+      const [committeeRows, meetingRows, qapiDashboard, approvalRows] = await Promise.all([
         apiRequest<CommitteeRecord[]>("/committees?isActive=true", actor),
         apiRequest<CommitteeMeetingRecord[]>("/committee-meetings", actor),
+        apiRequest<CommitteeQapiDashboardSummary>("/committees/qapi-summary", actor),
         hasCapability("approvals.view")
           ? apiRequest<ApprovalTask[]>("/approvals?status=requested", actor)
           : Promise.resolve([])
       ]);
       setCommittees(committeeRows);
       setMeetings(meetingRows);
+      setQapiSummary(qapiDashboard);
       setApprovals(approvalRows);
       setMeetingCommitteeId((current) => current || committeeRows[0]?.id || "");
       setSelectedMeetingId((current) => current ?? meetingRows[0]?.id ?? null);
@@ -391,6 +414,73 @@ export default function CommitteesPage(): JSX.Element {
       </header>
 
       {error ? <div className="card error">{error}</div> : null}
+
+      {qapiSummary ? (
+        <article className="card stack">
+          <div className="actions" style={{ justifyContent: "space-between" }}>
+            <h2>QAPI Dashboard</h2>
+            <span className="muted">Live governance snapshot</span>
+          </div>
+          <div className="grid cols-4">
+            <div className="card">
+              <div className="muted">Open incidents</div>
+              <strong>{qapiSummary.openIncidents}</strong>
+              <div className="muted">Critical: {qapiSummary.criticalIncidents}</div>
+            </div>
+            <div className="card">
+              <div className="muted">Open CAPAs</div>
+              <strong>{qapiSummary.openCapas}</strong>
+              <div className="muted">Overdue: {qapiSummary.overdueCapas}</div>
+            </div>
+            <div className="card">
+              <div className="muted">Pending approvals</div>
+              <strong>{qapiSummary.pendingApprovals}</strong>
+              <div className="muted">Queued jobs: {qapiSummary.queuedJobs}</div>
+            </div>
+            <div className="card">
+              <div className="muted">Overdue actions</div>
+              <strong>{qapiSummary.overdueActionItems}</strong>
+              <div className="muted">Scorecard reviews: {qapiSummary.overdueScorecardReviews}</div>
+            </div>
+          </div>
+          <div className="grid cols-4">
+            <div className="card">
+              <div className="muted">Standards needing attention</div>
+              <strong>{qapiSummary.standardsAttentionNeeded}</strong>
+              <div className="muted">Review pending: {qapiSummary.standardsReviewPending}</div>
+            </div>
+            <div className="card">
+              <div className="muted">Overdue standard reviews</div>
+              <strong>{qapiSummary.overdueStandardsReviews}</strong>
+              <div className="muted">Binder drafts: {qapiSummary.evidenceBindersDraft}</div>
+            </div>
+            <div className="card">
+              <div className="muted">Evidence binders in review</div>
+              <strong>{qapiSummary.evidenceBindersInReview}</strong>
+              <div className="muted">Controlled-substance review: {qapiSummary.controlledSubstancePacketsNeedingReview}</div>
+            </div>
+            <div className="card">
+              <div className="muted">Published controlled-substance packets</div>
+              <strong>{qapiSummary.controlledSubstancePacketsPublished}</strong>
+              <div className="muted">Telehealth review: {qapiSummary.telehealthPacketsNeedingReview}</div>
+            </div>
+          </div>
+          <div className="grid cols-2">
+            <div className="card">
+              <div className="muted">Practice agreements expiring soon</div>
+              <strong>{qapiSummary.practiceAgreementsExpiringSoon}</strong>
+            </div>
+            <div className="card">
+              <div className="muted">QAPI attention summary</div>
+              <div>
+                {qapiSummary.criticalIncidents > 0 || qapiSummary.overdueCapas > 0 || qapiSummary.overdueStandardsReviews > 0
+                  ? "Escalation needed across active governance signals."
+                  : "No critical governance escalations in the current snapshot."}
+              </div>
+            </div>
+          </div>
+        </article>
+      ) : null}
 
       <div className="grid cols-2">
         <article className="card stack">

@@ -2,6 +2,12 @@ import type { FastifyInstance } from "fastify";
 import { actorFromRequest, requireCapability } from "../lib/auth";
 
 export async function registerCommitteeRoutes(app: FastifyInstance): Promise<void> {
+  app.get("/committees/qapi-summary", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "committees.view");
+    return app.clinicService.getCommitteeQapiDashboardSummary();
+  });
+
   app.get("/committees", async (request) => {
     const actor = actorFromRequest(request);
     requireCapability(actor, "committees.view");

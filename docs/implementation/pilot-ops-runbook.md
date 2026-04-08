@@ -193,6 +193,8 @@ Before promoting a new pilot build:
 10. Review Pilot Ops for:
    - no blocking runtime issues
    - no critical alerts on `/ops/alerts`
+   - a fresh worker heartbeat on `/ops/worker-health`
+   - oldest queued job age staying low during the smoke pass
    - no stale processing jobs
    - no failed or dead-letter jobs that need intervention
 

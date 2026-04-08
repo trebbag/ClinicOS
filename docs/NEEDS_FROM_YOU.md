@@ -63,6 +63,8 @@ Using the current local `.env` and repo code:
   - evidence-binder registry with linked standards coverage and controlled clinical-governance approval
   - binder publish-sync back into linked standards, evidence document history, and next-review scheduling
   - dedicated standards/evidence UI and API routes
+- the committee/QAPI slice now also includes a live dashboard summary
+  - incidents, CAPAs, approvals, worker queue, standards, binders, stewardship packets, and expiring practice agreements are visible in one QAPI snapshot
 
 That means the remaining pilot blockers are now mostly broader pilot validation, Render deployment consistency, and operations hardening.
 
@@ -93,7 +95,7 @@ That means the remaining pilot blockers are now mostly broader pilot validation,
 
 ## What the latest live validation found
 
-The deployed Render stack is now healthy and pilot-usable, but there is still one worker-operations concern to keep watching.
+The deployed Render stack is still healthy and pilot-usable, but the main remaining operational concern is the deployed worker's steady-state pickup behavior.
 
 - The deployed Render smoke check is green:
   - web `healthz`: `200`
@@ -103,6 +105,16 @@ The deployed Render stack is now healthy and pilot-usable, but there is still on
   - device enrollment + profile login
   - SharePoint-backed document publish path
   - Planner/list-triggering workflow actions
+- The expanded live smoke harness now also includes:
+  - controlled-substance stewardship bootstrap, submit, approve, and publish
+  - standards bootstrap
+  - evidence-binder create, submit, approve, and publish
+- Pilot Ops now also exposes worker heartbeat/runtime detail directly:
+  - last worker heartbeat
+  - last completed batch summary
+  - latest batch failure message
+  - oldest queued job age
+  - oldest processing lock age
 - The broader synthetic role-validation pass also succeeded for:
   - office manager flow
   - quality lead flow
@@ -117,6 +129,14 @@ The deployed Render stack is now healthy and pilot-usable, but there is still on
 - The Render worker is processing jobs during live validation, but it is still worth checking its steady-state behavior:
   - the queue dropped during validation, but it settled at `2` fresh `lists.action-item.upsert` jobs tied to office-ops maintenance actions
   - that may be expected maintenance churn, or it may point to a Render worker/runtime issue that still needs inspection
+- A fresh deployed live smoke run for the new controlled-substance and standards/evidence-binder flows still stalled on a newly queued `lists.issue.upsert` worker job.
+  - the route logic itself did not fail
+  - a one-off local worker batch against the same live database processed the queued job successfully
+  - that strongly suggests the remaining problem is Render worker pickup/lease behavior, not broken workflow logic
+- The worker loop is now more resilient:
+  - it records periodic runtime heartbeat events into the shared audit stream
+  - it records recent batch failures for Pilot Ops visibility
+  - it no longer exits the whole process on one transient batch exception
 
 ## What is now effectively closed
 
@@ -132,6 +152,9 @@ The deployed Render stack is now healthy and pilot-usable, but there is still on
    - The remaining queue behavior is now a monitor-and-observe concern rather than a launch blocker.
    - If queue depth starts growing or jobs stop draining, inspect the worker logs and rerun the live smoke commands.
 
+4. Controlled-substance stewardship and standards/evidence-binder routes are implemented, tested, deployed, and reachable.
+   - The remaining open item for those slices is worker steadiness during full live smoke, not missing product code.
+
 ## What I still need from you next
 
 1. A decision on whether to keep the optional trusted-proxy path documented as a later hardening phase
@@ -144,14 +167,11 @@ The deployed Render stack is now healthy and pilot-usable, but there is still on
    - up to two backup profiles if needed
    - named office manager / quality lead / HR lead profiles when you want them added
 
-3. Redeploy the latest web, API, and worker services when you want the newest local governance slices available in Render
-   - this now applies to:
-     - controlled-substance stewardship
-     - standards mappings
-     - evidence binders
-   - no new secrets or Microsoft tenant setup are required for these repo-side implementations
-   - the external Postgres schema has already been updated locally from this machine
-   - if you later want additional Microsoft-backed governance registers beyond the current pilot surfaces, we can add those as separate follow-up integrations
+3. Watch the new Pilot Ops worker-health surface after the next deploy
+   - confirm `last heartbeat` keeps moving forward
+   - confirm `oldest queued job` does not keep climbing during normal use
+   - if the queue stalls again, compare Pilot Ops worker-health timing with the Render worker logs
+   - no new secrets or Microsoft tenant setup are required for this step
 
 ## Database rule
 
@@ -162,13 +182,11 @@ Postgres is still required even though Microsoft is now ready, because Clinic OS
 
 ## The next command I am waiting to run
 
-Once the latest code is redeployed, the next bounded validation step is:
+The next bounded validation step is:
 
-- a live smoke pass for:
-  - controlled-substance stewardship bootstrap, submit, approve, and publish
-  - standards bootstrap
-  - evidence-binder create, submit, approve, and publish
+- rerun the expanded deployed live smoke once the Render worker is confidently draining fresh queued jobs on its own
+- use the new `/ops/worker-health` surface to confirm the worker is heartbeating before and after that smoke run
 
 After that, the next major engineering step should be:
 
-- deeper committee/QAPI reporting, evidence-gap remediation, or runtime-agent execution work
+- evidence-gap remediation, richer trend/history reporting, or runtime-agent execution work

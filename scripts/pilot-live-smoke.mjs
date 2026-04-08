@@ -127,10 +127,55 @@ function chooseProfile(state, preferredProfileId, preferredRole) {
   }
 
   return state.allowedProfiles.find((profile) => profile.id === preferredProfileId)
-    ?? state.allowedProfiles.find((profile) => preferredRole && profile.role === preferredRole)
+    ?? state.allowedProfiles.find((profile) =>
+      preferredRole && (profile.role === preferredRole || profile.availableRoles?.includes(preferredRole))
+    )
     ?? state.allowedProfiles.find((profile) => profile.isPrimary)
     ?? state.allowedProfiles[0]
     ?? null;
+}
+
+function envKeyForRole(role) {
+  return role.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+}
+
+function pinForRole(role) {
+  return process.env[`PILOT_SMOKE_${envKeyForRole(role)}_PIN`]
+    ?? process.env.PILOT_SMOKE_PIN
+    ?? null;
+}
+
+async function switchToRole(authState, role, label) {
+  const profile = chooseProfile(authState, process.env.PILOT_SMOKE_PROFILE_ID, role);
+  if (!profile) {
+    throw new Error(`No allowed profile can act as ${role}.`);
+  }
+
+  const pin = pinForRole(role);
+  if (!pin) {
+    throw new Error(`No PIN available for role ${role}. Set PILOT_SMOKE_PIN or PILOT_SMOKE_${envKeyForRole(role)}_PIN.`);
+  }
+
+  const result = await apiRequest(label, "/auth/switch-profile", {
+    method: "POST",
+    json: {
+      profileId: profile.id,
+      pin,
+      role
+    }
+  });
+
+  return result.json;
+}
+
+async function approveAll(authState, approvals, labelPrefix) {
+  for (const approval of approvals) {
+    await switchToRole(authState, approval.reviewerRole, `${labelPrefix} switch ${approval.reviewerRole}`);
+    await apiRequest(`${labelPrefix} decide ${approval.reviewerRole}`, `/approvals/${approval.id}/decide`, {
+      method: "POST",
+      json: { decision: "approved" }
+    });
+  }
 }
 
 async function poll(label, fn, options = {}) {
@@ -291,26 +336,21 @@ async function runLiveMutations(authState, whoami) {
     method: "POST"
   });
 
-  const officeManagerPin = process.env.PILOT_SMOKE_OFFICE_MANAGER_PIN;
-  const medicalDirectorPin = process.env.PILOT_SMOKE_MEDICAL_DIRECTOR_PIN;
-  const officeManagerProfile = authState.allowedProfiles.find((profile) => profile.role === "office_manager");
-  const medicalDirectorProfile = authState.allowedProfiles.find((profile) => profile.role === "medical_director");
+  const originalRole = whoami?.actor?.role ?? authState?.session?.role ?? null;
+  const canPublishSmoke = chooseProfile(authState, process.env.PILOT_SMOKE_PROFILE_ID, "office_manager")
+    && chooseProfile(authState, process.env.PILOT_SMOKE_PROFILE_ID, "medical_director")
+    && pinForRole("office_manager")
+    && pinForRole("medical_director");
 
-  if (!officeManagerPin || !medicalDirectorPin || !officeManagerProfile || !medicalDirectorProfile) {
+  if (!canPublishSmoke) {
     console.log(JSON.stringify({
       label: "publish smoke skipped",
-      reason: "PILOT_SMOKE_OFFICE_MANAGER_PIN and PILOT_SMOKE_MEDICAL_DIRECTOR_PIN plus both allowed profiles are required."
+      reason: "Office manager and medical director role access plus PIN values are required."
     }));
     return;
   }
 
-  await apiRequest("switch to office manager", "/auth/switch-profile", {
-    method: "POST",
-    json: {
-      profileId: officeManagerProfile.id,
-      pin: officeManagerPin
-    }
-  });
+  await switchToRole(authState, "office_manager", "switch to office manager");
 
   const document = (
     await apiRequest("create smoke document", "/documents", {
@@ -339,23 +379,7 @@ async function runLiveMutations(authState, whoami) {
     throw new Error("Smoke document did not create the expected office manager and medical director approvals.");
   }
 
-  await apiRequest("office manager approve", `/approvals/${officeManagerApproval.id}/decide`, {
-    method: "POST",
-    json: { decision: "approved" }
-  });
-
-  await apiRequest("switch to medical director", "/auth/switch-profile", {
-    method: "POST",
-    json: {
-      profileId: medicalDirectorProfile.id,
-      pin: medicalDirectorPin
-    }
-  });
-
-  await apiRequest("medical director approve", `/approvals/${medicalDirectorApproval.id}/decide`, {
-    method: "POST",
-    json: { decision: "approved" }
-  });
+  await approveAll(authState, [officeManagerApproval, medicalDirectorApproval], "document approval");
 
   await apiRequest("publish smoke document", `/documents/${document.id}/publish`, {
     method: "POST"
@@ -376,14 +400,124 @@ async function runLiveMutations(authState, whoami) {
 
   await apiRequest("approved context", `/documents/${document.id}/approved-context`);
 
-  if (whoami?.actor?.role !== "medical_director") {
-    await apiRequest("restore primary profile", "/auth/switch-profile", {
+  if (originalRole && originalRole !== "medical_director") {
+    await switchToRole(authState, originalRole, "restore primary role");
+  }
+}
+
+async function runGovernanceSmoke(authState, whoami) {
+  const suffix = nowSuffix();
+  const originalRole = whoami?.actor?.role ?? authState?.session?.role ?? null;
+
+  await switchToRole(authState, "medical_director", "switch to medical director for controlled substances");
+  await apiRequest("practice agreement bootstrap", "/practice-agreements/bootstrap-defaults", {
+    method: "POST"
+  });
+  await apiRequest("controlled substances bootstrap", "/controlled-substances/bootstrap-defaults", {
+    method: "POST"
+  });
+
+  const stewardshipRecords = (await apiRequest("controlled substances list", "/controlled-substances")).json;
+  const stewardship = stewardshipRecords.find((record) => record.title === "Controlled-substance stewardship packet")
+    ?? stewardshipRecords[0];
+  if (!stewardship) {
+    throw new Error("Controlled-substance stewardship bootstrap did not return a packet.");
+  }
+
+  await apiRequest("controlled substances update", `/controlled-substances/${stewardship.id}`, {
+    method: "PATCH",
+    json: {
+      pdmpReviewSummary: `Live smoke PDMP review ${suffix}.`,
+      notes: `Live smoke note ${suffix}.`
+    }
+  });
+
+  const submittedStewardship = (
+    await apiRequest("controlled substances submit", `/controlled-substances/${stewardship.id}/submit`, {
+      method: "POST"
+    })
+  ).json;
+  await approveAll(authState, submittedStewardship.approvals, "controlled substances approval");
+
+  await apiRequest("controlled substances publish", `/controlled-substances/${stewardship.id}/publish`, {
+    method: "POST"
+  });
+  await poll("controlled substances publish", async () => {
+    const records = (await apiRequest("controlled substances poll", "/controlled-substances")).json;
+    const published = records.find((record) => record.id === stewardship.id);
+    return {
+      done: published?.status === "published",
+      value: published,
+      detail: "waiting for controlled-substance publication"
+    };
+  }, { attempts: 30, delayMs: 1500 });
+
+  await switchToRole(authState, "quality_lead", "switch to quality lead for standards");
+  await apiRequest("standards bootstrap", "/standards/bootstrap-defaults", {
+    method: "POST"
+  });
+  const standards = (await apiRequest("standards list", "/standards")).json;
+  if (!Array.isArray(standards) || standards.length < 1) {
+    throw new Error("Standards bootstrap did not return any standards.");
+  }
+
+  const selectedStandardIds = standards.slice(0, 3).map((standard) => standard.id);
+  const binderTitle = `Pilot live evidence binder ${suffix}`;
+  const binderCreate = (
+    await apiRequest("create evidence binder", "/evidence-binders", {
       method: "POST",
       json: {
-        profileId: chooseProfile(authState, process.env.PILOT_SMOKE_PROFILE_ID, process.env.PILOT_SMOKE_PROFILE_ROLE)?.id,
-        pin: process.env.PILOT_SMOKE_PIN
+        title: binderTitle,
+        ownerRole: "quality_lead",
+        sourceAuthority: "Joint Commission Mock Survey",
+        surveyWindowLabel: `Pilot window ${suffix}`,
+        standardIds: selectedStandardIds,
+        summary: "Live smoke evidence binder for deployed governance validation.",
+        evidenceReadinessSummary: "Each selected standard should resolve to current evidence owned by a named role.",
+        openGapSummary: "Track missing signatures, stale reviews, or overdue committee evidence before survey use.",
+        reviewCadenceDays: 60,
+        notes: `Live smoke binder ${suffix}.`
       }
-    });
+    })
+  ).json;
+
+  const submittedBinder = (
+    await apiRequest("submit evidence binder", `/evidence-binders/${binderCreate.binder.id}/submit`, {
+      method: "POST"
+    })
+  ).json;
+  await approveAll(authState, submittedBinder.approvals, "evidence binder approval");
+
+  await switchToRole(authState, "medical_director", "switch to medical director for evidence binder publish");
+  await apiRequest("publish evidence binder", `/evidence-binders/${binderCreate.binder.id}/publish`, {
+    method: "POST"
+  });
+
+  await poll("evidence binder publish", async () => {
+    const binders = (await apiRequest("evidence binder poll", "/evidence-binders")).json;
+    const published = binders.find((binder) => binder.id === binderCreate.binder.id);
+    return {
+      done: published?.status === "published",
+      value: published,
+      detail: "waiting for evidence-binder publication"
+    };
+  }, { attempts: 30, delayMs: 1500 });
+
+  await switchToRole(authState, "quality_lead", "switch to quality lead for standards verification");
+  await poll("standards completion after evidence binder publish", async () => {
+    const refreshedStandards = (await apiRequest("standards verify", "/standards")).json;
+    const linkedStandards = refreshedStandards.filter((record) => selectedStandardIds.includes(record.id));
+    const allComplete = linkedStandards.length === selectedStandardIds.length
+      && linkedStandards.every((record) => record.status === "complete" && record.latestBinderId === binderCreate.binder.id);
+    return {
+      done: allComplete,
+      value: linkedStandards,
+      detail: "waiting for linked standards to complete after binder publish"
+    };
+  }, { attempts: 30, delayMs: 1500 });
+
+  if (originalRole && originalRole !== "quality_lead") {
+    await switchToRole(authState, originalRole, "restore original role after governance smoke");
   }
 }
 
@@ -391,6 +525,7 @@ async function main() {
   const { authState, whoami } = await ensureAuthenticated();
 
   await apiRequest("ops config", "/ops/config-status");
+  await apiRequest("worker health", "/ops/worker-health");
   await apiRequest("microsoft status", "/integrations/microsoft/status");
   await apiRequest("microsoft validate", "/integrations/microsoft/validate", {
     method: "POST"
@@ -406,6 +541,9 @@ async function main() {
   }
 
   await runLiveMutations(authState, whoami);
+  await runGovernanceSmoke(authState, whoami);
+  await apiRequest("worker health after governance smoke", "/ops/worker-health");
+  await apiRequest("worker summary after governance smoke", "/worker-jobs/summary");
 }
 
 main().catch((error) => {

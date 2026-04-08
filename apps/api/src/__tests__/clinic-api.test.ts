@@ -426,6 +426,52 @@ describe("Clinic API", () => {
     expect(repository.actionItems.some((item) => item.title.includes("Assign CAPA verification follow-up."))).toBe(true);
   });
 
+  it("returns a QAPI dashboard summary with governance metrics", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/practice-agreements/bootstrap-defaults",
+      headers: headers("medical_director")
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/controlled-substances/bootstrap-defaults",
+      headers: headers("medical_director")
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/standards/bootstrap-defaults",
+      headers: headers("quality_lead")
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/committees/qapi-summary",
+      headers: headers("quality_lead")
+    });
+
+    expect(response.statusCode).toBe(200);
+    const summary = response.json<{
+      openIncidents: number;
+      openCapas: number;
+      standardsAttentionNeeded: number;
+      overdueStandardsReviews: number;
+      evidenceBindersDraft: number;
+      controlledSubstancePacketsPublished: number;
+      telehealthPacketsNeedingReview: number;
+      practiceAgreementsExpiringSoon: number;
+    }>();
+    expect(summary.openIncidents).toBeGreaterThanOrEqual(0);
+    expect(summary.openCapas).toBeGreaterThanOrEqual(0);
+    expect(summary.standardsAttentionNeeded).toBeGreaterThanOrEqual(0);
+    expect(summary.overdueStandardsReviews).toBeGreaterThanOrEqual(0);
+    expect(summary.evidenceBindersDraft).toBeGreaterThanOrEqual(0);
+    expect(summary.controlledSubstancePacketsPublished).toBeGreaterThanOrEqual(0);
+    expect(summary.telehealthPacketsNeedingReview).toBeGreaterThanOrEqual(0);
+    expect(summary.practiceAgreementsExpiringSoon).toBeGreaterThanOrEqual(0);
+  });
+
   it("rejects workflow creation for a role outside the workflow owner set", async () => {
     const response = await app.inject({
       method: "POST",
@@ -1477,6 +1523,126 @@ describe("Clinic API", () => {
     expect(cleanupRepository.workerJobs.some((job) => job.status === "succeeded")).toBe(true);
 
     await cleanupApp.close();
+  });
+
+  it("reports worker heartbeat, recent batch state, and queued-job age through ops surfaces", async () => {
+    const runtimeRepository = new MemoryClinicRepository();
+    const runtimeService = new ClinicApiService(runtimeRepository, new LocalApprovedDocumentPublisher(), {
+      authMode: "dev_headers",
+      integrationMode: "stub",
+      microsoftPreflight: {
+        getMissingConfigKeys: () => [],
+        validate: async () => ({
+          mode: "stub",
+          configComplete: true,
+          overallStatus: "ready",
+          readyForLive: true,
+          missingConfigKeys: [],
+          surfaces: []
+        })
+      }
+    });
+    const runtimeApp = buildApp({
+      authMode: "dev_headers",
+      service: runtimeService,
+      repository: runtimeRepository,
+      databaseReadyCheck: async () => true
+    });
+
+    const now = Date.now();
+    runtimeRepository.workerJobs.push(
+      {
+        ...createWorkerJob({
+          type: "lists.issue.upsert",
+          payload: { smoke: true },
+          scheduledAt: new Date(now - 18 * 60_000).toISOString()
+        }),
+        updatedAt: new Date(now - 18 * 60_000).toISOString()
+      },
+      {
+        ...createWorkerJob({
+          type: "planner.task.create",
+          payload: { smoke: true },
+          scheduledAt: new Date(now - 6 * 60_000).toISOString()
+        }),
+        status: "processing",
+        lockedAt: new Date(now - 3 * 60_000).toISOString(),
+        attempts: 1,
+        updatedAt: new Date(now - 3 * 60_000).toISOString()
+      }
+    );
+    runtimeRepository.auditEvents.push(
+      {
+        ...createAuditEvent({
+          eventType: "worker.started",
+          entityType: "worker_runtime",
+          entityId: "clinic-os-worker",
+          actorId: "clinic-os-worker",
+          actorRole: "office_manager",
+          actorName: "Clinic OS Worker",
+          payload: {
+            pollIntervalMs: 5000,
+            heartbeatIntervalMs: 300000,
+            batchSize: 10
+          }
+        }),
+        createdAt: new Date(now - 30 * 60_000).toISOString()
+      },
+      {
+        ...createAuditEvent({
+          eventType: "worker.batch.completed",
+          entityType: "worker_runtime",
+          entityId: "clinic-os-worker",
+          actorId: "clinic-os-worker",
+          actorRole: "office_manager",
+          actorName: "Clinic OS Worker",
+          payload: {
+            summary: {
+              processed: 3,
+              succeeded: 3,
+              failed: 0
+            }
+          }
+        }),
+        createdAt: new Date(now - 20 * 60_000).toISOString()
+      }
+    );
+
+    const workerHealth = await runtimeApp.inject({
+      method: "GET",
+      url: "/ops/worker-health",
+      headers: headers("medical_director")
+    });
+
+    expect(workerHealth.statusCode).toBe(200);
+    const workerHealthBody = workerHealth.json<{
+      health: string;
+      lastCompletedBatch: { processed: number } | null;
+      backlog: {
+        queued: number;
+        processing: number;
+        oldestQueuedType: string | null;
+        oldestQueuedMinutes: number | null;
+      };
+    }>();
+    expect(workerHealthBody.health).toBe("critical");
+    expect(workerHealthBody.lastCompletedBatch?.processed).toBe(3);
+    expect(workerHealthBody.backlog.queued).toBe(1);
+    expect(workerHealthBody.backlog.processing).toBe(1);
+    expect(workerHealthBody.backlog.oldestQueuedType).toBe("lists.issue.upsert");
+    expect(workerHealthBody.backlog.oldestQueuedMinutes).toBeGreaterThanOrEqual(15);
+
+    const alerts = await runtimeApp.inject({
+      method: "GET",
+      url: "/ops/alerts",
+      headers: headers("medical_director")
+    });
+    expect(alerts.statusCode).toBe(200);
+    expect(alerts.json<{ alerts: Array<{ key: string }> }>().alerts.map((alert) => alert.key)).toEqual(
+      expect.arrayContaining(["worker.heartbeat_stalled"])
+    );
+
+    await runtimeApp.close();
   });
 
   it("locks a profile after repeated bad PIN attempts and rejects mutating requests without Origin in device mode", async () => {
