@@ -18,6 +18,7 @@ function required(name: string): string {
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
+  runtimeAgentsEnabled: (process.env.RUNTIME_AGENTS_ENABLED ?? (process.env.OPENAI_API_KEY ? "true" : "false")) === "true",
   databaseUrl: process.env.DATABASE_URL ?? "postgresql://clinic_os:clinic_os@localhost:5432/clinic_os",
   publicAppOrigin: process.env.PUBLIC_APP_ORIGIN ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000",
   auth: {

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import {
   createAuditEvent,
@@ -8,6 +8,7 @@ import {
   createUserProfile,
   createWorkerJob
 } from "@clinic-os/domain";
+import { getRuntimeAgentById } from "@clinic-os/agents";
 import { buildMicrosoftPilotOps } from "@clinic-os/msgraph";
 import { buildApp } from "../app";
 import { buildIdentityResolver, signTrustedProxyRequest } from "../lib/auth";
@@ -71,10 +72,11 @@ function cookieValue(response: Awaited<ReturnType<FastifyInstance["inject"]>>, n
 describe("Clinic API", () => {
   let app: FastifyInstance;
   let repository: MemoryClinicRepository;
+  let service: ClinicApiService;
 
   beforeEach(() => {
     repository = new MemoryClinicRepository();
-    const service = new ClinicApiService(repository, new LocalApprovedDocumentPublisher(), {
+    service = new ClinicApiService(repository, new LocalApprovedDocumentPublisher(), {
       authMode: "dev_headers",
       integrationMode: "stub",
       microsoftPreflight: {
@@ -921,6 +923,76 @@ describe("Clinic API", () => {
     expect(runRepository.auditEvents.some((event) => event.eventType === "worker.batch_run_requested")).toBe(true);
 
     await runApp.close();
+  });
+
+  it("lists runtime agents and runs them for authorized roles", async () => {
+    vi.spyOn(service, "getRuntimeAgentStatus").mockReturnValue({
+      enabled: true,
+      reason: null,
+      agents: [getRuntimeAgentById("office_manager_copilot")!]
+    });
+
+    vi.spyOn(service, "runRuntimeAgent").mockResolvedValue({
+      agent: getRuntimeAgentById("office_manager_copilot")!,
+      requestId: "req_runtime_agent",
+      workflowId: "office_manager_daily",
+      responseId: "resp_runtime_agent",
+      startedAt: "2026-04-08T00:00:00.000Z",
+      completedAt: "2026-04-08T00:00:01.000Z",
+      finalText: "Created a follow-up action item.",
+      toolCalls: [
+        {
+          callId: "call_action_item",
+          name: "create_action_item",
+          arguments: {
+            title: "Follow up",
+            ownerRole: "office_manager",
+            dueDate: "2026-04-09"
+          },
+          status: "completed",
+          output: {
+            status: "action_item_created"
+          },
+          error: null
+        }
+      ],
+      requiresApproval: false,
+      reviewerRoles: ["office_manager", "medical_director"]
+    });
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/runtime-agents",
+      headers: headers("medical_director")
+    });
+
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json<{ agents: Array<{ id: string }> }>().agents[0]?.id).toBe("office_manager_copilot");
+
+    const runResponse = await app.inject({
+      method: "POST",
+      url: "/runtime-agents/run",
+      headers: headers("medical_director"),
+      payload: {
+        agentId: "office_manager_copilot",
+        payload: {
+          objective: "Create a follow-up action item."
+        }
+      }
+    });
+
+    expect(runResponse.statusCode).toBe(200);
+    expect(runResponse.json<{ responseId: string }>().responseId).toBe("resp_runtime_agent");
+  });
+
+  it("blocks runtime-agent routes for roles without the required capability", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/runtime-agents",
+      headers: headers("front_desk")
+    });
+
+    expect(response.statusCode).toBe(403);
   });
 
   it("returns whoami and worker summary in dev header mode", async () => {

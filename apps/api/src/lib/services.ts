@@ -1,4 +1,5 @@
 import { parse } from "csv-parse/sync";
+import { getRuntimeAgentById, listRuntimeAgents, runAgent, selectAgentForWorkflow } from "@clinic-os/agents";
 import type { ClinicRepository } from "@clinic-os/db";
 import { publicationAllowed, reviewersForApprovalClass } from "@clinic-os/approvals";
 import type { MicrosoftPreflightResult } from "@clinic-os/msgraph";
@@ -111,6 +112,9 @@ import {
   type PublicAssetRecord,
   type PracticeAgreementRecord,
   type RoleCapabilityRecord,
+  type RuntimeAgentRunCommand,
+  type RuntimeAgentRunResult,
+  type RuntimeAgentStatus,
   type ServiceLinePackRecord,
   type ServiceLineRecord,
   type StandardMappingRecord,
@@ -636,6 +640,15 @@ export class ClinicApiService {
     private readonly options: {
       authMode: AuthMode;
       integrationMode: "stub" | "live";
+      openaiApiKey?: string;
+      runtimeAgentsEnabled?: boolean;
+      pilotOps?: {
+        readonly mode: "stub" | "live";
+        sendOfficeOpsNotification(input: {
+          title: string;
+          body: string;
+        }): Promise<{ messageId: string }>;
+      };
       microsoftPreflight: MicrosoftPreflightService;
       incidentListSyncEnabled?: boolean;
       capaListSyncEnabled?: boolean;
@@ -3970,6 +3983,114 @@ export class ClinicApiService {
 
   getRoleCapabilities(): RoleCapabilityRecord[] {
     return listRoleCapabilities();
+  }
+
+  getRuntimeAgentStatus(): RuntimeAgentStatus {
+    const enabled = Boolean(this.options.runtimeAgentsEnabled && this.options.openaiApiKey);
+    const reason = enabled
+      ? null
+      : this.options.openaiApiKey
+        ? "Runtime agents are disabled by configuration."
+        : "OPENAI_API_KEY is not configured for runtime-agent execution.";
+
+    return {
+      enabled,
+      reason,
+      agents: listRuntimeAgents()
+    };
+  }
+
+  async runRuntimeAgent(actor: ActorContext, input: unknown): Promise<RuntimeAgentRunResult> {
+    const command = z.object({
+      agentId: z.string().min(1).optional(),
+      workflowId: z.string().min(1).optional(),
+      requestId: z.string().min(1).optional(),
+      payload: z.record(z.string(), z.unknown()).default({})
+    }).refine((value) => Boolean(value.agentId || value.workflowId), {
+      message: "Either agentId or workflowId is required."
+    }).parse(input) as RuntimeAgentRunCommand;
+
+    const runtimeAgentStatus = this.getRuntimeAgentStatus();
+    if (!runtimeAgentStatus.enabled || !this.options.openaiApiKey) {
+      badRequest(runtimeAgentStatus.reason ?? "Runtime agents are not enabled.");
+    }
+
+    const agent = command.agentId
+      ? getRuntimeAgentById(command.agentId)
+      : command.workflowId
+        ? selectAgentForWorkflow(command.workflowId)
+        : null;
+
+    if (!agent) {
+      badRequest(`Unknown runtime agent: ${command.agentId}`);
+    }
+
+    const result = await runAgent(
+      agent,
+      {
+        requestId: command.requestId ?? randomId("agent"),
+        workflowId: command.workflowId ?? agent.id,
+        payload: command.payload
+      },
+      this.options.openaiApiKey,
+      {
+        toolContext: {
+          actor,
+          service: this
+        }
+      }
+    );
+
+    await this.recordAudit(actor, "runtime_agent.executed", "runtime_agent", result.responseId, {
+      agentId: result.agent.id,
+      workflowId: result.workflowId,
+      requestId: result.requestId,
+      toolCalls: result.toolCalls.map((call) => ({
+        callId: call.callId,
+        name: call.name,
+        status: call.status
+      }))
+    });
+
+    return result;
+  }
+
+  async sendTeamsNotification(actor: ActorContext, input: {
+    channel: string;
+    message: string;
+  }): Promise<{
+    channel: string;
+    messageId: string | null;
+    status: "queued" | "skipped";
+  }> {
+    const command = z.object({
+      channel: z.enum(["office_ops", "approvals"]),
+      message: z.string().min(1)
+    }).parse(input);
+
+    if (!this.options.pilotOps) {
+      return {
+        channel: command.channel,
+        messageId: null,
+        status: "skipped"
+      };
+    }
+
+    const result = await this.options.pilotOps.sendOfficeOpsNotification({
+      title: command.channel === "approvals" ? "Runtime agent approval note" : "Runtime agent office-ops note",
+      body: command.message
+    });
+
+    await this.recordAudit(actor, "runtime_agent.notification_queued", "runtime_agent", actor.actorId, {
+      channel: command.channel,
+      messageId: result.messageId
+    });
+
+    return {
+      channel: command.channel,
+      messageId: result.messageId,
+      status: "queued"
+    };
   }
 
   async retryWorkerJob(actor: ActorContext, jobId: string): Promise<WorkerJobRecord> {

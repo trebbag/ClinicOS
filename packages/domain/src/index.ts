@@ -30,3 +30,4 @@ export * from "./schemas/practiceAgreement";
 export * from "./schemas/telehealthStewardship";
 export * from "./schemas/controlledSubstanceStewardship";
 export * from "./schemas/standards";
+export * from "./schemas/runtimeAgent";

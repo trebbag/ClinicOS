@@ -1,10 +1,13 @@
 import OpenAI from "openai";
 import type { RuntimeAgentSpec, AgentRunInput } from "../specs";
 
-/**
- * This is a thin placeholder around the OpenAI Responses API.
- * Replace the request body shape as needed if the JS SDK evolves.
- */
+export type RuntimeModelResponse = {
+  id: string;
+  status?: string;
+  output?: Array<Record<string, unknown>>;
+  output_text?: string | null;
+};
+
 export class OpenAIResponsesClient {
   private readonly client: OpenAI;
 
@@ -12,21 +15,53 @@ export class OpenAIResponsesClient {
     this.client = new OpenAI({ apiKey });
   }
 
-  async run(spec: RuntimeAgentSpec, prompt: string, input: AgentRunInput): Promise<unknown> {
-    const response = await this.client.responses.create({
+  async createInitialResponse(
+    spec: RuntimeAgentSpec,
+    prompt: string,
+    input: AgentRunInput,
+    tools: Array<{
+      type: "function";
+      name: string;
+      description: string;
+      parameters: Record<string, unknown>;
+      strict: true;
+    }>
+  ): Promise<RuntimeModelResponse> {
+    return this.client.responses.create({
       model: spec.model,
-      input: [
-        {
-          role: "system",
-          content: prompt
-        },
-        {
-          role: "user",
-          content: JSON.stringify(input, null, 2)
+      store: false,
+      instructions: prompt,
+      input: JSON.stringify(input, null, 2),
+      reasoning: {
+        effort: spec.reasoning
+      },
+      tool_choice: "auto",
+      text: {
+        format: {
+          type: "text"
         }
-      ]
-    });
+      },
+      tools
+    }) as unknown as Promise<RuntimeModelResponse>;
+  }
 
-    return response;
+  async continueWithToolOutputs(
+    spec: RuntimeAgentSpec,
+    previousResponseId: string,
+    input: Array<{
+      type: "function_call_output";
+      call_id: string;
+      output: string;
+    }>
+  ): Promise<RuntimeModelResponse> {
+    return this.client.responses.create({
+      model: spec.model,
+      store: false,
+      previous_response_id: previousResponseId,
+      input,
+      reasoning: {
+        effort: spec.reasoning
+      }
+    }) as unknown as Promise<RuntimeModelResponse>;
   }
 }

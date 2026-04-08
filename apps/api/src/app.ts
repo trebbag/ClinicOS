@@ -1,5 +1,6 @@
 import cors from "@fastify/cors";
 import type { ClinicRepository } from "@clinic-os/db";
+import type { MicrosoftPilotOps } from "@clinic-os/msgraph";
 import { PrismaClinicRepository, prisma } from "@clinic-os/db";
 import type { AuthMode, WorkerBatchSummary } from "@clinic-os/domain";
 import { buildMicrosoftPilotOps, buildMicrosoftPreflightService } from "@clinic-os/msgraph";
@@ -24,6 +25,7 @@ import { registerOpsRoutes } from "./routes/ops";
 import { registerIncidentRoutes } from "./routes/incidents";
 import { registerPublicAssetRoutes } from "./routes/public-assets";
 import { registerPracticeAgreementRoutes } from "./routes/practice-agreements";
+import { registerRuntimeAgentRoutes } from "./routes/runtime-agents";
 import { registerScorecardReviewRoutes } from "./routes/scorecard-reviews";
 import { registerServiceLineRoutes } from "./routes/service-lines";
 import { registerStandardsRoutes } from "./routes/standards";
@@ -59,6 +61,24 @@ export function buildApp(options?: {
 
   const repository = options?.repository ?? new PrismaClinicRepository(prisma);
   const authMode = options?.authMode ?? env.auth.mode;
+  const microsoftPilotOps: MicrosoftPilotOps = buildMicrosoftPilotOps({
+    mode: env.microsoft.integrationMode,
+    tenantId: env.microsoft.tenantId,
+    clientId: env.microsoft.clientId,
+    clientSecret: env.microsoft.clientSecret,
+    sharepointSiteId: env.microsoft.sharepointSiteId,
+    sharepointPolicyFolder: env.microsoft.sharepointPolicyFolder,
+    listsSiteId: env.microsoft.listsSiteId,
+    plannerPlanId: env.microsoft.plannerPlanId,
+    plannerBucketId: env.microsoft.plannerBucketId,
+    approvalsWebhookUrl: env.microsoft.approvalsWebhookUrl,
+    officeOpsWebhookUrl: env.microsoft.officeOpsWebhookUrl,
+    issueListId: env.microsoft.issueListId,
+    actionItemListId: env.microsoft.actionItemListId,
+    importStatusListId: env.microsoft.importStatusListId,
+    incidentsListId: env.microsoft.incidentsListId,
+    capaListId: env.microsoft.capaListId
+  });
   const service =
     options?.service ??
     new ClinicApiService(
@@ -67,6 +87,9 @@ export function buildApp(options?: {
       {
         authMode,
         integrationMode: env.microsoft.integrationMode,
+        openaiApiKey: env.openaiApiKey,
+        runtimeAgentsEnabled: env.runtimeAgentsEnabled,
+        pilotOps: microsoftPilotOps,
         microsoftPreflight: buildMicrosoftPreflightService({
           mode: env.microsoft.integrationMode,
           tenantId: env.microsoft.tenantId,
@@ -116,27 +139,7 @@ export function buildApp(options?: {
     });
 
   const runWorkerBatch = async (): Promise<WorkerBatchSummary> => {
-    const runner = new WorkerJobRunner(
-      repository,
-      buildMicrosoftPilotOps({
-        mode: env.microsoft.integrationMode,
-        tenantId: env.microsoft.tenantId,
-        clientId: env.microsoft.clientId,
-        clientSecret: env.microsoft.clientSecret,
-        sharepointSiteId: env.microsoft.sharepointSiteId,
-        sharepointPolicyFolder: env.microsoft.sharepointPolicyFolder,
-        listsSiteId: env.microsoft.listsSiteId,
-        plannerPlanId: env.microsoft.plannerPlanId,
-        plannerBucketId: env.microsoft.plannerBucketId,
-        approvalsWebhookUrl: env.microsoft.approvalsWebhookUrl,
-        officeOpsWebhookUrl: env.microsoft.officeOpsWebhookUrl,
-        issueListId: env.microsoft.issueListId,
-        actionItemListId: env.microsoft.actionItemListId,
-        importStatusListId: env.microsoft.importStatusListId,
-        incidentsListId: env.microsoft.incidentsListId,
-        capaListId: env.microsoft.capaListId
-      })
-    );
+    const runner = new WorkerJobRunner(repository, microsoftPilotOps);
     return runner.runOnce({ limit: Number(process.env.WORKER_BATCH_SIZE ?? 10) });
   };
 
@@ -194,6 +197,7 @@ export function buildApp(options?: {
   registerActionItemRoutes(app);
   registerIncidentRoutes(app);
   registerCapaRoutes(app);
+  registerRuntimeAgentRoutes(app);
   registerCommitteeRoutes(app);
   registerCommitteeMeetingRoutes(app);
   registerServiceLineRoutes(app);

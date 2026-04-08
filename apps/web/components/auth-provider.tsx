@@ -49,6 +49,8 @@ export type AppCapability =
   | "public_assets.manage"
   | "scorecards.view"
   | "pilot_ops.view"
+  | "runtime_agents.view"
+  | "runtime_agents.run"
   | "ops.view_config"
   | "ops.run_cleanup"
   | "integrations.view_status"
@@ -146,7 +148,8 @@ type NavigationLink = {
     | "/delegation"
     | "/standards"
     | "/scorecards"
-    | "/public-assets";
+    | "/public-assets"
+    | "/runtime-agents";
   label: string;
   allowedRoles: ActorRole[];
   requiredCapability?: AppCapability;
@@ -173,6 +176,12 @@ export const navigationLinks: NavigationLink[] = [
     label: "Pilot Ops",
     allowedRoles: adminProfileRoles,
     requiredCapability: "pilot_ops.view" as const
+  },
+  {
+    href: "/runtime-agents" as const,
+    label: "Runtime Agents",
+    allowedRoles: adminProfileRoles,
+    requiredCapability: "runtime_agents.view" as const
   },
   {
     href: "/quality" as const,
