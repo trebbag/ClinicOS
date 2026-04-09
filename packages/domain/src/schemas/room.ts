@@ -52,6 +52,65 @@ export const roomReadinessSummarySchema = z.object({
   })
 });
 
+export const roomReadinessTrendBucketSchema = z.object({
+  targetDate: z.string(),
+  readyRooms: z.number().int().nonnegative(),
+  attentionNeededRooms: z.number().int().nonnegative(),
+  blockedRooms: z.number().int().nonnegative(),
+  inactiveRooms: z.number().int().nonnegative()
+});
+
+export const roomAnalyticsItemSchema = z.object({
+  roomId: z.string(),
+  roomLabel: z.string(),
+  roomType: roomTypeSchema,
+  trackedDays: z.number().int().nonnegative(),
+  readyDays: z.number().int().nonnegative(),
+  attentionNeededDays: z.number().int().nonnegative(),
+  blockedDays: z.number().int().nonnegative(),
+  inactiveDays: z.number().int().nonnegative(),
+  missedRequiredItems: z.number().int().nonnegative(),
+  repeatAttentionDays: z.number().int().nonnegative(),
+  averageCompletionLatencyMinutes: z.number().nonnegative().nullable()
+});
+
+export const checklistTrendSummarySchema = z.object({
+  totalRuns: z.number().int().nonnegative(),
+  totalItems: z.number().int().nonnegative(),
+  completedItems: z.number().int().nonnegative(),
+  blockedItems: z.number().int().nonnegative(),
+  waivedItems: z.number().int().nonnegative(),
+  pendingItems: z.number().int().nonnegative(),
+  missedRequiredItems: z.number().int().nonnegative(),
+  averageCompletionLatencyMinutes: z.number().nonnegative().nullable()
+});
+
+export const plannerReconciliationSummarySchema = z.object({
+  pendingCreate: z.number().int().nonnegative(),
+  synced: z.number().int().nonnegative(),
+  syncErrors: z.number().int().nonnegative(),
+  externallyCompleted: z.number().int().nonnegative(),
+  openActionItems: z.number().int().nonnegative(),
+  overdueOpenActionItems: z.number().int().nonnegative(),
+  agingBuckets: z.object({
+    underSevenDays: z.number().int().nonnegative(),
+    sevenToThirtyDays: z.number().int().nonnegative(),
+    overThirtyDays: z.number().int().nonnegative()
+  })
+});
+
+export const roomAnalyticsSummarySchema = z.object({
+  generatedAt: z.string(),
+  dateRangeStart: z.string(),
+  dateRangeEnd: z.string(),
+  roomId: z.string().nullable().default(null),
+  roomType: roomTypeSchema.nullable().default(null),
+  readinessTrend: z.array(roomReadinessTrendBucketSchema),
+  rooms: z.array(roomAnalyticsItemSchema),
+  checklist: checklistTrendSummarySchema,
+  plannerReconciliation: plannerReconciliationSummarySchema
+});
+
 export const roomCreateSchema = z.object({
   id: z.string().min(2),
   roomLabel: z.string().min(2),
@@ -77,6 +136,11 @@ export type RoomStatus = z.infer<typeof roomStatusSchema>;
 export type RoomReadinessStatus = z.infer<typeof roomReadinessStatusSchema>;
 export type RoomRecord = z.infer<typeof roomRecordSchema>;
 export type RoomReadinessSummary = z.infer<typeof roomReadinessSummarySchema>;
+export type RoomReadinessTrendBucket = z.infer<typeof roomReadinessTrendBucketSchema>;
+export type RoomAnalyticsItem = z.infer<typeof roomAnalyticsItemSchema>;
+export type ChecklistTrendSummary = z.infer<typeof checklistTrendSummarySchema>;
+export type PlannerReconciliationSummary = z.infer<typeof plannerReconciliationSummarySchema>;
+export type RoomAnalyticsSummary = z.infer<typeof roomAnalyticsSummarySchema>;
 export type RoomCreateCommand = z.infer<typeof roomCreateSchema>;
 export type RoomUpdateCommand = z.infer<typeof roomUpdateSchema>;
 

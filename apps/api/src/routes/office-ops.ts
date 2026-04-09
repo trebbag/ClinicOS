@@ -37,6 +37,18 @@ export async function registerOfficeOpsRoutes(app: FastifyInstance): Promise<voi
     return app.clinicService.getOfficeOpsDashboard(targetDate);
   });
 
+  app.get("/office-ops/analytics", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "office_ops.view");
+    const query = request.query as {
+      dateFrom?: string;
+      dateTo?: string;
+      roomId?: string;
+      roomType?: string;
+    };
+    return app.clinicService.getOfficeOpsAnalytics(query);
+  });
+
   app.post("/office-ops/daily-packet", async (request) => {
     return app.clinicService.generateOfficeOpsDailyPacket(actorFromRequest(request), request.body ?? {});
   });

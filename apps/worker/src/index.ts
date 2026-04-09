@@ -97,14 +97,27 @@ async function main() {
         || summary.failed > 0
         || Date.now() - lastHeartbeatAt >= workerConfig.heartbeatIntervalMs;
       if (shouldRecordHeartbeat) {
-        await recordWorkerRuntimeEvent(repository, "worker.batch.completed", {
-          batchStartedAt,
-          pollIntervalMs: workerConfig.pollIntervalMs,
-          heartbeatIntervalMs: workerConfig.heartbeatIntervalMs,
-          batchSize: workerConfig.batchSize,
-          integrationMode: workerConfig.microsoft.integrationMode,
-          summary
-        });
+        if (summary.processed > 0 || summary.failed > 0) {
+          await recordWorkerRuntimeEvent(repository, "worker.batch.completed", {
+            batchStartedAt,
+            pollAttemptedAt: checkedAt,
+            pollIntervalMs: workerConfig.pollIntervalMs,
+            heartbeatIntervalMs: workerConfig.heartbeatIntervalMs,
+            batchSize: workerConfig.batchSize,
+            integrationMode: workerConfig.microsoft.integrationMode,
+            summary
+          });
+        } else {
+          await recordWorkerRuntimeEvent(repository, "worker.heartbeat", {
+            batchStartedAt,
+            pollAttemptedAt: checkedAt,
+            pollIntervalMs: workerConfig.pollIntervalMs,
+            heartbeatIntervalMs: workerConfig.heartbeatIntervalMs,
+            batchSize: workerConfig.batchSize,
+            integrationMode: workerConfig.microsoft.integrationMode,
+            summary
+          });
+        }
         lastHeartbeatAt = Date.now();
       }
     } catch (error) {
@@ -119,6 +132,7 @@ async function main() {
       }));
       await recordWorkerRuntimeEvent(repository, "worker.batch.failed", {
         batchStartedAt,
+        pollAttemptedAt: checkedAt,
         pollIntervalMs: workerConfig.pollIntervalMs,
         heartbeatIntervalMs: workerConfig.heartbeatIntervalMs,
         batchSize: workerConfig.batchSize,

@@ -165,6 +165,12 @@ Interpret the result this way:
 The worker-health surface now also shows:
 
 - a short recent runtime event history
+- a short recent runtime state history that distinguishes:
+  - polling and idle
+  - polling and draining
+  - polling but failing
+  - not polling
+- the last poll-attempt timestamp
 - the last manual `run-once` request time
 - the last cleanup that requeued stale processing locks
 
@@ -255,6 +261,18 @@ If the queue stalls during pilot operations and you need a bounded operator reco
 7. If `processing` jobs remain stale after that, run cleanup for stale processing locks from Pilot Ops.
 8. Recheck `/ops/worker-health` and queue counts after each intervention.
 9. Keep using Render logs to diagnose the background worker, but do not block pilot operations on shell-only access.
+
+## Deployment checklist execution
+
+Pilot Ops now exposes deployment-promotion checklist execution directly in the app. Use it to track:
+
+- smoke passed
+- rollback verified
+- auth target confirmed
+- runtime-agent freeze confirmed
+- Microsoft validation ready
+
+Treat this checklist as the visible release proof inside Clinic OS itself, not a parallel spreadsheet.
 
 ## Runtime-agent freeze
 

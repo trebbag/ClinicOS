@@ -23,9 +23,23 @@ export const workerRuntimeEventSchema = z.object({
   detail: z.string().nullable()
 });
 
+export const workerRuntimeOperatingStateSchema = z.enum([
+  "not_polling",
+  "polling_idle",
+  "polling_draining",
+  "polling_failed"
+]);
+
+export const workerRuntimeStateEntrySchema = z.object({
+  state: workerRuntimeOperatingStateSchema,
+  createdAt: z.string(),
+  detail: z.string().nullable()
+});
+
 export const workerRuntimeStatusSchema = z.object({
   checkedAt: z.string(),
   health: workerRuntimeHealthSchema,
+  operatingState: workerRuntimeOperatingStateSchema,
   pollIntervalMs: z.number().int().positive(),
   heartbeatIntervalMs: z.number().int().positive(),
   thresholds: z.object({
@@ -33,6 +47,7 @@ export const workerRuntimeStatusSchema = z.object({
     staleProcessingMinutes: z.number().int().positive()
   }),
   lastStartedAt: z.string().nullable(),
+  lastPollAttemptAt: z.string().nullable(),
   lastHeartbeatAt: z.string().nullable(),
   lastCompletedBatchAt: z.string().nullable(),
   lastCompletedBatch: workerBatchSummarySchema.nullable(),
@@ -41,6 +56,7 @@ export const workerRuntimeStatusSchema = z.object({
   lastManualBatchRequestAt: z.string().nullable(),
   lastStaleProcessingCleanupAt: z.string().nullable(),
   recentEvents: z.array(workerRuntimeEventSchema),
+  recentRuntimeState: z.array(workerRuntimeStateEntrySchema),
   backlog: workerJobSummarySchema.extend({
     oldestQueuedAt: z.string().nullable(),
     oldestQueuedType: workerJobTypeSchema.nullable(),
@@ -67,6 +83,7 @@ export const opsAlertSeveritySchema = z.enum([
 
 export const opsAlertSchema = z.object({
   key: z.string(),
+  deliveryKey: z.string(),
   scope: z.enum([
     "runtime",
     "microsoft",
@@ -80,7 +97,10 @@ export const opsAlertSchema = z.object({
   detail: z.string(),
   action: z.string().nullable(),
   count: z.number().int().nonnegative().nullable(),
-  createdAt: z.string()
+  createdAt: z.string(),
+  cooldownMinutes: z.number().int().positive().nullable(),
+  lastDispatchedAt: z.string().nullable(),
+  dispatchEligible: z.boolean()
 });
 
 export const opsAlertSummarySchema = z.object({
@@ -152,6 +172,8 @@ export type OpsAlert = z.infer<typeof opsAlertSchema>;
 export type OpsAlertSummary = z.infer<typeof opsAlertSummarySchema>;
 export type WorkerBatchSummary = z.infer<typeof workerBatchSummarySchema>;
 export type WorkerRuntimeEvent = z.infer<typeof workerRuntimeEventSchema>;
+export type WorkerRuntimeOperatingState = z.infer<typeof workerRuntimeOperatingStateSchema>;
+export type WorkerRuntimeStateEntry = z.infer<typeof workerRuntimeStateEntrySchema>;
 export type WorkerRuntimeHealth = z.infer<typeof workerRuntimeHealthSchema>;
 export type WorkerRuntimeStatus = z.infer<typeof workerRuntimeStatusSchema>;
 export type OpsMaintenanceSummary = z.infer<typeof opsMaintenanceSummarySchema>;

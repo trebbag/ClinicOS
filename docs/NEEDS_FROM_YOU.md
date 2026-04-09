@@ -88,7 +88,7 @@ Using the current local `.env` and repo code:
   - `npm run smoke:worker-health -- https://your-pilot-url.example.com`
   - it signs in through device-profile auth, reads `/ops/worker-health`, prints queue ages and thresholds, and exits nonzero only for `critical` worker health
 
-That means the remaining pilot blockers are now mostly the latest Render redeploy, broader pilot validation, and worker/runtime operations hardening.
+That means the remaining pilot blockers are now mostly explicit deployed config hardening and worker/runtime operations hardening, not missing product slices.
 
 ## Current rollout checkpoint
 
@@ -132,6 +132,11 @@ The deployed Render stack is still healthy and pilot-usable, but the main remain
   - standards bootstrap
   - evidence-binder create, submit, approve, and publish
   - a runtime-agent status check that confirms deployed agents stay disabled
+- The newest room/training/deploy-hardening slice is now live on Render and was validated through authenticated route checks:
+  - room defaults bootstrapped successfully
+  - office-manager daily packet returned `4` active rooms and `4` room-bound checklist runs
+  - training-plan defaults bootstrapped successfully and the deployed app now reports `3` recurring plans
+  - deploy-hardening status is reachable through the deployed API and Pilot Ops
 - Pilot Ops now also exposes worker heartbeat/runtime detail directly:
   - last worker heartbeat
   - last completed batch summary
@@ -168,11 +173,19 @@ The deployed Render stack is still healthy and pilot-usable, but the main remain
   - `lastHeartbeatAt: null`
   - `lastCompletedBatchAt: null`
   - `queued: 2`
-  - `oldestQueuedMinutes: 67`
+  - queued work can sit for a long time until a bounded manual batch is requested
   - recommendation: run one bounded batch, then inspect Render worker pickup/heartbeat behavior
+- A fresh bounded manual batch run through the deployed API succeeded immediately:
+  - `processed: 4`
+  - `succeeded: 4`
+  - `failed: 0`
+  - the queue then repopulated with fresh work, which confirms the API-side fallback works but the background worker still is not polling on its own
 - The deployed runtime-agent status check succeeded, but the disabled reason is currently:
-  - `OPENAI_API_KEY is not configured for runtime-agent execution.`
-  - if you want the freeze to stay explicit even after adding the key later, also set `RUNTIME_AGENTS_ENABLED=false` on Render
+  - `Runtime agents are not enabled for this environment.`
+  - the deployed hardening status currently shows:
+    - `runtimeAgentsExplicitlyDisabled: false`
+    - `runtimeAgentsConfigValue: null`
+  - if you want the freeze to stay explicit even after adding the key later, set `RUNTIME_AGENTS_ENABLED=false` on Render now
 
 ## What is now effectively closed
 
@@ -200,23 +213,35 @@ The deployed Render stack is still healthy and pilot-usable, but the main remain
 
 ## What I still need from you next
 
-1. Redeploy the latest web, API, and worker
-   - this newest pass adds room master data, recurring training plans, and deployment-promotion checklist surfaces
-   - the repo and database are ready, but the deployed app will not show them until this redeploy happens
-
-2. Keep `RUNTIME_AGENTS_ENABLED=false` explicit on Render
+1. Keep `RUNTIME_AGENTS_ENABLED=false` explicit on Render
    - runtime agents should stay shipped but intentionally disabled
    - the live smoke path now checks this posture
-   - the current deployed disabled reason may still be coming from missing runtime-agent key/config rather than the explicit freeze flag
+   - the current deployed disabled reason is still not the explicit freeze reason
+   - set the flag on the web and API environments so the deployed hardening status flips to explicit disablement
 
-3. Optional later real-user rollout details
+2. Redeploy the latest web, API, and worker again
+   - this newest local pass adds:
+     - richer worker runtime-state history and poll-attempt visibility
+     - deployment-promotion checklist item execution in Pilot Ops
+     - room readiness/checklist analytics in Office Manager
+     - recurring training/coaching analytics in Scorecards
+     - the new UI/UX documentation package in `docs/product/`
+
+3. Investigate the Render `clinic-os-worker` service pickup/heartbeat behavior
+   - the bounded `run-once` fallback is working
+   - the background worker still is not emitting heartbeat events into Pilot Ops
+   - compare the worker logs to the timestamps shown in `/ops/worker-health`
+
+4. Optional later real-user rollout details
    - one label per additional computer/device
    - primary profile for that device
    - up to two backup profiles if needed
    - named office manager / quality lead / HR lead profiles when you want them added
 
-4. After the next deploy, watch the new Pilot Ops worker-health surface
+5. Watch the new Pilot Ops worker-health surface during normal use
    - confirm `last heartbeat` keeps moving forward
+   - confirm `operating state` is no longer stuck at `not polling`
+   - confirm `last poll attempt` keeps moving
    - confirm `oldest queued job` does not keep climbing during normal use
    - if the queue stalls again, compare Pilot Ops worker-health timing with the Render worker logs
    - if the queue is stuck and you need an immediate recovery path, use `Run one worker batch now` in Pilot Ops
@@ -233,8 +258,9 @@ Postgres is still required even though Microsoft is now ready, because Clinic OS
 
 The next bounded validation step is:
 
-- redeploy the latest room/training/deploy-hardening code on Render
-- rerun the expanded deployed live smoke once that newest code is live
+- set `RUNTIME_AGENTS_ENABLED=false` explicitly on Render
+- redeploy the latest web/API/worker so the newest Pilot Ops, Office Manager, and Scorecards changes are live
+- rerun the expanded deployed live smoke once that explicit freeze flag is live
 - use the new `/ops/worker-health` surface to confirm the worker is heartbeating before and after that smoke run
 - use `npm run smoke:worker-health -- https://your-pilot-url.example.com` when you want an auth-backed, shell-friendly worker diagnostic without opening Pilot Ops
 - because the current worker-health smoke is still `critical`, the next operational check should be:

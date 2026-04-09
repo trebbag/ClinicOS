@@ -1,10 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import {
+  createActionItemRecord,
   createAuditEvent,
+  createChecklistItemRecord,
+  createChecklistRun,
   createDeviceEnrollmentCode,
   createDeviceSession,
   createEnrolledDevice,
+  createRoomRecord,
+  createTrainingCompletionRecord,
+  createTrainingPlanRecord,
+  createTrainingRequirement,
   createUserProfile,
   createWorkerJob
 } from "@clinic-os/domain";
@@ -2070,11 +2077,14 @@ describe("Clinic API", () => {
     expect(workerHealth.statusCode).toBe(200);
     const workerHealthBody = workerHealth.json<{
       health: string;
+      operatingState: string;
+      lastPollAttemptAt: string | null;
       thresholds: {
         stalledHeartbeatMinutes: number;
         staleProcessingMinutes: number;
       };
       lastCompletedBatch: { processed: number } | null;
+      recentRuntimeState: Array<{ state: string }>;
       backlog: {
         queued: number;
         processing: number;
@@ -2083,9 +2093,12 @@ describe("Clinic API", () => {
       };
     }>();
     expect(workerHealthBody.health).toBe("critical");
+    expect(workerHealthBody.operatingState).toBe("not_polling");
+    expect(workerHealthBody.lastPollAttemptAt).toBeTruthy();
     expect(workerHealthBody.thresholds.stalledHeartbeatMinutes).toBeGreaterThanOrEqual(2);
     expect(workerHealthBody.thresholds.staleProcessingMinutes).toBeGreaterThanOrEqual(15);
     expect(workerHealthBody.lastCompletedBatch?.processed).toBe(3);
+    expect(workerHealthBody.recentRuntimeState.map((event) => event.state)).toContain("polling_draining");
     expect(workerHealthBody.backlog.queued).toBe(1);
     expect(workerHealthBody.backlog.processing).toBe(1);
     expect(workerHealthBody.backlog.oldestQueuedType).toBe("lists.issue.upsert");
@@ -2102,6 +2115,347 @@ describe("Clinic API", () => {
     );
 
     await runtimeApp.close();
+  });
+
+  it("returns room analytics and planner reconciliation summaries for room-bound office ops", async () => {
+    const officeRepository = new MemoryClinicRepository();
+    const officeService = new ClinicApiService(officeRepository, new LocalApprovedDocumentPublisher(), {
+      authMode: "dev_headers",
+      integrationMode: "stub",
+      microsoftPreflight: {
+        getMissingConfigKeys: () => [],
+        validate: async () => ({
+          mode: "stub",
+          configComplete: true,
+          overallStatus: "ready",
+          readyForLive: true,
+          missingConfigKeys: [],
+          surfaces: []
+        })
+      }
+    });
+    const officeApp = buildApp({
+      authMode: "dev_headers",
+      service: officeService,
+      repository: officeRepository,
+      databaseReadyCheck: async () => true
+    });
+
+    const room = createRoomRecord({
+      id: "exam_room_alpha",
+      roomLabel: "Exam Room Alpha",
+      roomType: "exam",
+      checklistAreaLabel: "Exam room alpha",
+      createdBy: "office-manager-user"
+    });
+    officeRepository.rooms.push(room);
+    const run = createChecklistRun({
+      templateId: "daily_opening",
+      workflowRunId: "workflow_office_1",
+      roomId: room.id,
+      targetDate: "2026-04-08"
+    });
+    officeRepository.checklistRuns.push(run);
+    const completedItem = {
+      ...createChecklistItemRecord({
+        checklistRunId: run.id,
+        label: "Sanitize exam surfaces",
+        areaLabel: room.checklistAreaLabel
+      }),
+      status: "complete" as const,
+      completedAt: "2026-04-08T08:10:00.000Z"
+    };
+    const blockedItem = {
+      ...createChecklistItemRecord({
+        checklistRunId: run.id,
+        label: "Verify sharps bin",
+        areaLabel: room.checklistAreaLabel
+      }),
+      status: "blocked" as const,
+      note: "Replacement bin pending"
+    };
+    officeRepository.checklistItems.push(completedItem, blockedItem);
+    officeRepository.actionItems.push(
+      {
+        ...createActionItemRecord({
+          kind: "review",
+          title: "Planner follow-up",
+          ownerRole: "office_manager",
+          createdBy: "office-manager-user",
+          dueDate: "2026-04-07T12:00:00.000Z",
+          syncStatus: "sync_error"
+        }),
+        createdAt: "2026-04-06T08:00:00.000Z",
+        updatedAt: "2026-04-08T09:00:00.000Z"
+      },
+      {
+        ...createActionItemRecord({
+          kind: "review",
+          title: "Escalated office follow-through",
+          ownerRole: "medical_director",
+          createdBy: "office-manager-user",
+          dueDate: "2026-04-09T12:00:00.000Z",
+          syncStatus: "synced"
+        }),
+        createdAt: "2026-04-05T08:00:00.000Z",
+        updatedAt: "2026-04-08T09:00:00.000Z"
+      }
+    );
+
+    const analytics = await officeApp.inject({
+      method: "GET",
+      url: "/office-ops/analytics?dateFrom=2026-04-01&dateTo=2026-04-30&roomType=exam",
+      headers: headers("office_manager")
+    });
+
+    expect(analytics.statusCode).toBe(200);
+    const analyticsBody = analytics.json<{
+      rooms: Array<{ roomId: string; trackedDays: number; missedRequiredItems: number }>;
+      checklist: { totalRuns: number; blockedItems: number };
+      plannerReconciliation: { syncErrors: number; overdueOpenActionItems: number };
+    }>();
+    expect(analyticsBody.rooms).toHaveLength(1);
+    expect(analyticsBody.rooms[0].roomId).toBe(room.id);
+    expect(analyticsBody.rooms[0].trackedDays).toBe(1);
+    expect(analyticsBody.rooms[0].missedRequiredItems).toBe(1);
+    expect(analyticsBody.checklist.totalRuns).toBe(1);
+    expect(analyticsBody.checklist.blockedItems).toBe(1);
+    expect(analyticsBody.plannerReconciliation.syncErrors).toBe(1);
+    expect(analyticsBody.plannerReconciliation.overdueOpenActionItems).toBeGreaterThanOrEqual(1);
+
+    await officeApp.close();
+  });
+
+  it("returns recurring training analytics with overdue-cycle and follow-up visibility", async () => {
+    const trainingRepository = new MemoryClinicRepository();
+    const trainingService = new ClinicApiService(trainingRepository, new LocalApprovedDocumentPublisher(), {
+      authMode: "dev_headers",
+      integrationMode: "stub",
+      microsoftPreflight: {
+        getMissingConfigKeys: () => [],
+        validate: async () => ({
+          mode: "stub",
+          configComplete: true,
+          overallStatus: "ready",
+          readyForLive: true,
+          missingConfigKeys: [],
+          surfaces: []
+        })
+      }
+    });
+    const trainingApp = buildApp({
+      authMode: "dev_headers",
+      service: trainingService,
+      repository: trainingRepository,
+      databaseReadyCheck: async () => true
+    });
+
+    const followUp = {
+      ...createActionItemRecord({
+        kind: "review",
+        title: "Escalate overdue competency follow-up",
+        ownerRole: "hr_lead",
+        createdBy: "hr-lead-user",
+        dueDate: "2026-03-20T12:00:00.000Z"
+      }),
+      createdAt: "2026-03-10T12:00:00.000Z",
+      updatedAt: "2026-04-08T12:00:00.000Z"
+    };
+    trainingRepository.actionItems.push(followUp);
+
+    const plan = createTrainingPlanRecord({
+      employeeId: "EMP-100",
+      employeeRole: "medical_assistant",
+      requirementType: "competency",
+      title: "Quarterly MA injection competency",
+      cadenceDays: 90,
+      leadTimeDays: 14,
+      validityDays: 90,
+      ownerRole: "hr_lead",
+      createdBy: "hr-lead-user"
+    });
+    trainingRepository.trainingPlans.push(plan);
+
+    const overdueRequirementOne = {
+      ...createTrainingRequirement({
+        employeeId: "EMP-100",
+        employeeRole: "medical_assistant",
+        requirementType: "competency",
+        title: "Cycle 1 competency",
+        planId: plan.id,
+        sourceCycleKey: "2026-Q1",
+        dueDate: "2026-03-15T12:00:00.000Z",
+        followUpActionItemId: followUp.id,
+        createdBy: "hr-lead-user"
+      }),
+      createdAt: "2026-01-01T12:00:00.000Z",
+      updatedAt: "2026-04-08T12:00:00.000Z"
+    };
+    const overdueRequirementTwo = {
+      ...createTrainingRequirement({
+        employeeId: "EMP-100",
+        employeeRole: "medical_assistant",
+        requirementType: "competency",
+        title: "Cycle 2 competency",
+        planId: plan.id,
+        sourceCycleKey: "2026-Q2",
+        dueDate: "2026-03-25T12:00:00.000Z",
+        createdBy: "hr-lead-user"
+      }),
+      createdAt: "2026-02-01T12:00:00.000Z",
+      updatedAt: "2026-04-08T12:00:00.000Z"
+    };
+    const lateRequirement = {
+      ...createTrainingRequirement({
+        employeeId: "EMP-100",
+        employeeRole: "medical_assistant",
+        requirementType: "training",
+        title: "Annual bloodborne-pathogens training",
+        planId: plan.id,
+        dueDate: "2026-03-01T12:00:00.000Z",
+        createdBy: "hr-lead-user"
+      }),
+      createdAt: "2026-02-01T12:00:00.000Z",
+      updatedAt: "2026-04-08T12:00:00.000Z"
+    };
+    trainingRepository.trainingRequirements.push(overdueRequirementOne, overdueRequirementTwo, lateRequirement);
+    trainingRepository.trainingCompletions.push(createTrainingCompletionRecord({
+      requirementId: lateRequirement.id,
+      employeeId: "EMP-100",
+      employeeRole: "medical_assistant",
+      completedAt: "2026-03-05T12:00:00.000Z",
+      validUntil: "2026-09-05T12:00:00.000Z",
+      recordedBy: "hr-lead-user"
+    }));
+
+    const analytics = await trainingApp.inject({
+      method: "GET",
+      url: "/training/analytics?employeeId=EMP-100&employeeRole=medical_assistant",
+      headers: headers("hr_lead")
+    });
+
+    expect(analytics.statusCode).toBe(200);
+    const analyticsBody = analytics.json<{
+      activePlans: number;
+      completionTimeliness: { late: number };
+      followUpActionBurdenByRole: Array<{ employeeRole: string; openFollowUps: number; overdueFollowUps: number }>;
+      repeatedOverdueCycles: Array<{ planId: string; repeatedCycles: number }>;
+      requirementCycles: Array<{ planId: string; overdueRequirements: number; openFollowUps: number }>;
+    }>();
+    expect(analyticsBody.activePlans).toBe(1);
+    expect(analyticsBody.completionTimeliness.late).toBe(1);
+    expect(analyticsBody.followUpActionBurdenByRole).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          employeeRole: "medical_assistant",
+          openFollowUps: 1,
+          overdueFollowUps: 1
+        })
+      ])
+    );
+    expect(analyticsBody.repeatedOverdueCycles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          planId: plan.id,
+          repeatedCycles: 2
+        })
+      ])
+    );
+    expect(analyticsBody.requirementCycles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          planId: plan.id,
+          overdueRequirements: 2,
+          openFollowUps: 1
+        })
+      ])
+    );
+
+    await trainingApp.close();
+  });
+
+  it("seeds and updates deployment promotion checklist execution state", async () => {
+    const deploymentRepository = new MemoryClinicRepository();
+    const deploymentService = new ClinicApiService(deploymentRepository, new LocalApprovedDocumentPublisher(), {
+      authMode: "dev_headers",
+      integrationMode: "stub",
+      microsoftPreflight: {
+        getMissingConfigKeys: () => [],
+        validate: async () => ({
+          mode: "stub",
+          configComplete: true,
+          overallStatus: "ready",
+          readyForLive: true,
+          missingConfigKeys: [],
+          surfaces: []
+        })
+      },
+      runtimeAgentsConfigValue: "false"
+    });
+    const deploymentApp = buildApp({
+      authMode: "dev_headers",
+      service: deploymentService,
+      repository: deploymentRepository,
+      databaseReadyCheck: async () => true
+    });
+
+    const createResponse = await deploymentApp.inject({
+      method: "POST",
+      url: "/ops/deployment-promotions",
+      headers: headers("medical_director"),
+      payload: {
+        environmentKey: "render_production",
+        status: "draft",
+        targetAuthMode: "trusted_proxy",
+        runtimeAgentsDisabled: true,
+        notes: "Initial rollout checklist"
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const created = createResponse.json<{
+      id: string;
+      checklistItems: Array<{ id: string; checklistKey: string; status: string }>;
+    }>();
+    expect(created.checklistItems.length).toBeGreaterThanOrEqual(5);
+    const smokeItem = created.checklistItems.find((item) => item.checklistKey === "smoke_passed");
+    expect(smokeItem?.status).toBe("pending");
+
+    const updateResponse = await deploymentApp.inject({
+      method: "PATCH",
+      url: `/ops/deployment-promotions/${created.id}/checklist-items/${smokeItem?.id}`,
+      headers: headers("medical_director"),
+      payload: {
+        status: "completed"
+      }
+    });
+    expect(updateResponse.statusCode).toBe(200);
+    const updated = updateResponse.json<{
+      latestSmokeAt: string | null;
+      checklistItems: Array<{ checklistKey: string; status: string; completedAt: string | null }>;
+    }>();
+    expect(updated.latestSmokeAt).toBeTruthy();
+    expect(updated.checklistItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          checklistKey: "smoke_passed",
+          status: "completed"
+        })
+      ])
+    );
+
+    const configStatus = await deploymentApp.inject({
+      method: "GET",
+      url: "/ops/config-status",
+      headers: headers("medical_director")
+    });
+    expect(configStatus.statusCode).toBe(200);
+    expect(configStatus.json<{ hardening: { latestPromotion: { checklistItems: Array<{ checklistKey: string }> } | null } }>().hardening.latestPromotion?.checklistItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ checklistKey: "smoke_passed" })
+      ])
+    );
+
+    await deploymentApp.close();
   });
 
   it("locks a profile after repeated bad PIN attempts and rejects mutating requests without Origin in device mode", async () => {

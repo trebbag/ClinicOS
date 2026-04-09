@@ -49,6 +49,20 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
     return app.clinicService.updateDeploymentPromotion(actor, params.id, request.body);
   });
 
+  app.post("/ops/deployment-promotions/:id/checklist-items", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "ops.run_cleanup");
+    const params = request.params as { id: string };
+    return app.clinicService.createDeploymentPromotionChecklistItem(actor, params.id, request.body);
+  });
+
+  app.patch("/ops/deployment-promotions/:id/checklist-items/:itemId", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "ops.run_cleanup");
+    const params = request.params as { id: string; itemId: string };
+    return app.clinicService.updateDeploymentPromotionChecklistItem(actor, params.id, params.itemId, request.body);
+  });
+
   app.get("/ops/worker-health", async (request) => {
     const actor = actorFromRequest(request);
     requireCapability(actor, "ops.view_config");

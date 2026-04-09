@@ -21,9 +21,11 @@ The repository now has a working pilot backbone for:
 - office-ops dashboard reads, daily closeout artifacts, overdue maintenance sweeps, and scorecard history views
 - room-readiness checklist templates/runs/items with closeout gating and office-manager inline updates
 - first-class room/master-data records with default bootstrap, per-room checklist runs, room readiness rollups, and office-manager room management
+- office-manager analytics for room readiness trends, checklist completion latency, repeat attention rooms, and Planner reconciliation summaries
 - Planner task reconciliation back into Clinic OS action-item status and sync health
 - manual HR/training requirement tracking with gap summaries and follow-up task creation from scorecard reviews
 - recurring HR/training plans with deterministic requirement materialization, cycle tracking, overdue follow-up task closure, and scorecards visibility
+- recurring training analytics for upcoming due windows, overdue-cycle buckets, follow-up burden, repeated overdue cycles, and coaching/completion trends
 - scorecard history enrichment with rolling averages and open training-gap counts
 - first-class incident and CAPA records with deterministic review/resolution commands, linked workflow runs, audit events, and quality UI management
 - first-class committee and QAPI records with committee registry, meeting scheduling, packet generation, approval routing, QAPI snapshotting, and decision-to-action-item follow-through
@@ -51,9 +53,11 @@ The repository now has a working pilot backbone for:
 - first-class runtime-agent execution with prompt-backed agent specs, bounded internal tool allowlists, a real Responses API tool loop, structured run results, audit events, capability-gated API routes, and a dedicated runtime-agents UI
 - runtime agents now require explicit `RUNTIME_AGENTS_ENABLED=true` enablement instead of turning on accidentally whenever an API key is present
 - deployment-promotion checklist records and Pilot Ops hardening signals for runtime-agent freeze, latest smoke proof, rollback verification, and target auth mode
+- deployment-promotion checklist item execution with per-item status, rollback verification detail, and trusted-proxy readiness visibility in Pilot Ops
 - live Microsoft validation now distinguishes between Graph-probed surfaces and config-only Teams webhook checks
 - the repo now has a working Microsoft-live local readiness path with external Postgres bootstrap, persisted integration validation records, API readiness checks, and worker startup on real env values
 - API and worker runtime now use `tsx` start scripts as the pilot-safe execution path while the workspace-package compiled ESM layout remains a later cleanup item
+- product-facing UI/UX direction docs for an executive-dashboard-first, unified-command-center experience under `docs/product/`
 
 The following areas are still placeholders or partial:
 - production identity integration beyond enrolled-browser trust and the optional trusted-proxy groundwork
@@ -98,4 +102,14 @@ Operational note from the latest live validation:
   - room master data with per-room readiness tracking and checklist binding
   - recurring HR/training plans with deterministic requirement generation and follow-up closure
   - deployment-promotion checklist records and Pilot Ops hardening visibility for post-pilot rollout discipline
-- those newest room/training/deploy-hardening changes are repo-ready and database-ready, but they still need one more Render redeploy before they are live in the deployed app
+- those newest room/training/deploy-hardening changes are now also live on the deployed app:
+  - authenticated live checks confirmed room bootstrap/readiness, recurring training-plan bootstrap, and deploy-hardening status visibility through the Render deployment
+- the newest local repo pass deepens that last comfort layer further:
+  - explicit production enforcement for `RUNTIME_AGENTS_ENABLED`
+  - richer worker runtime-state reporting with poll-attempt visibility
+  - deployment-promotion checklist execution in Pilot Ops
+  - deeper office and recurring-training analytics in the web UI
+  - a formal UI/UX documentation package for the next design/build phase
+- the remaining blocker is now operational rather than product-slice breadth:
+  - runtime agents are still disabled implicitly instead of by explicit `RUNTIME_AGENTS_ENABLED=false`
+  - the Render worker still is not emitting heartbeat events, even though bounded manual batch runs succeed immediately

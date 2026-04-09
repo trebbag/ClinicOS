@@ -110,6 +110,73 @@ export const trainingDashboardSchema = z.object({
   })
 });
 
+export const requirementCycleSummarySchema = z.object({
+  planId: z.string(),
+  title: z.string(),
+  employeeId: z.string().nullable().default(null),
+  employeeRole: z.string(),
+  ownerRole: z.string(),
+  activeRequirementCount: z.number().int().nonnegative(),
+  upcomingNext7Days: z.number().int().nonnegative(),
+  upcomingNext14Days: z.number().int().nonnegative(),
+  upcomingNext30Days: z.number().int().nonnegative(),
+  overdueRequirements: z.number().int().nonnegative(),
+  repeatedOverdueCycles: z.number().int().nonnegative(),
+  openFollowUps: z.number().int().nonnegative()
+});
+
+export const coachingTrendBucketSchema = z.object({
+  periodLabel: z.string(),
+  periodStart: z.string(),
+  periodEnd: z.string(),
+  completedRequirements: z.number().int().nonnegative(),
+  overdueRequirements: z.number().int().nonnegative(),
+  openFollowUps: z.number().int().nonnegative()
+});
+
+export const coachingTrendSummarySchema = z.object({
+  generatedAt: z.string(),
+  periods: z.array(coachingTrendBucketSchema)
+});
+
+export const trainingPlanAnalyticsSummarySchema = z.object({
+  generatedAt: z.string(),
+  employeeId: z.string().nullable().default(null),
+  employeeRole: z.string().nullable().default(null),
+  ownerRole: z.string().nullable().default(null),
+  planStatus: trainingPlanStatusSchema.nullable().default(null),
+  activePlans: z.number().int().nonnegative(),
+  upcomingDueWindows: z.object({
+    next7Days: z.number().int().nonnegative(),
+    next14Days: z.number().int().nonnegative(),
+    next30Days: z.number().int().nonnegative()
+  }),
+  overdueRequirementBuckets: z.object({
+    oneToSevenDays: z.number().int().nonnegative(),
+    eightToThirtyDays: z.number().int().nonnegative(),
+    overThirtyDays: z.number().int().nonnegative()
+  }),
+  completionTimeliness: z.object({
+    onTime: z.number().int().nonnegative(),
+    late: z.number().int().nonnegative(),
+    averageDaysLate: z.number().nonnegative().nullable()
+  }),
+  followUpActionBurdenByRole: z.array(z.object({
+    employeeRole: z.string(),
+    openFollowUps: z.number().int().nonnegative(),
+    overdueFollowUps: z.number().int().nonnegative()
+  })),
+  repeatedOverdueCycles: z.array(z.object({
+    employeeId: z.string(),
+    employeeRole: z.string(),
+    planId: z.string(),
+    title: z.string(),
+    repeatedCycles: z.number().int().positive()
+  })),
+  recentCompletionTrend: coachingTrendSummarySchema,
+  requirementCycles: z.array(requirementCycleSummarySchema)
+});
+
 export type TrainingRequirementType = z.infer<typeof trainingRequirementTypeSchema>;
 export type TrainingGapStatus = z.infer<typeof trainingGapStatusSchema>;
 export type TrainingRequirement = z.infer<typeof trainingRequirementSchema>;
@@ -119,6 +186,10 @@ export type TrainingCompletionRecord = z.infer<typeof trainingCompletionRecordSc
 export type TrainingGapItem = z.infer<typeof trainingGapItemSchema>;
 export type TrainingGapSummary = z.infer<typeof trainingGapSummarySchema>;
 export type TrainingDashboard = z.infer<typeof trainingDashboardSchema>;
+export type RequirementCycleSummary = z.infer<typeof requirementCycleSummarySchema>;
+export type CoachingTrendBucket = z.infer<typeof coachingTrendBucketSchema>;
+export type CoachingTrendSummary = z.infer<typeof coachingTrendSummarySchema>;
+export type TrainingPlanAnalyticsSummary = z.infer<typeof trainingPlanAnalyticsSummarySchema>;
 
 export function createTrainingRequirement(input: {
   employeeId: string;

@@ -9,6 +9,7 @@ import type {
   CommitteeMeetingRecord,
   CommitteeRecord,
   ControlledSubstanceStewardshipRecord,
+  DeploymentPromotionChecklistItemRecord,
   DeploymentPromotionRecord,
   DelegationRuleRecord,
   DeviceAllowedProfile,
@@ -39,6 +40,7 @@ import type {
   WorkerJobRecord,
   WorkflowRun
 } from "@clinic-os/domain";
+import { deriveDeploymentRollbackVerification } from "@clinic-os/domain";
 import type { ClinicRepository } from "@clinic-os/db";
 
 type FilterMap = Record<string, string | undefined>;
@@ -88,6 +90,18 @@ export class MemoryClinicRepository implements ClinicRepository {
   public readonly workerJobs: WorkerJobRecord[] = [];
   public readonly integrationValidations: MicrosoftIntegrationValidationRecord[] = [];
   public readonly deploymentPromotions: DeploymentPromotionRecord[] = [];
+  public readonly deploymentPromotionChecklistItems: DeploymentPromotionChecklistItemRecord[] = [];
+
+  private hydrateDeploymentPromotion(record: DeploymentPromotionRecord): DeploymentPromotionRecord {
+    const checklistItems = this.deploymentPromotionChecklistItems
+      .filter((item) => item.promotionId === record.id)
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.createdAt.localeCompare(right.createdAt));
+    return {
+      ...record,
+      checklistItems,
+      rollbackVerification: deriveDeploymentRollbackVerification(checklistItems)
+    };
+  }
 
   async createWorkflowRun(run: WorkflowRun): Promise<WorkflowRun> {
     this.workflows.unshift(run);
@@ -1051,17 +1065,18 @@ export class MemoryClinicRepository implements ClinicRepository {
 
   async createDeploymentPromotion(record: DeploymentPromotionRecord): Promise<DeploymentPromotionRecord> {
     this.deploymentPromotions.unshift(record);
-    return record;
+    return this.hydrateDeploymentPromotion(record);
   }
 
   async updateDeploymentPromotion(id: string, patch: Partial<DeploymentPromotionRecord>): Promise<DeploymentPromotionRecord> {
     const index = this.deploymentPromotions.findIndex((record) => record.id === id);
     this.deploymentPromotions[index] = { ...this.deploymentPromotions[index], ...patch };
-    return this.deploymentPromotions[index];
+    return this.hydrateDeploymentPromotion(this.deploymentPromotions[index]);
   }
 
   async getDeploymentPromotion(id: string): Promise<DeploymentPromotionRecord | null> {
-    return this.deploymentPromotions.find((record) => record.id === id) ?? null;
+    const record = this.deploymentPromotions.find((entry) => entry.id === id) ?? null;
+    return record ? this.hydrateDeploymentPromotion(record) : null;
   }
 
   async listDeploymentPromotions(filters?: {
@@ -1069,6 +1084,36 @@ export class MemoryClinicRepository implements ClinicRepository {
     status?: string;
     targetAuthMode?: string;
   }): Promise<DeploymentPromotionRecord[]> {
-    return this.deploymentPromotions.filter((record) => matchesFilters(record, filters));
+    return this.deploymentPromotions
+      .filter((record) => matchesFilters(record, filters))
+      .map((record) => this.hydrateDeploymentPromotion(record));
+  }
+
+  async createDeploymentPromotionChecklistItem(
+    record: DeploymentPromotionChecklistItemRecord
+  ): Promise<DeploymentPromotionChecklistItemRecord> {
+    this.deploymentPromotionChecklistItems.unshift(record);
+    return record;
+  }
+
+  async updateDeploymentPromotionChecklistItem(
+    id: string,
+    patch: Partial<DeploymentPromotionChecklistItemRecord>
+  ): Promise<DeploymentPromotionChecklistItemRecord> {
+    const index = this.deploymentPromotionChecklistItems.findIndex((record) => record.id === id);
+    this.deploymentPromotionChecklistItems[index] = { ...this.deploymentPromotionChecklistItems[index], ...patch };
+    return this.deploymentPromotionChecklistItems[index];
+  }
+
+  async getDeploymentPromotionChecklistItem(id: string): Promise<DeploymentPromotionChecklistItemRecord | null> {
+    return this.deploymentPromotionChecklistItems.find((record) => record.id === id) ?? null;
+  }
+
+  async listDeploymentPromotionChecklistItems(filters?: {
+    promotionId?: string;
+    checklistKey?: string;
+    status?: string;
+  }): Promise<DeploymentPromotionChecklistItemRecord[]> {
+    return this.deploymentPromotionChecklistItems.filter((record) => matchesFilters(record, filters));
   }
 }

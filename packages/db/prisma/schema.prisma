@@ -779,6 +779,23 @@ model DeploymentPromotion {
   @@index([environmentKey, status])
 }
 
+model DeploymentPromotionChecklistItem {
+  id          String   @id
+  promotionId String
+  checklistKey String
+  label       String
+  status      String
+  detail      String?
+  completedAt DateTime?
+  completedBy String?
+  sortOrder   Int
+  createdAt   DateTime
+  updatedAt   DateTime
+
+  @@index([promotionId, sortOrder])
+  @@index([promotionId, checklistKey])
+}
+
 model WorkerJobRecord {
   id               String   @id
   type             String

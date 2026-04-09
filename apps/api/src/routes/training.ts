@@ -1,10 +1,22 @@
 import type { FastifyInstance } from "fastify";
-import { actorFromRequest } from "../lib/auth";
+import { actorFromRequest, requireCapability } from "../lib/auth";
 
 export async function registerTrainingRoutes(app: FastifyInstance): Promise<void> {
   app.get("/training/dashboard", async (request) => {
     const query = request.query as { employeeId: string; employeeRole: string };
     return app.clinicService.getTrainingDashboard(query.employeeId, query.employeeRole);
+  });
+
+  app.get("/training/analytics", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "scorecards.view");
+    const query = request.query as {
+      employeeId?: string;
+      employeeRole?: string;
+      ownerRole?: string;
+      status?: string;
+    };
+    return app.clinicService.getTrainingAnalytics(query);
   });
 
   app.get("/training-plans", async (request) => {

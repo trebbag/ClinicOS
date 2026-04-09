@@ -23,6 +23,7 @@ import {
   createChecklistRun,
   createChecklistTemplate,
   createControlledSubstanceStewardshipRecord,
+  createDeploymentPromotionChecklistItemRecord,
   createDeploymentPromotionRecord,
   createDelegationRuleRecord,
   createEvidenceGapRecord,
@@ -47,12 +48,15 @@ import {
   createServiceLinePackRecord,
   createServiceLineRecord,
   defaultRoomTemplates,
+  defaultDeploymentPromotionChecklistItems,
   defaultWorkerHeartbeatIntervalMs,
   deidentifiedOperationalRowSchema,
   delegationEvaluationQuerySchema,
   delegationRuleCreateSchema,
   delegationRuleUpdateSchema,
   deploymentPromotionCreateSchema,
+  deploymentPromotionChecklistItemCreateSchema,
+  deploymentPromotionChecklistItemUpdateSchema,
   deploymentPromotionUpdateSchema,
   documentMetadataSchema,
   evaluateDelegationRule,
@@ -119,6 +123,7 @@ import {
   type CommitteeQapiSnapshot,
   type CommitteeRecord,
   type ControlledSubstanceStewardshipRecord,
+  type DeploymentPromotionChecklistItemRecord,
   type DeploymentPromotionRecord,
   type DeployHardeningStatus,
   type MetricRun,
@@ -134,6 +139,7 @@ import {
   type OpsCleanupTarget,
   type OpsMaintenanceSummary,
   type OfficeOpsDailyStatus,
+  type PlannerReconciliationSummary,
   type PublicationMode,
   type PublicAssetRecord,
   type PayerIssueRecord,
@@ -141,6 +147,7 @@ import {
   type PracticeAgreementRecord,
   type QapiTrendSummary,
   type RoomReadinessSummary,
+  type RoomAnalyticsSummary,
   type RoomRecord,
   type RevenueDashboardSummary,
   type RevenueReviewRecord,
@@ -152,6 +159,7 @@ import {
   type ServiceLineRecord,
   type StandardMappingRecord,
   type TelehealthStewardshipRecord,
+  type TrainingPlanAnalyticsSummary,
   type TrainingDashboard,
   type TrainingGapItem,
   type TrainingGapStatus,
@@ -165,6 +173,7 @@ import {
   type ScorecardReviewRecord,
   type WorkerBatchSummary,
   type WorkerRuntimeEvent,
+  type WorkerRuntimeOperatingState,
   type WorkerJobSummary,
   type WorkerRuntimeStatus,
   type WorkerJobRecord,
@@ -224,6 +233,16 @@ function startOfMonth(input: string): string {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1)).toISOString();
 }
 
+function startOfDay(input: string): string {
+  const date = new Date(input);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())).toISOString();
+}
+
+function endOfDay(input: string): string {
+  const date = new Date(input);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999)).toISOString();
+}
+
 function endOfMonth(input: string): string {
   const date = new Date(input);
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0, 23, 59, 59, 999)).toISOString();
@@ -238,8 +257,54 @@ function latestIsoDate(values: Array<string | null | undefined>): string | null 
   return sorted[0] ?? null;
 }
 
+function dateBucketLabel(input: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC"
+  }).format(new Date(input));
+}
+
+function daysBetween(later: string, earlier: string): number {
+  return Math.round((new Date(later).getTime() - new Date(earlier).getTime()) / (24 * 60 * 60 * 1000));
+}
+
 function requirementCycleKey(planId: string, dueDate: string): string {
   return `${planId}:${dueDate.slice(0, 10)}`;
+}
+
+function deploymentChecklistLabel(key: DeploymentPromotionChecklistItemRecord["checklistKey"]): string {
+  switch (key) {
+    case "smoke_passed":
+      return "Smoke passed";
+    case "rollback_verified":
+      return "Rollback verified";
+    case "auth_target_confirmed":
+      return "Auth target confirmed";
+    case "runtime_agent_freeze_confirmed":
+      return "Runtime-agent freeze confirmed";
+    case "microsoft_validation_ready":
+      return "Microsoft validation ready";
+    default:
+      return "Checklist item";
+  }
+}
+
+function deploymentChecklistSortOrder(key: DeploymentPromotionChecklistItemRecord["checklistKey"]): number {
+  switch (key) {
+    case "smoke_passed":
+      return 0;
+    case "rollback_verified":
+      return 1;
+    case "auth_target_confirmed":
+      return 2;
+    case "runtime_agent_freeze_confirmed":
+      return 3;
+    case "microsoft_validation_ready":
+      return 4;
+    default:
+      return 99;
+  }
 }
 
 function systemActor(role: Role = "quality_lead"): ActorContext {
@@ -988,6 +1053,166 @@ export class ClinicApiService {
 
   async getOfficeOpsDashboard(targetDate: string): Promise<OfficeOpsDailyStatus> {
     return this.buildOfficeOpsDashboard(targetDate);
+  }
+
+  async getOfficeOpsAnalytics(input?: unknown): Promise<RoomAnalyticsSummary> {
+    const command = z.object({
+      dateFrom: z.string().optional(),
+      dateTo: z.string().optional(),
+      roomId: z.string().optional(),
+      roomType: z.enum(["front_desk", "exam", "procedure", "lab", "virtual", "common"]).optional()
+    }).parse(input ?? {});
+
+    const generatedAt = new Date().toISOString();
+    const dateRangeEnd = endOfDay(command.dateTo ?? generatedAt);
+    const dateRangeStart = startOfDay(command.dateFrom ?? subtractDays(dateRangeEnd, 29));
+    const [rooms, checklistRuns, officeManagerItems, escalationItems] = await Promise.all([
+      this.repository.listRooms(command.roomType ? { roomType: command.roomType } : undefined),
+      this.repository.listChecklistRuns(),
+      this.repository.listActionItems({ ownerRole: "office_manager" }),
+      this.repository.listActionItems({ ownerRole: "medical_director" })
+    ]);
+
+    const scopedRooms = rooms.filter((room) => !command.roomId || room.id === command.roomId);
+    const scopedRoomIds = new Set(scopedRooms.map((room) => room.id));
+    const scopedRuns = checklistRuns.filter((run) =>
+      run.roomId !== null
+      && scopedRoomIds.has(run.roomId)
+      && run.targetDate >= dateRangeStart
+      && run.targetDate <= dateRangeEnd
+    );
+    const checklistItems = (await Promise.all(
+      scopedRuns.map((run) => this.repository.listChecklistItems({ checklistRunId: run.id }))
+    )).flat();
+    const runById = new Map(scopedRuns.map((run) => [run.id, run] as const));
+    const roomById = new Map(scopedRooms.map((room) => [room.id, room] as const));
+    const itemsByRunId = new Map<string, ChecklistItemRecord[]>();
+    for (const item of checklistItems) {
+      const current = itemsByRunId.get(item.checklistRunId) ?? [];
+      current.push(item);
+      itemsByRunId.set(item.checklistRunId, current);
+    }
+
+    const readinessByRun = scopedRuns.map((run) => {
+      const room = roomById.get(run.roomId ?? "");
+      if (!room) {
+        return null;
+      }
+      const runItems = itemsByRunId.get(run.id) ?? [];
+      const counts = {
+        totalItems: runItems.length,
+        completedItems: runItems.filter((item) => item.status === "complete").length,
+        blockedItems: runItems.filter((item) => item.status === "blocked").length,
+        waivedItems: runItems.filter((item) => item.status === "waived").length,
+        pendingItems: runItems.filter((item) => item.status === "pending").length,
+        requiredRemaining: runItems.filter((item) => item.required && !["complete", "waived"].includes(item.status)).length
+      };
+      const readinessStatus = room.status !== "active"
+        ? "inactive"
+        : counts.blockedItems > 0
+          ? "blocked"
+          : counts.requiredRemaining > 0
+            ? "attention_needed"
+            : "ready";
+      return {
+        run,
+        room,
+        runItems,
+        counts,
+        readinessStatus
+      };
+    }).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+    const readinessTrend = Array.from(new Set(readinessByRun.map((entry) => entry.run.targetDate)))
+      .sort((left, right) => left.localeCompare(right))
+      .map((targetDate) => {
+        const entries = readinessByRun.filter((entry) => entry.run.targetDate === targetDate);
+        return {
+          targetDate: targetDate.slice(0, 10),
+          readyRooms: entries.filter((entry) => entry.readinessStatus === "ready").length,
+          attentionNeededRooms: entries.filter((entry) => entry.readinessStatus === "attention_needed").length,
+          blockedRooms: entries.filter((entry) => entry.readinessStatus === "blocked").length,
+          inactiveRooms: entries.filter((entry) => entry.readinessStatus === "inactive").length
+        };
+      });
+
+    const completionLatencies = readinessByRun.flatMap((entry) =>
+      entry.runItems
+        .filter((item) => item.completedAt !== null)
+        .map((item) =>
+          Math.max(0, Math.round((new Date(item.completedAt ?? entry.run.createdAt).getTime() - new Date(entry.run.createdAt).getTime()) / 60_000))
+        )
+    );
+
+    const roomRows = scopedRooms.map((room) => {
+      const entries = readinessByRun.filter((entry) => entry.room.id === room.id);
+      const roomCompletionLatencies = entries.flatMap((entry) =>
+        entry.runItems
+          .filter((item) => item.completedAt !== null)
+          .map((item) =>
+            Math.max(0, Math.round((new Date(item.completedAt ?? entry.run.createdAt).getTime() - new Date(entry.run.createdAt).getTime()) / 60_000))
+          )
+      );
+      return {
+        roomId: room.id,
+        roomLabel: room.roomLabel,
+        roomType: room.roomType,
+        trackedDays: entries.length,
+        readyDays: entries.filter((entry) => entry.readinessStatus === "ready").length,
+        attentionNeededDays: entries.filter((entry) => entry.readinessStatus === "attention_needed").length,
+        blockedDays: entries.filter((entry) => entry.readinessStatus === "blocked").length,
+        inactiveDays: entries.filter((entry) => entry.readinessStatus === "inactive").length,
+        missedRequiredItems: entries.reduce((sum, entry) => sum + entry.counts.requiredRemaining, 0),
+        repeatAttentionDays: entries.filter((entry) => ["attention_needed", "blocked"].includes(entry.readinessStatus)).length,
+        averageCompletionLatencyMinutes: roomCompletionLatencies.length > 0
+          ? Math.round(roomCompletionLatencies.reduce((sum, value) => sum + value, 0) / roomCompletionLatencies.length)
+          : null
+      };
+    });
+
+    const plannerItems = [...officeManagerItems, ...escalationItems].filter((item) =>
+      item.createdAt >= dateRangeStart
+      || (item.closedAt === null && isOpenActionStatus(item.status))
+    );
+    const openPlannerItems = plannerItems.filter((item) => isOpenActionStatus(item.status));
+
+    return {
+      generatedAt,
+      dateRangeStart: dateRangeStart.slice(0, 10),
+      dateRangeEnd: dateRangeEnd.slice(0, 10),
+      roomId: command.roomId ?? null,
+      roomType: command.roomType ?? null,
+      readinessTrend,
+      rooms: roomRows,
+      checklist: {
+        totalRuns: scopedRuns.length,
+        totalItems: checklistItems.length,
+        completedItems: checklistItems.filter((item) => item.status === "complete").length,
+        blockedItems: checklistItems.filter((item) => item.status === "blocked").length,
+        waivedItems: checklistItems.filter((item) => item.status === "waived").length,
+        pendingItems: checklistItems.filter((item) => item.status === "pending").length,
+        missedRequiredItems: readinessByRun.reduce((sum, entry) => sum + entry.counts.requiredRemaining, 0),
+        averageCompletionLatencyMinutes: completionLatencies.length > 0
+          ? Math.round(completionLatencies.reduce((sum, value) => sum + value, 0) / completionLatencies.length)
+          : null
+      },
+      plannerReconciliation: {
+        pendingCreate: plannerItems.filter((item) => item.syncStatus === "pending_create").length,
+        synced: plannerItems.filter((item) => item.syncStatus === "synced").length,
+        syncErrors: plannerItems.filter((item) => item.syncStatus === "sync_error").length,
+        externallyCompleted: plannerItems.filter((item) => item.syncStatus === "completed_external").length,
+        openActionItems: openPlannerItems.length,
+        overdueOpenActionItems: openPlannerItems.filter((item) => item.dueDate !== null && item.dueDate < generatedAt).length,
+        agingBuckets: {
+          underSevenDays: openPlannerItems.filter((item) => daysBetween(generatedAt, item.createdAt) < 7).length,
+          sevenToThirtyDays: openPlannerItems.filter((item) => {
+            const age = daysBetween(generatedAt, item.createdAt);
+            return age >= 7 && age <= 30;
+          }).length,
+          overThirtyDays: openPlannerItems.filter((item) => daysBetween(generatedAt, item.createdAt) > 30).length
+        }
+      }
+    };
   }
 
   async updateChecklistItem(
@@ -4614,6 +4839,7 @@ export class ClinicApiService {
 
     const relevantEvents = workerEvents.filter((event) => event.eventType.startsWith("worker."));
     const latestStarted = relevantEvents.find((event) => event.eventType === "worker.started") ?? null;
+    const latestHeartbeatEvent = relevantEvents.find((event) => event.eventType === "worker.heartbeat") ?? null;
     const latestCompleted = relevantEvents.find((event) => event.eventType === "worker.batch.completed") ?? null;
     const latestFailed = relevantEvents.find((event) => event.eventType === "worker.batch.failed") ?? null;
     const latestManualBatchRequest = relevantEvents.find((event) => event.eventType === "worker.batch_run_requested") ?? null;
@@ -4622,7 +4848,13 @@ export class ClinicApiService {
       && typeof event.payload?.requeuedStaleProcessingJobs === "number"
       && event.payload.requeuedStaleProcessingJobs > 0
     ) ?? null;
-    const latestHeartbeat = latestCompleted ?? latestFailed ?? latestStarted;
+    const latestPollAttempt = [
+      latestHeartbeatEvent,
+      latestCompleted,
+      latestFailed,
+      latestStarted
+    ].find((event) => event !== null) ?? null;
+    const latestHeartbeat = latestHeartbeatEvent ?? latestCompleted ?? latestFailed ?? latestStarted;
 
     const queuedJobs = jobs
       .filter((job) => job.status === "queued")
@@ -4638,6 +4870,7 @@ export class ClinicApiService {
     const oldestProcessingAt = oldestProcessing?.lockedAt ?? oldestProcessing?.updatedAt ?? null;
     const oldestProcessingMinutes = ageMinutes(checkedAt, oldestProcessingAt);
     const lastHeartbeatMinutes = ageMinutes(checkedAt, latestHeartbeat?.createdAt ?? null);
+    const lastPollAttemptMinutes = ageMinutes(checkedAt, latestPollAttempt?.createdAt ?? null);
     const lastFailedBatchMessage = typeof latestFailed?.payload?.message === "string"
       ? latestFailed.payload.message
       : latestFailed?.payload?.message == null
@@ -4657,11 +4890,20 @@ export class ClinicApiService {
       Math.round((pollIntervalMs * 20) / 60_000),
       2
     );
-    const queueStalled = summary.queued > 0 && (lastHeartbeatMinutes === null || lastHeartbeatMinutes >= stalledHeartbeatMinutes);
+    const queueStalled = summary.queued > 0 && (lastPollAttemptMinutes === null || lastPollAttemptMinutes >= stalledHeartbeatMinutes);
     const processingStalled = summary.processing > 0 && (oldestProcessingMinutes ?? 0) >= staleProcessingMinutes;
     if (queueStalled || processingStalled) {
       health = "critical";
     }
+
+    const operatingState: WorkerRuntimeOperatingState =
+      lastPollAttemptMinutes === null || lastPollAttemptMinutes >= stalledHeartbeatMinutes
+        ? "not_polling"
+        : latestFailed && latestFailed.createdAt >= (latestCompleted?.createdAt ?? "")
+          ? "polling_failed"
+          : (summary.queued + summary.processing) > 0
+            ? "polling_draining"
+            : "polling_idle";
 
     const recentEvents: WorkerRuntimeEvent[] = relevantEvents
       .slice(0, 6)
@@ -4677,6 +4919,8 @@ export class ClinicApiService {
         } else if (event.eventType === "worker.batch_run_requested") {
           const summary = parseWorkerBatchSummary(event.payload?.summary);
           detail = summary ? `Operator requested one batch: ${summary.succeeded}/${summary.processed} succeeded` : null;
+        } else if (event.eventType === "worker.heartbeat") {
+          detail = "Worker heartbeat recorded while the queue was idle.";
         } else if (event.eventType === "ops.cleanup_ran") {
           const requeued = typeof event.payload?.requeuedStaleProcessingJobs === "number"
             ? event.payload.requeuedStaleProcessingJobs
@@ -4692,9 +4936,43 @@ export class ClinicApiService {
         };
       });
 
+    const recentRuntimeState = relevantEvents
+      .filter((event) =>
+        ["worker.started", "worker.heartbeat", "worker.batch.completed", "worker.batch.failed"].includes(event.eventType)
+      )
+      .slice(0, 6)
+      .map((event) => {
+        let state: WorkerRuntimeOperatingState = "not_polling";
+        let detail: string | null = null;
+
+        if (event.eventType === "worker.started") {
+          state = "polling_idle";
+          detail = "Worker loop started.";
+        } else if (event.eventType === "worker.heartbeat") {
+          state = "polling_idle";
+          detail = "Worker heartbeat recorded without active batch work.";
+        } else if (event.eventType === "worker.batch.completed") {
+          const batchSummary = parseWorkerBatchSummary(event.payload?.summary);
+          state = batchSummary && batchSummary.processed > 0 ? "polling_draining" : "polling_idle";
+          detail = batchSummary
+            ? `${batchSummary.succeeded} succeeded, ${batchSummary.failed} failed out of ${batchSummary.processed} processed.`
+            : "Worker completed a batch.";
+        } else if (event.eventType === "worker.batch.failed") {
+          state = "polling_failed";
+          detail = typeof event.payload?.message === "string" ? event.payload.message : "Worker batch failed.";
+        }
+
+        return {
+          state,
+          createdAt: event.createdAt,
+          detail
+        };
+      });
+
     return {
       checkedAt,
       health,
+      operatingState,
       pollIntervalMs,
       heartbeatIntervalMs,
       thresholds: {
@@ -4702,6 +4980,7 @@ export class ClinicApiService {
         staleProcessingMinutes
       },
       lastStartedAt: latestStarted?.createdAt ?? null,
+      lastPollAttemptAt: latestPollAttempt?.createdAt ?? null,
       lastHeartbeatAt: latestHeartbeat?.createdAt ?? null,
       lastCompletedBatchAt: latestCompleted?.createdAt ?? null,
       lastCompletedBatch: parseWorkerBatchSummary(latestCompleted?.payload?.summary),
@@ -4710,6 +4989,7 @@ export class ClinicApiService {
       lastManualBatchRequestAt: latestManualBatchRequest?.createdAt ?? null,
       lastStaleProcessingCleanupAt: latestCleanup?.createdAt ?? null,
       recentEvents,
+      recentRuntimeState,
       backlog: {
         ...summary,
         oldestQueuedAt: oldestQueued?.scheduledAt ?? null,
@@ -4731,7 +5011,8 @@ export class ClinicApiService {
     status?: string;
     targetAuthMode?: string;
   }): Promise<DeploymentPromotionRecord[]> {
-    return this.repository.listDeploymentPromotions(filters);
+    const promotions = await this.repository.listDeploymentPromotions(filters);
+    return Promise.all(promotions.map((promotion) => this.ensureDeploymentPromotionChecklistDefaults(promotion)));
   }
 
   async createDeploymentPromotion(actor: ActorContext, input: unknown): Promise<DeploymentPromotionRecord> {
@@ -4742,12 +5023,13 @@ export class ClinicApiService {
       rollbackVerifiedAt: command.rollbackVerifiedAt ?? null,
       createdBy: actor.actorId
     }));
+    const hydrated = await this.ensureDeploymentPromotionChecklistDefaults(created);
     await this.recordAudit(actor, "deployment.promotion_created", "deployment_promotion", created.id, {
       environmentKey: created.environmentKey,
       status: created.status,
       targetAuthMode: created.targetAuthMode
     });
-    return created;
+    return hydrated;
   }
 
   async updateDeploymentPromotion(actor: ActorContext, promotionId: string, input: unknown): Promise<DeploymentPromotionRecord> {
@@ -4766,39 +5048,267 @@ export class ClinicApiService {
       notes: command.notes !== undefined ? command.notes : record.notes,
       updatedAt: new Date().toISOString()
     });
+    const hydrated = await this.ensureDeploymentPromotionChecklistDefaults(updated);
     await this.recordAudit(actor, "deployment.promotion_updated", "deployment_promotion", updated.id, {
       status: updated.status,
       targetAuthMode: updated.targetAuthMode
     });
-    return updated;
+    return hydrated;
+  }
+
+  async createDeploymentPromotionChecklistItem(
+    actor: ActorContext,
+    promotionId: string,
+    input: unknown
+  ): Promise<DeploymentPromotionRecord> {
+    const command = deploymentPromotionChecklistItemCreateSchema.parse(input);
+    const promotion = await this.repository.getDeploymentPromotion(promotionId);
+    if (!promotion) {
+      notFound(`Deployment promotion not found: ${promotionId}`);
+    }
+
+    const existingItems = await this.repository.listDeploymentPromotionChecklistItems({
+      promotionId,
+      checklistKey: command.checklistKey
+    });
+    if (existingItems.length > 0) {
+      badRequest(`Checklist item already exists for ${command.checklistKey}.`);
+    }
+
+    await this.repository.createDeploymentPromotionChecklistItem(createDeploymentPromotionChecklistItemRecord({
+      promotionId,
+      checklistKey: command.checklistKey,
+      label: command.label ?? deploymentChecklistLabel(command.checklistKey),
+      status: command.status,
+      detail: command.detail ?? null,
+      completedAt: command.completedAt ?? null,
+      completedBy: command.completedBy ?? (command.status === "completed" ? actor.actorId : null),
+      sortOrder: command.sortOrder ?? deploymentChecklistSortOrder(command.checklistKey)
+    }));
+
+    const synced = await this.syncDeploymentPromotionFieldsFromChecklist(promotionId);
+    await this.recordAudit(actor, "deployment.promotion_checklist_item_created", "deployment_promotion", promotionId, {
+      checklistKey: command.checklistKey,
+      status: command.status
+    });
+    return synced;
+  }
+
+  async updateDeploymentPromotionChecklistItem(
+    actor: ActorContext,
+    promotionId: string,
+    checklistItemId: string,
+    input: unknown
+  ): Promise<DeploymentPromotionRecord> {
+    const command = deploymentPromotionChecklistItemUpdateSchema.parse(input);
+    const promotion = await this.repository.getDeploymentPromotion(promotionId);
+    if (!promotion) {
+      notFound(`Deployment promotion not found: ${promotionId}`);
+    }
+
+    const item = await this.repository.getDeploymentPromotionChecklistItem(checklistItemId);
+    if (!item || item.promotionId !== promotionId) {
+      notFound(`Deployment promotion checklist item not found: ${checklistItemId}`);
+    }
+
+    const nextStatus = command.status ?? item.status;
+    await this.repository.updateDeploymentPromotionChecklistItem(item.id, {
+      status: nextStatus,
+      detail: command.detail !== undefined ? command.detail : item.detail,
+      completedAt: command.completedAt !== undefined
+        ? command.completedAt
+        : nextStatus === "completed"
+          ? (item.completedAt ?? new Date().toISOString())
+          : null,
+      completedBy: command.completedBy !== undefined
+        ? command.completedBy
+        : nextStatus === "completed"
+          ? (item.completedBy ?? actor.actorId)
+          : null,
+      updatedAt: new Date().toISOString()
+    });
+
+    const synced = await this.syncDeploymentPromotionFieldsFromChecklist(promotionId);
+    await this.recordAudit(actor, "deployment.promotion_checklist_item_updated", "deployment_promotion", promotionId, {
+      checklistKey: item.checklistKey,
+      status: nextStatus
+    });
+    return synced;
   }
 
   async getDeployHardeningStatus(input?: {
     currentAuthMode?: AuthMode;
   }): Promise<DeployHardeningStatus> {
     const [promotions, alerts] = await Promise.all([
-      this.repository.listDeploymentPromotions(),
+      this.listDeploymentPromotions(),
       this.listAuditEvents({ eventTypePrefix: "ops.alert_dispatched" })
     ]);
     const latestPromotion = promotions[0] ?? null;
     const latestSmokeAt = latestIsoDate(promotions.map((record) => record.latestSmokeAt));
-    const latestRollbackVerificationAt = latestIsoDate(promotions.map((record) => record.rollbackVerifiedAt));
+    const latestRollbackVerificationAt = latestIsoDate(
+      promotions.map((record) => record.rollbackVerification.completedAt ?? record.rollbackVerifiedAt)
+    );
     const latestAlertDispatchAt = alerts[0]?.createdAt ?? null;
     const runtimeAgentsExplicitlyDisabled = this.options.runtimeAgentsConfigValue === "false";
     const trustedProxyConfigured = Boolean(process.env.TRUSTED_PROXY_SHARED_SECRET);
+    const currentAuthMode = input?.currentAuthMode ?? this.options.authMode;
+    const trustedProxyReadiness = {
+      sharedSecretConfigured: trustedProxyConfigured,
+      allowedSkewSeconds: Number(process.env.TRUSTED_PROXY_ALLOWED_SKEW_SECONDS ?? 300),
+      expectedHeaders: [
+        "x-clinic-user-id",
+        "x-clinic-user-role",
+        "x-clinic-user-name",
+        "x-clinic-auth-ts",
+        "x-clinic-auth-signature"
+      ],
+      currentAuthMode,
+      ready: trustedProxyConfigured
+    };
 
     return {
-      currentAuthMode: input?.currentAuthMode ?? this.options.authMode,
+      currentAuthMode,
       runtimeAgentsExplicitlyDisabled,
       runtimeAgentsConfigValue: this.options.runtimeAgentsConfigValue ?? null,
       trustedProxyConfigured,
-      trustedProxyReady: trustedProxyConfigured,
+      trustedProxyReady: trustedProxyReadiness.ready,
+      trustedProxyReadiness,
       recommendedTargetAuthMode: "trusted_proxy",
       latestPromotion,
       latestAlertDispatchAt,
       latestRollbackVerificationAt,
       latestSmokeAt
     };
+  }
+
+  private async ensureDeploymentPromotionChecklistDefaults(
+    promotion: DeploymentPromotionRecord
+  ): Promise<DeploymentPromotionRecord> {
+    const existingItems = await this.repository.listDeploymentPromotionChecklistItems({
+      promotionId: promotion.id
+    });
+    const existingKeys = new Set(existingItems.map((item) => item.checklistKey));
+    const defaults = defaultDeploymentPromotionChecklistItems({
+      promotionId: promotion.id,
+      createdBy: promotion.createdBy,
+      runtimeAgentsDisabled: promotion.runtimeAgentsDisabled,
+      latestSmokeAt: promotion.latestSmokeAt,
+      rollbackVerifiedAt: promotion.rollbackVerifiedAt
+    });
+
+    for (const item of defaults) {
+      if (existingKeys.has(item.checklistKey)) {
+        continue;
+      }
+      await this.repository.createDeploymentPromotionChecklistItem(item);
+    }
+
+    return this.applyDeploymentPromotionRecordSignals(promotion.id);
+  }
+
+  private async applyDeploymentPromotionRecordSignals(
+    promotionId: string
+  ): Promise<DeploymentPromotionRecord> {
+    const promotion = await this.repository.getDeploymentPromotion(promotionId);
+    if (!promotion) {
+      notFound(`Deployment promotion not found: ${promotionId}`);
+    }
+
+    const updates = promotion.checklistItems.map((item) => {
+      if (item.checklistKey === "smoke_passed") {
+        const nextStatus = promotion.latestSmokeAt ? "completed" : "pending";
+        const nextCompletedAt = promotion.latestSmokeAt ?? null;
+        const nextCompletedBy = promotion.latestSmokeAt ? (item.completedBy ?? promotion.createdBy) : null;
+        if (
+          item.status !== nextStatus
+          || item.completedAt !== nextCompletedAt
+          || item.completedBy !== nextCompletedBy
+        ) {
+          return this.repository.updateDeploymentPromotionChecklistItem(item.id, {
+            status: nextStatus,
+            completedAt: nextCompletedAt,
+            completedBy: nextCompletedBy,
+            updatedAt: new Date().toISOString()
+          });
+        }
+      }
+
+      if (item.checklistKey === "rollback_verified") {
+        const nextStatus = promotion.rollbackVerifiedAt ? "completed" : "pending";
+        const nextCompletedAt = promotion.rollbackVerifiedAt ?? null;
+        const nextCompletedBy = promotion.rollbackVerifiedAt ? (item.completedBy ?? promotion.createdBy) : null;
+        if (
+          item.status !== nextStatus
+          || item.completedAt !== nextCompletedAt
+          || item.completedBy !== nextCompletedBy
+        ) {
+          return this.repository.updateDeploymentPromotionChecklistItem(item.id, {
+            status: nextStatus,
+            completedAt: nextCompletedAt,
+            completedBy: nextCompletedBy,
+            updatedAt: new Date().toISOString()
+          });
+        }
+      }
+
+      if (item.checklistKey === "runtime_agent_freeze_confirmed") {
+        const nextStatus = promotion.runtimeAgentsDisabled ? "completed" : "pending";
+        const nextCompletedAt = promotion.runtimeAgentsDisabled ? (item.completedAt ?? promotion.updatedAt) : null;
+        const nextCompletedBy = promotion.runtimeAgentsDisabled ? (item.completedBy ?? promotion.createdBy) : null;
+        if (
+          item.status !== nextStatus
+          || item.completedAt !== nextCompletedAt
+          || item.completedBy !== nextCompletedBy
+        ) {
+          return this.repository.updateDeploymentPromotionChecklistItem(item.id, {
+            status: nextStatus,
+            completedAt: nextCompletedAt,
+            completedBy: nextCompletedBy,
+            updatedAt: new Date().toISOString()
+          });
+        }
+      }
+
+      return Promise.resolve(item);
+    });
+
+    await Promise.all(updates);
+    const refreshed = await this.repository.getDeploymentPromotion(promotionId);
+    if (!refreshed) {
+      notFound(`Deployment promotion not found: ${promotionId}`);
+    }
+    return refreshed;
+  }
+
+  private async syncDeploymentPromotionFieldsFromChecklist(
+    promotionId: string
+  ): Promise<DeploymentPromotionRecord> {
+    const promotion = await this.repository.getDeploymentPromotion(promotionId);
+    if (!promotion) {
+      notFound(`Deployment promotion not found: ${promotionId}`);
+    }
+
+    const smokeItem = promotion.checklistItems.find((item) => item.checklistKey === "smoke_passed") ?? null;
+    const rollbackItem = promotion.checklistItems.find((item) => item.checklistKey === "rollback_verified") ?? null;
+    const nextLatestSmokeAt = smokeItem?.status === "completed" ? smokeItem.completedAt : null;
+    const nextRollbackVerifiedAt = rollbackItem?.status === "completed" ? rollbackItem.completedAt : null;
+
+    if (
+      nextLatestSmokeAt !== promotion.latestSmokeAt
+      || nextRollbackVerifiedAt !== promotion.rollbackVerifiedAt
+    ) {
+      await this.repository.updateDeploymentPromotion(promotion.id, {
+        latestSmokeAt: nextLatestSmokeAt,
+        rollbackVerifiedAt: nextRollbackVerifiedAt,
+        updatedAt: new Date().toISOString()
+      });
+    }
+
+    const refreshed = await this.repository.getDeploymentPromotion(promotionId);
+    if (!refreshed) {
+      notFound(`Deployment promotion not found: ${promotionId}`);
+    }
+    return refreshed;
   }
 
   getRuntimeAgentStatus(): RuntimeAgentStatus {
@@ -5052,7 +5562,8 @@ export class ClinicApiService {
     databaseReady?: boolean;
   }): Promise<OpsAlertSummary> {
     const checkedAt = new Date().toISOString();
-    const [runtime, maintenance, workerRuntime, overview, authEvents] = await Promise.all([
+    const alertCooldownMinutes = 60;
+    const [runtime, maintenance, workerRuntime, overview, authEvents, priorDispatches] = await Promise.all([
       this.getRuntimeConfigStatus({
         nodeEnv: input?.nodeEnv ?? process.env.NODE_ENV ?? "development",
         publicAppOrigin: input?.publicAppOrigin ?? process.env.PUBLIC_APP_ORIGIN ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? null,
@@ -5061,15 +5572,34 @@ export class ClinicApiService {
       this.getOpsMaintenanceSummary({ now: checkedAt }),
       this.getWorkerRuntimeStatus({ now: checkedAt }),
       this.getOverviewStats(),
-      this.listAuditEvents({ eventTypePrefix: "auth." })
+      this.listAuditEvents({ eventTypePrefix: "auth." }),
+      this.repository.listAuditEvents({ entityType: "ops_alert_dispatch" })
     ]);
+    const latestDispatchByKey = new Map<string, string>();
+    for (const event of priorDispatches) {
+      if (event.eventType !== "ops.alert_dispatched" || latestDispatchByKey.has(event.entityId)) {
+        continue;
+      }
+      latestDispatchByKey.set(event.entityId, event.createdAt);
+    }
 
     const alerts: OpsAlert[] = [];
 
-    const pushAlert = (alert: Omit<OpsAlert, "createdAt">): void => {
+    const pushAlert = (
+      alert: Omit<OpsAlert, "createdAt" | "deliveryKey" | "cooldownMinutes" | "lastDispatchedAt" | "dispatchEligible">
+    ): void => {
+      const lastDispatchedAt = latestDispatchByKey.get(alert.key) ?? null;
+      const eligibleScope = ["runtime", "microsoft", "worker"].includes(alert.scope);
+      const recentlyDispatched = lastDispatchedAt
+        ? (ageMinutes(checkedAt, lastDispatchedAt) ?? Number.POSITIVE_INFINITY) < alertCooldownMinutes
+        : false;
       alerts.push({
         ...alert,
-        createdAt: checkedAt
+        createdAt: checkedAt,
+        deliveryKey: alert.key,
+        cooldownMinutes: alert.severity === "critical" ? alertCooldownMinutes : null,
+        lastDispatchedAt,
+        dispatchEligible: alert.severity === "critical" && eligibleScope && !recentlyDispatched && Boolean(this.options.pilotOps)
       });
     };
 
@@ -5739,6 +6269,253 @@ export class ClinicApiService {
         overdueRequirements,
         openFollowUps: followUpActions.filter((item) => item && isOpenActionStatus(item.status)).length
       }
+    };
+  }
+
+  async getTrainingAnalytics(input?: unknown): Promise<TrainingPlanAnalyticsSummary> {
+    const command = z.object({
+      employeeId: z.string().optional(),
+      employeeRole: z.string().optional(),
+      ownerRole: z.string().optional(),
+      status: z.enum(["active", "inactive", "archived"]).optional()
+    }).refine(
+      (value) => !value.employeeId || Boolean(value.employeeRole),
+      "employeeRole is required when employeeId is provided."
+    ).parse(input ?? {});
+
+    const generatedAt = new Date().toISOString();
+    if (command.employeeId && command.employeeRole) {
+      await this.materializeTrainingPlanRequirementsForEmployee(systemActor("hr_lead"), command.employeeId, command.employeeRole);
+    }
+
+    const plans = await this.repository.listTrainingPlans({
+      employeeId: command.employeeId,
+      employeeRole: command.employeeRole,
+      ownerRole: command.ownerRole,
+      status: command.status
+    });
+    const relevantPlans = plans.filter((plan) =>
+      (!command.employeeId || !plan.employeeId || plan.employeeId === command.employeeId)
+      && (!command.employeeRole || plan.employeeRole === command.employeeRole)
+    );
+    const planIds = new Set(relevantPlans.map((plan) => plan.id));
+    const [requirements, completions] = await Promise.all([
+      this.repository.listTrainingRequirements({
+        employeeId: command.employeeId,
+        employeeRole: command.employeeRole
+      }),
+      this.repository.listTrainingCompletions({
+        employeeId: command.employeeId,
+        employeeRole: command.employeeRole
+      })
+    ]);
+    const relevantRequirements = requirements.filter((requirement) =>
+      planIds.size === 0
+        ? !command.employeeId || requirement.employeeId === command.employeeId
+        : (requirement.planId !== null && planIds.has(requirement.planId))
+    );
+
+    const latestCompletionByRequirement = new Map<string, TrainingCompletionRecord>();
+    for (const completion of completions
+      .filter((item) => item.completedAt <= generatedAt)
+      .sort((left, right) => right.completedAt.localeCompare(left.completedAt))) {
+      if (!latestCompletionByRequirement.has(completion.requirementId)) {
+        latestCompletionByRequirement.set(completion.requirementId, completion);
+      }
+    }
+
+    const statusByRequirement = new Map<string, TrainingGapStatus>();
+    const openRequirementIds = new Set<string>();
+    for (const requirement of relevantRequirements) {
+      const latestCompletion = latestCompletionByRequirement.get(requirement.id) ?? null;
+      let status: TrainingGapStatus;
+      if (latestCompletion && latestCompletion.validUntil && latestCompletion.validUntil < generatedAt) {
+        status = "overdue";
+      } else if (latestCompletion && (!latestCompletion.validUntil || latestCompletion.validUntil >= generatedAt)) {
+        status = latestCompletion.validUntil && latestCompletion.validUntil <= addDays(generatedAt, 30)
+          ? "expiring_soon"
+          : "complete";
+      } else if (requirement.dueDate && requirement.dueDate < generatedAt) {
+        status = "overdue";
+      } else {
+        status = "missing";
+      }
+      statusByRequirement.set(requirement.id, status);
+      if (isTrainingGapOpen(status)) {
+        openRequirementIds.add(requirement.id);
+      }
+    }
+
+    const followUpActionIds = relevantRequirements
+      .map((requirement) => requirement.followUpActionItemId)
+      .filter((value): value is string => Boolean(value));
+    const followUpActions = (await Promise.all(
+      followUpActionIds.map((id) => this.repository.getActionItem(id))
+    )).filter((item): item is ActionItemRecord => Boolean(item));
+    const nowPlus7 = addDays(generatedAt, 7);
+    const nowPlus14 = addDays(generatedAt, 14);
+    const nowPlus30 = addDays(generatedAt, 30);
+    const openRequirements = relevantRequirements.filter((requirement) => openRequirementIds.has(requirement.id));
+    const overdueRequirements = openRequirements.filter((requirement) => requirement.dueDate !== null && requirement.dueDate < generatedAt);
+    const lateCompletionDays = relevantRequirements.flatMap((requirement) => {
+      const latestCompletion = latestCompletionByRequirement.get(requirement.id);
+      if (!latestCompletion || !requirement.dueDate || latestCompletion.completedAt <= requirement.dueDate) {
+        return [];
+      }
+      return [Math.max(0, daysBetween(latestCompletion.completedAt, requirement.dueDate))];
+    });
+
+    const repeatedOverdueCycles = Array.from(
+      relevantRequirements.reduce((map, requirement) => {
+        const status = statusByRequirement.get(requirement.id);
+        if (!requirement.planId || status !== "overdue") {
+          return map;
+        }
+        const key = `${requirement.planId}:${requirement.employeeId}:${requirement.employeeRole}`;
+        map.set(key, (map.get(key) ?? 0) + 1);
+        return map;
+      }, new Map<string, number>())
+    )
+      .filter(([, count]) => count > 1)
+      .map(([key, count]) => {
+        const [planId, employeeId, employeeRole] = key.split(":");
+        const plan = relevantPlans.find((entry) => entry.id === planId);
+        return {
+          employeeId,
+          employeeRole,
+          planId,
+          title: plan?.title ?? "Recurring plan",
+          repeatedCycles: count
+        };
+      });
+
+    const requirementCycles = relevantPlans.map((plan) => {
+      const planRequirements = relevantRequirements.filter((requirement) => requirement.planId === plan.id);
+      const followUps = followUpActions.filter((item) =>
+        planRequirements.some((requirement) => requirement.followUpActionItemId === item.id)
+      );
+      return {
+        planId: plan.id,
+        title: plan.title,
+        employeeId: plan.employeeId ?? command.employeeId ?? null,
+        employeeRole: plan.employeeRole,
+        ownerRole: plan.ownerRole,
+        activeRequirementCount: planRequirements.length,
+        upcomingNext7Days: planRequirements.filter((requirement) =>
+          openRequirementIds.has(requirement.id)
+          && requirement.dueDate !== null
+          && requirement.dueDate >= generatedAt
+          && requirement.dueDate <= nowPlus7
+        ).length,
+        upcomingNext14Days: planRequirements.filter((requirement) =>
+          openRequirementIds.has(requirement.id)
+          && requirement.dueDate !== null
+          && requirement.dueDate >= generatedAt
+          && requirement.dueDate <= nowPlus14
+        ).length,
+        upcomingNext30Days: planRequirements.filter((requirement) =>
+          openRequirementIds.has(requirement.id)
+          && requirement.dueDate !== null
+          && requirement.dueDate >= generatedAt
+          && requirement.dueDate <= nowPlus30
+        ).length,
+        overdueRequirements: planRequirements.filter((requirement) => statusByRequirement.get(requirement.id) === "overdue").length,
+        repeatedOverdueCycles: repeatedOverdueCycles.find((entry) => entry.planId === plan.id)?.repeatedCycles ?? 0,
+        openFollowUps: followUps.filter((item) => isOpenActionStatus(item.status)).length
+      };
+    });
+
+    const recentCompletionTrend = {
+      generatedAt,
+      periods: Array.from({ length: 6 }, (_value, index) => {
+        const date = new Date();
+        date.setUTCMonth(date.getUTCMonth() - (5 - index));
+        const periodStart = startOfMonth(date.toISOString());
+        const periodEnd = endOfMonth(date.toISOString());
+        return {
+          periodLabel: new Intl.DateTimeFormat("en-US", {
+            month: "short",
+            year: "numeric",
+            timeZone: "UTC"
+          }).format(new Date(periodStart)),
+          periodStart,
+          periodEnd,
+          completedRequirements: completions.filter((record) =>
+            record.completedAt >= periodStart && record.completedAt <= periodEnd
+          ).length,
+          overdueRequirements: relevantRequirements.filter((requirement) =>
+            openRequirementIds.has(requirement.id)
+            && requirement.dueDate !== null
+            && requirement.dueDate <= periodEnd
+          ).length,
+          openFollowUps: followUpActions.filter((item) =>
+            item.createdAt <= periodEnd && isOpenActionStatus(item.status)
+          ).length
+        };
+      })
+    };
+
+    const followUpActionBurdenByRole = Array.from(
+      relevantRequirements.reduce((map, requirement) => {
+        const bucket = map.get(requirement.employeeRole) ?? {
+          employeeRole: requirement.employeeRole,
+          openFollowUps: 0,
+          overdueFollowUps: 0
+        };
+        const action = requirement.followUpActionItemId
+          ? followUpActions.find((item) => item.id === requirement.followUpActionItemId) ?? null
+          : null;
+        if (action && isOpenActionStatus(action.status)) {
+          bucket.openFollowUps += 1;
+          if (action.dueDate !== null && action.dueDate < generatedAt) {
+            bucket.overdueFollowUps += 1;
+          }
+        }
+        map.set(requirement.employeeRole, bucket);
+        return map;
+      }, new Map<string, { employeeRole: string; openFollowUps: number; overdueFollowUps: number }>())
+    ).map(([, value]) => value);
+
+    return {
+      generatedAt,
+      employeeId: command.employeeId ?? null,
+      employeeRole: command.employeeRole ?? null,
+      ownerRole: command.ownerRole ?? null,
+      planStatus: command.status ?? null,
+      activePlans: relevantPlans.filter((plan) => plan.status === "active").length,
+      upcomingDueWindows: {
+        next7Days: openRequirements.filter((requirement) => requirement.dueDate !== null && requirement.dueDate >= generatedAt && requirement.dueDate <= nowPlus7).length,
+        next14Days: openRequirements.filter((requirement) => requirement.dueDate !== null && requirement.dueDate >= generatedAt && requirement.dueDate <= nowPlus14).length,
+        next30Days: openRequirements.filter((requirement) => requirement.dueDate !== null && requirement.dueDate >= generatedAt && requirement.dueDate <= nowPlus30).length
+      },
+      overdueRequirementBuckets: {
+        oneToSevenDays: overdueRequirements.filter((requirement) => {
+          const overdueDays = requirement.dueDate ? daysBetween(generatedAt, requirement.dueDate) : 0;
+          return overdueDays >= 1 && overdueDays <= 7;
+        }).length,
+        eightToThirtyDays: overdueRequirements.filter((requirement) => {
+          const overdueDays = requirement.dueDate ? daysBetween(generatedAt, requirement.dueDate) : 0;
+          return overdueDays >= 8 && overdueDays <= 30;
+        }).length,
+        overThirtyDays: overdueRequirements.filter((requirement) => {
+          const overdueDays = requirement.dueDate ? daysBetween(generatedAt, requirement.dueDate) : 0;
+          return overdueDays > 30;
+        }).length
+      },
+      completionTimeliness: {
+        onTime: relevantRequirements.filter((requirement) => {
+          const latestCompletion = latestCompletionByRequirement.get(requirement.id);
+          return Boolean(latestCompletion && (!requirement.dueDate || latestCompletion.completedAt <= requirement.dueDate));
+        }).length,
+        late: lateCompletionDays.length,
+        averageDaysLate: lateCompletionDays.length > 0
+          ? Number((lateCompletionDays.reduce((sum, value) => sum + value, 0) / lateCompletionDays.length).toFixed(1))
+          : null
+      },
+      followUpActionBurdenByRole,
+      repeatedOverdueCycles,
+      recentCompletionTrend,
+      requirementCycles
     };
   }
 

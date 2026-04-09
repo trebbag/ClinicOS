@@ -65,6 +65,13 @@ type ConfigStatus = {
     runtimeAgentsConfigValue: string | null;
     trustedProxyConfigured: boolean;
     trustedProxyReady: boolean;
+    trustedProxyReadiness: {
+      sharedSecretConfigured: boolean;
+      allowedSkewSeconds: number;
+      expectedHeaders: string[];
+      currentAuthMode: "dev_headers" | "trusted_proxy" | "device_profiles";
+      ready: boolean;
+    };
     recommendedTargetAuthMode: "dev_headers" | "trusted_proxy" | "device_profiles";
     latestPromotion: {
       id: string;
@@ -75,6 +82,20 @@ type ConfigStatus = {
       latestSmokeAt: string | null;
       rollbackVerifiedAt: string | null;
       notes: string | null;
+      checklistItems: Array<{
+        id: string;
+        checklistKey: string;
+        label: string;
+        status: "pending" | "in_progress" | "completed" | "blocked";
+        detail: string | null;
+        completedAt: string | null;
+        completedBy: string | null;
+      }>;
+      rollbackVerification: {
+        completed: boolean;
+        completedAt: string | null;
+        completedBy: string | null;
+      };
     } | null;
     latestAlertDispatchAt: string | null;
     latestRollbackVerificationAt: string | null;
@@ -91,6 +112,20 @@ type DeploymentPromotion = {
   latestSmokeAt: string | null;
   rollbackVerifiedAt: string | null;
   notes: string | null;
+  checklistItems: Array<{
+    id: string;
+    checklistKey: string;
+    label: string;
+    status: "pending" | "in_progress" | "completed" | "blocked";
+    detail: string | null;
+    completedAt: string | null;
+    completedBy: string | null;
+  }>;
+  rollbackVerification: {
+    completed: boolean;
+    completedAt: string | null;
+    completedBy: string | null;
+  };
   createdAt: string;
   updatedAt: string;
 };
@@ -129,6 +164,7 @@ type MaintenanceSummary = {
 type WorkerHealth = {
   checkedAt: string;
   health: "unknown" | "healthy" | "warning" | "critical";
+  operatingState: "not_polling" | "polling_idle" | "polling_draining" | "polling_failed";
   pollIntervalMs: number;
   heartbeatIntervalMs: number;
   thresholds: {
@@ -136,6 +172,7 @@ type WorkerHealth = {
     staleProcessingMinutes: number;
   };
   lastStartedAt: string | null;
+  lastPollAttemptAt: string | null;
   lastHeartbeatAt: string | null;
   lastCompletedBatchAt: string | null;
   lastCompletedBatch: {
@@ -147,6 +184,11 @@ type WorkerHealth = {
   lastFailedBatchMessage: string | null;
   lastManualBatchRequestAt: string | null;
   lastStaleProcessingCleanupAt: string | null;
+  recentRuntimeState: Array<{
+    state: "not_polling" | "polling_idle" | "polling_draining" | "polling_failed";
+    createdAt: string;
+    detail: string | null;
+  }>;
   recentEvents: Array<{
     eventType: string;
     createdAt: string;
@@ -176,6 +218,10 @@ type OpsAlert = {
   action: string | null;
   count: number | null;
   createdAt: string;
+  deliveryKey: string;
+  cooldownMinutes: number | null;
+  lastDispatchedAt: string | null;
+  dispatchEligible: boolean;
 };
 
 type OpsAlertSummary = {
@@ -651,6 +697,29 @@ export default function PilotOpsPage(): JSX.Element {
     }
   }
 
+  async function handleChecklistItemUpdate(
+    promotionId: string,
+    checklistItemId: string,
+    status: "pending" | "in_progress" | "completed" | "blocked"
+  ) {
+    if (!actor) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await apiRequest(`/ops/deployment-promotions/${promotionId}/checklist-items/${checklistItemId}`, actor, {
+        method: "PATCH",
+        body: JSON.stringify({ status })
+      });
+      await load();
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Unable to update deployment checklist item.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function toggleDeviceProfile(deviceId: string, profileId: string): void {
     setDeviceEdits((current) => {
       const edit = current[deviceId];
@@ -727,7 +796,8 @@ export default function PilotOpsPage(): JSX.Element {
           <div className="muted">Worker health</div>
           <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>{workerHealth?.health ?? "unknown"}</div>
           <div className="muted" style={{ marginTop: 8 }}>
-            Last heartbeat: {workerHealth?.lastHeartbeatAt ? new Date(workerHealth.lastHeartbeatAt).toLocaleString() : "Not recorded yet"}
+            {prettyWorkerOperatingState(workerHealth?.operatingState)} · last heartbeat{" "}
+            {workerHealth?.lastHeartbeatAt ? new Date(workerHealth.lastHeartbeatAt).toLocaleString() : "not recorded yet"}
           </div>
         </div>
       </div>
@@ -785,6 +855,15 @@ export default function PilotOpsPage(): JSX.Element {
             </div>
           </div>
           <div>
+            <div className="muted">Polling state</div>
+            <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>
+              {prettyWorkerOperatingState(workerHealth?.operatingState)}
+            </div>
+            <div className="muted">
+              Last poll {workerHealth?.lastPollAttemptAt ? new Date(workerHealth.lastPollAttemptAt).toLocaleString() : "never"}.
+            </div>
+          </div>
+          <div>
             <div className="muted">Last completed batch</div>
             <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>
               {workerHealth?.lastCompletedBatchAt ? new Date(workerHealth.lastCompletedBatchAt).toLocaleTimeString() : "Never"}
@@ -814,6 +893,13 @@ export default function PilotOpsPage(): JSX.Element {
             <span>Detail</span>
           </div>
           <div className="table-row">
+            <span>Polling signal</span>
+            <span>{prettyWorkerOperatingState(workerHealth?.operatingState)}</span>
+            <span>
+              Last poll attempt {workerHealth?.lastPollAttemptAt ? new Date(workerHealth.lastPollAttemptAt).toLocaleString() : "never"}.
+            </span>
+          </div>
+          <div className="table-row">
             <span>Heartbeat cadence</span>
             <span>{Math.round((workerHealth?.heartbeatIntervalMs ?? 0) / 1000)} sec</span>
             <span>
@@ -840,6 +926,22 @@ export default function PilotOpsPage(): JSX.Element {
             <span>Use cleanup when stale processing jobs remain after a bounded batch run.</span>
           </div>
         </div>
+        {workerHealth?.recentRuntimeState.length ? (
+          <div className="table" style={{ marginTop: 12 }}>
+            <div className="table-row table-head">
+              <span>Recent runtime state</span>
+              <span>When</span>
+              <span>Detail</span>
+            </div>
+            {workerHealth.recentRuntimeState.map((event) => (
+              <div key={`${event.state}-${event.createdAt}-state`} className="table-row">
+                <span>{prettyWorkerOperatingState(event.state)}</span>
+                <span>{new Date(event.createdAt).toLocaleString()}</span>
+                <span>{event.detail ?? "No extra detail recorded."}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {workerHealth?.recentEvents.length ? (
           <div className="table" style={{ marginTop: 12 }}>
             <div className="table-row table-head">
@@ -893,8 +995,18 @@ export default function PilotOpsPage(): JSX.Element {
                 <span><span className={`badge badge-${alert.severity}`}>{alert.severity}</span></span>
                 <span>{alert.scope.replaceAll("_", " ")}</span>
                 <span>{alert.title}{typeof alert.count === "number" ? ` (${alert.count})` : ""}</span>
-                <span>{alert.detail}</span>
-                <span>{alert.action ?? "No action recommended."}</span>
+                <span>
+                  {alert.detail}
+                  <div className="muted">
+                    Cooldown {alert.cooldownMinutes ?? "n/a"} min · last dispatched {alert.lastDispatchedAt ? new Date(alert.lastDispatchedAt).toLocaleString() : "never"}
+                  </div>
+                </span>
+                <span>
+                  {alert.action ?? "No action recommended."}
+                  <div className="muted">
+                    {alert.dispatchEligible ? "Dispatch eligible now" : "Within cooldown"} · key {alert.deliveryKey}
+                  </div>
+                </span>
               </div>
             ))}
           </div>
@@ -962,6 +1074,14 @@ export default function PilotOpsPage(): JSX.Element {
             </span>
           </div>
           <div className="table-row">
+            <span>Trusted proxy details</span>
+            <span>{configStatus?.hardening.trustedProxyReadiness.sharedSecretConfigured ? "secret configured" : "secret missing"}</span>
+            <span>
+              Allowed skew {configStatus?.hardening.trustedProxyReadiness.allowedSkewSeconds ?? 0} sec.
+              {" "}Expected headers {configStatus?.hardening.trustedProxyReadiness.expectedHeaders?.join(", ") ?? "none"}.
+            </span>
+          </div>
+          <div className="table-row">
             <span>Latest smoke / rollback proof</span>
             <span>{configStatus?.hardening.latestSmokeAt ? new Date(configStatus.hardening.latestSmokeAt).toLocaleDateString() : "missing"}</span>
             <span>
@@ -1009,17 +1129,65 @@ export default function PilotOpsPage(): JSX.Element {
             <span>Proof</span>
           </div>
           {deploymentPromotions.map((record) => (
-            <div key={record.id} className="table-row">
-              <span>{record.environmentKey}</span>
-              <span><span className={`badge badge-${record.status}`}>{record.status}</span></span>
-              <span>
-                {record.targetAuthMode}
-                {" "}/ agents {record.runtimeAgentsDisabled ? "off" : "not frozen"}
-              </span>
-              <span>
-                smoke {record.latestSmokeAt ? toLocaleDate(record.latestSmokeAt) : "missing"}
-                {" "}· rollback {record.rollbackVerifiedAt ? toLocaleDate(record.rollbackVerifiedAt) : "missing"}
-              </span>
+            <div key={record.id} className="stack" style={{ padding: "12px 0", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+              <div className="table-row" style={{ padding: 0 }}>
+                <span>{record.environmentKey}</span>
+                <span><span className={`badge badge-${record.status}`}>{record.status}</span></span>
+                <span>
+                  {record.targetAuthMode}
+                  {" "}/ agents {record.runtimeAgentsDisabled ? "off" : "not frozen"}
+                </span>
+                <span>
+                  smoke {record.latestSmokeAt ? toLocaleDate(record.latestSmokeAt) : "missing"}
+                  {" "}· rollback {record.rollbackVerification.completedAt ? toLocaleDate(record.rollbackVerification.completedAt) : "missing"}
+                </span>
+              </div>
+              <div className="grid cols-2" style={{ gap: 12 }}>
+                <div className="stack">
+                  <span className="muted">Checklist execution</span>
+                  {record.checklistItems.map((item) => (
+                    <div key={item.id} className="card" style={{ margin: 0 }}>
+                      <div className="actions" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div>
+                          <strong>{item.label}</strong>{" "}
+                          <span className={`badge badge-${mapChecklistStatusToBadge(item.status)}`}>{item.status.replaceAll("_", " ")}</span>
+                          <div className="muted">
+                            {item.detail ?? "No operator detail recorded."}
+                          </div>
+                          <div className="muted">
+                            {item.completedAt ? `Completed ${new Date(item.completedAt).toLocaleString()}` : "Not yet completed"}
+                            {item.completedBy ? ` by ${item.completedBy}` : ""}
+                          </div>
+                        </div>
+                        <div className="actions">
+                          <button className="button secondary" onClick={() => { void handleChecklistItemUpdate(record.id, item.id, "in_progress"); }} disabled={loading || !actor || !hasCapability("ops.run_cleanup")}>
+                            In progress
+                          </button>
+                          <button className="button secondary" onClick={() => { void handleChecklistItemUpdate(record.id, item.id, "completed"); }} disabled={loading || !actor || !hasCapability("ops.run_cleanup")}>
+                            Complete
+                          </button>
+                          <button className="button secondary" onClick={() => { void handleChecklistItemUpdate(record.id, item.id, "blocked"); }} disabled={loading || !actor || !hasCapability("ops.run_cleanup")}>
+                            Block
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="stack">
+                  <span className="muted">Rollback verification</span>
+                  <div className="card" style={{ margin: 0 }}>
+                    <strong>{record.rollbackVerification.completed ? "Rollback verified" : "Rollback not yet verified"}</strong>
+                    <div className="muted">
+                      {record.rollbackVerification.completedAt
+                        ? `Verified ${new Date(record.rollbackVerification.completedAt).toLocaleString()}`
+                        : "No rollback verification timestamp recorded."}
+                      {record.rollbackVerification.completedBy ? ` by ${record.rollbackVerification.completedBy}` : ""}
+                    </div>
+                    {record.notes ? <div className="muted">{record.notes}</div> : null}
+                  </div>
+                </div>
+              </div>
             </div>
           ))}
         </div>
@@ -1505,4 +1673,33 @@ function authStateFallback(actor: { role: string } | null): string {
 
 function toLocaleDate(value: string): string {
   return new Date(value).toLocaleDateString();
+}
+
+function prettyWorkerOperatingState(value?: WorkerHealth["operatingState"]): string {
+  switch (value) {
+    case "polling_idle":
+      return "polling / idle";
+    case "polling_draining":
+      return "polling / draining";
+    case "polling_failed":
+      return "polling / failing";
+    case "not_polling":
+      return "not polling";
+    default:
+      return "unknown";
+  }
+}
+
+function mapChecklistStatusToBadge(status: "pending" | "in_progress" | "completed" | "blocked"): string {
+  switch (status) {
+    case "completed":
+      return "ready";
+    case "blocked":
+      return "degraded";
+    case "in_progress":
+      return "pending_hr_review";
+    case "pending":
+    default:
+      return "draft";
+  }
 }

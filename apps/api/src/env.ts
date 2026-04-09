@@ -58,6 +58,10 @@ export function assertProductionConfig(): void {
     required("DATABASE_URL");
     required("AUTH_MODE");
     required("PUBLIC_APP_ORIGIN");
+    const runtimeAgentsEnabled = required("RUNTIME_AGENTS_ENABLED");
+    if (!["true", "false"].includes(runtimeAgentsEnabled)) {
+      throw new Error("RUNTIME_AGENTS_ENABLED must be explicitly set to true or false in production.");
+    }
     if (env.auth.mode === "trusted_proxy") {
       required("TRUSTED_PROXY_SHARED_SECRET");
     }

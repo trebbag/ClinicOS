@@ -9,6 +9,7 @@ import type {
   CommitteeMeetingRecord,
   CommitteeRecord,
   ControlledSubstanceStewardshipRecord,
+  DeploymentPromotionChecklistItemRecord,
   DeploymentPromotionRecord,
   DelegationRuleRecord,
   DeviceAllowedProfile,
@@ -51,6 +52,8 @@ import {
   committeeMeetingRecordSchema,
   committeeRecordSchema,
   controlledSubstanceStewardshipRecordSchema,
+  deriveDeploymentRollbackVerification,
+  deploymentPromotionChecklistItemRecordSchema,
   deploymentPromotionRecordSchema,
   delegationRuleRecordSchema,
   deviceAllowedProfileSchema,
@@ -389,6 +392,19 @@ type DeploymentPromotionRow = {
   createdAt: Date;
   updatedAt: Date;
 };
+type DeploymentPromotionChecklistItemRow = {
+  id: string;
+  promotionId: string;
+  checklistKey: string;
+  label: string;
+  status: string;
+  detail: string | null;
+  completedAt: Date | null;
+  completedBy: string | null;
+  sortOrder: number;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
 export type ClinicRepository = {
   createWorkflowRun(run: WorkflowRun): Promise<WorkflowRun>;
@@ -690,6 +706,19 @@ export type ClinicRepository = {
     status?: string;
     targetAuthMode?: string;
   }): Promise<DeploymentPromotionRecord[]>;
+  createDeploymentPromotionChecklistItem(
+    record: DeploymentPromotionChecklistItemRecord
+  ): Promise<DeploymentPromotionChecklistItemRecord>;
+  updateDeploymentPromotionChecklistItem(
+    id: string,
+    patch: Partial<DeploymentPromotionChecklistItemRecord>
+  ): Promise<DeploymentPromotionChecklistItemRecord>;
+  getDeploymentPromotionChecklistItem(id: string): Promise<DeploymentPromotionChecklistItemRecord | null>;
+  listDeploymentPromotionChecklistItems(filters?: {
+    promotionId?: string;
+    checklistKey?: string;
+    status?: string;
+  }): Promise<DeploymentPromotionChecklistItemRecord[]>;
 };
 
 function isoToDate(value?: string | null): Date | null | undefined {
@@ -1458,14 +1487,48 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
   }
 
+  private mapDeploymentPromotionChecklistItemRecord(
+    record: DeploymentPromotionChecklistItemRow
+  ): DeploymentPromotionChecklistItemRecord {
+    return deploymentPromotionChecklistItemRecordSchema.parse({
+      ...record,
+      detail: record.detail ?? null,
+      completedAt: record.completedAt?.toISOString() ?? null,
+      completedBy: record.completedBy ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString()
+    });
+  }
+
   private mapDeploymentPromotionRecord(record: DeploymentPromotionRow): DeploymentPromotionRecord {
     return deploymentPromotionRecordSchema.parse({
       ...record,
       latestSmokeAt: record.latestSmokeAt?.toISOString() ?? null,
       rollbackVerifiedAt: record.rollbackVerifiedAt?.toISOString() ?? null,
       notes: record.notes ?? null,
+      checklistItems: [],
+      rollbackVerification: {
+        completed: false,
+        completedAt: null,
+        completedBy: null,
+        detail: null
+      },
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString()
+    });
+  }
+
+  private async hydrateDeploymentPromotionRecord(record: DeploymentPromotionRow): Promise<DeploymentPromotionRecord> {
+    const base = this.mapDeploymentPromotionRecord(record);
+    const checklistItems = (await this.client.deploymentPromotionChecklistItem.findMany({
+      where: { promotionId: record.id },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
+    }) as DeploymentPromotionChecklistItemRow[]).map((item) => this.mapDeploymentPromotionChecklistItemRecord(item));
+
+    return deploymentPromotionRecordSchema.parse({
+      ...base,
+      checklistItems,
+      rollbackVerification: deriveDeploymentRollbackVerification(checklistItems)
     });
   }
 
@@ -4117,7 +4180,7 @@ export class PrismaClinicRepository implements ClinicRepository {
       }
     });
 
-    return this.mapDeploymentPromotionRecord(created as DeploymentPromotionRow);
+    return this.hydrateDeploymentPromotionRecord(created as DeploymentPromotionRow);
   }
 
   async updateDeploymentPromotion(id: string, patch: Partial<DeploymentPromotionRecord>): Promise<DeploymentPromotionRecord> {
@@ -4135,12 +4198,12 @@ export class PrismaClinicRepository implements ClinicRepository {
       }
     });
 
-    return this.mapDeploymentPromotionRecord(updated as DeploymentPromotionRow);
+    return this.hydrateDeploymentPromotionRecord(updated as DeploymentPromotionRow);
   }
 
   async getDeploymentPromotion(id: string): Promise<DeploymentPromotionRecord | null> {
     const record = await this.client.deploymentPromotion.findUnique({ where: { id } });
-    return record ? this.mapDeploymentPromotionRecord(record as DeploymentPromotionRow) : null;
+    return record ? this.hydrateDeploymentPromotionRecord(record as DeploymentPromotionRow) : null;
   }
 
   async listDeploymentPromotions(filters?: {
@@ -4153,6 +4216,67 @@ export class PrismaClinicRepository implements ClinicRepository {
       orderBy: [{ updatedAt: "desc" }]
     });
 
-    return (records as DeploymentPromotionRow[]).map((record) => this.mapDeploymentPromotionRecord(record));
+    return Promise.all((records as DeploymentPromotionRow[]).map((record) => this.hydrateDeploymentPromotionRecord(record)));
+  }
+
+  async createDeploymentPromotionChecklistItem(
+    record: DeploymentPromotionChecklistItemRecord
+  ): Promise<DeploymentPromotionChecklistItemRecord> {
+    const created = await this.client.deploymentPromotionChecklistItem.create({
+      data: {
+        id: record.id,
+        promotionId: record.promotionId,
+        checklistKey: record.checklistKey,
+        label: record.label,
+        status: record.status,
+        detail: record.detail,
+        completedAt: isoToDate(record.completedAt),
+        completedBy: record.completedBy,
+        sortOrder: record.sortOrder,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt)
+      }
+    });
+
+    return this.mapDeploymentPromotionChecklistItemRecord(created as DeploymentPromotionChecklistItemRow);
+  }
+
+  async updateDeploymentPromotionChecklistItem(
+    id: string,
+    patch: Partial<DeploymentPromotionChecklistItemRecord>
+  ): Promise<DeploymentPromotionChecklistItemRecord> {
+    const updated = await this.client.deploymentPromotionChecklistItem.update({
+      where: { id },
+      data: {
+        checklistKey: patch.checklistKey,
+        label: patch.label,
+        status: patch.status,
+        detail: patch.detail,
+        completedAt: isoToDate(patch.completedAt),
+        completedBy: patch.completedBy,
+        sortOrder: patch.sortOrder,
+        updatedAt: isoToRequiredDate(patch.updatedAt)
+      }
+    });
+
+    return this.mapDeploymentPromotionChecklistItemRecord(updated as DeploymentPromotionChecklistItemRow);
+  }
+
+  async getDeploymentPromotionChecklistItem(id: string): Promise<DeploymentPromotionChecklistItemRecord | null> {
+    const record = await this.client.deploymentPromotionChecklistItem.findUnique({ where: { id } });
+    return record ? this.mapDeploymentPromotionChecklistItemRecord(record as DeploymentPromotionChecklistItemRow) : null;
+  }
+
+  async listDeploymentPromotionChecklistItems(filters?: {
+    promotionId?: string;
+    checklistKey?: string;
+    status?: string;
+  }): Promise<DeploymentPromotionChecklistItemRecord[]> {
+    const records = await this.client.deploymentPromotionChecklistItem.findMany({
+      where: mapListFilters(filters),
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
+    });
+
+    return (records as DeploymentPromotionChecklistItemRow[]).map((record) => this.mapDeploymentPromotionChecklistItemRecord(record));
   }
 }

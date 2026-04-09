@@ -117,6 +117,57 @@ type OfficeDashboard = {
   };
 };
 
+type OfficeAnalytics = {
+  generatedAt: string;
+  dateRangeStart: string;
+  dateRangeEnd: string;
+  roomId: string | null;
+  roomType: string | null;
+  readinessTrend: Array<{
+    targetDate: string;
+    readyRooms: number;
+    attentionNeededRooms: number;
+    blockedRooms: number;
+    inactiveRooms: number;
+  }>;
+  rooms: Array<{
+    roomId: string;
+    roomLabel: string;
+    roomType: string;
+    trackedDays: number;
+    readyDays: number;
+    attentionNeededDays: number;
+    blockedDays: number;
+    inactiveDays: number;
+    missedRequiredItems: number;
+    repeatAttentionDays: number;
+    averageCompletionLatencyMinutes: number | null;
+  }>;
+  checklist: {
+    totalRuns: number;
+    totalItems: number;
+    completedItems: number;
+    blockedItems: number;
+    waivedItems: number;
+    pendingItems: number;
+    missedRequiredItems: number;
+    averageCompletionLatencyMinutes: number | null;
+  };
+  plannerReconciliation: {
+    pendingCreate: number;
+    synced: number;
+    syncErrors: number;
+    externallyCompleted: number;
+    openActionItems: number;
+    overdueOpenActionItems: number;
+    agingBuckets: {
+      underSevenDays: number;
+      sevenToThirtyDays: number;
+      overThirtyDays: number;
+    };
+  };
+};
+
 function statusBadge(status: string): string {
   return status.replaceAll("_", " ");
 }
@@ -125,6 +176,9 @@ export default function OfficeManagerPage(): JSX.Element {
   const { actor } = useAppAuth();
   const today = new Date().toISOString().slice(0, 10);
   const [dashboard, setDashboard] = useState<OfficeDashboard | null>(null);
+  const [analytics, setAnalytics] = useState<OfficeAnalytics | null>(null);
+  const [analyticsWindowDays, setAnalyticsWindowDays] = useState("30");
+  const [analyticsRoomType, setAnalyticsRoomType] = useState<"" | "front_desk" | "exam" | "procedure" | "lab" | "virtual" | "common">("");
   const [issueTitle, setIssueTitle] = useState("");
   const [issueDescription, setIssueDescription] = useState("");
   const [closeoutNotes, setCloseoutNotes] = useState("");
@@ -142,8 +196,22 @@ export default function OfficeManagerPage(): JSX.Element {
     }
 
     try {
-      const status = await apiRequest<OfficeDashboard>(`/office-ops/dashboard?date=${today}`, actor);
+      const analyticsStartDate = new Date();
+      analyticsStartDate.setUTCDate(analyticsStartDate.getUTCDate() - Math.max(0, Number(analyticsWindowDays) - 1));
+      const analyticsDateFrom = analyticsStartDate.toISOString().slice(0, 10);
+      const analyticsQuery = new URLSearchParams({
+        dateFrom: analyticsDateFrom,
+        dateTo: today
+      });
+      if (analyticsRoomType) {
+        analyticsQuery.set("roomType", analyticsRoomType);
+      }
+      const [status, analyticsSummary] = await Promise.all([
+        apiRequest<OfficeDashboard>(`/office-ops/dashboard?date=${today}`, actor),
+        apiRequest<OfficeAnalytics>(`/office-ops/analytics?${analyticsQuery.toString()}`, actor)
+      ]);
       setDashboard(status);
+      setAnalytics(analyticsSummary);
       setChecklistNotes((current) => {
         const next = { ...current };
         for (const item of status.checklistItems) {
@@ -163,7 +231,7 @@ export default function OfficeManagerPage(): JSX.Element {
     }
 
     void load();
-  }, [actor, today]);
+  }, [actor, today, analyticsRoomType, analyticsWindowDays]);
 
   const latestJobBySource = useMemo(() => {
     const lookup = new Map<string, WorkerJob>();
@@ -396,6 +464,32 @@ export default function OfficeManagerPage(): JSX.Element {
         </div>
       </div>
 
+      <div className="grid cols-3">
+        <div className="card">
+          <div className="muted">Tracked room runs</div>
+          <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{analytics?.checklist.totalRuns ?? 0}</div>
+          <div className="muted" style={{ marginTop: 8 }}>
+            Missed required items {analytics?.checklist.missedRequiredItems ?? 0}
+          </div>
+        </div>
+        <div className="card">
+          <div className="muted">Average completion latency</div>
+          <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>
+            {analytics?.checklist.averageCompletionLatencyMinutes != null ? `${analytics.checklist.averageCompletionLatencyMinutes} min` : "n/a"}
+          </div>
+          <div className="muted" style={{ marginTop: 8 }}>
+            Across the current analytics window for room-bound checklist completions.
+          </div>
+        </div>
+        <div className="card">
+          <div className="muted">Planner reconciliation risk</div>
+          <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{analytics?.plannerReconciliation.overdueOpenActionItems ?? 0}</div>
+          <div className="muted" style={{ marginTop: 8 }}>
+            Overdue open office-ops action items tied to Planner follow-through.
+          </div>
+        </div>
+      </div>
+
       <div className="grid cols-2">
         <div className="card">
           <h2>Raise issue</h2>
@@ -472,6 +566,106 @@ export default function OfficeManagerPage(): JSX.Element {
             <div className="muted">Generate the daily packet to begin today’s office-ops workflow.</div>
           )}
         </div>
+      </div>
+
+      <div className="grid cols-2">
+        <div className="card">
+          <h2>Room readiness trend</h2>
+          <div className="actions" style={{ marginBottom: 12 }}>
+            <label className="stack" style={{ minWidth: 180 }}>
+              <span className="muted">Analytics window</span>
+              <select value={analyticsWindowDays} onChange={(event) => setAnalyticsWindowDays(event.target.value)}>
+                <option value="7">Last 7 days</option>
+                <option value="14">Last 14 days</option>
+                <option value="30">Last 30 days</option>
+              </select>
+            </label>
+            <label className="stack" style={{ minWidth: 180 }}>
+              <span className="muted">Room type filter</span>
+              <select value={analyticsRoomType} onChange={(event) => setAnalyticsRoomType(event.target.value as typeof analyticsRoomType)}>
+                <option value="">All room types</option>
+                <option value="front_desk">Front desk</option>
+                <option value="exam">Exam</option>
+                <option value="procedure">Procedure</option>
+                <option value="lab">Lab</option>
+                <option value="virtual">Virtual</option>
+                <option value="common">Common</option>
+              </select>
+            </label>
+          </div>
+          {analytics?.readinessTrend.length ? (
+            <div className="table">
+              <div className="table-row table-head">
+                <span>Date</span>
+                <span>Ready</span>
+                <span>Attention needed</span>
+                <span>Blocked</span>
+              </div>
+              {analytics.readinessTrend.map((bucket) => (
+                <div key={bucket.targetDate} className="table-row">
+                  <span>{bucket.targetDate}</span>
+                  <span>{bucket.readyRooms}</span>
+                  <span>{bucket.attentionNeededRooms}</span>
+                  <span>{bucket.blockedRooms}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="muted">Room readiness analytics appear after room-bound checklist runs exist.</div>
+          )}
+        </div>
+
+        <div className="card">
+          <h2>Planner reconciliation</h2>
+          <div className="grid cols-2">
+            <div>
+              <div className="muted">Pending create</div>
+              <strong>{analytics?.plannerReconciliation.pendingCreate ?? 0}</strong>
+            </div>
+            <div>
+              <div className="muted">Sync errors</div>
+              <strong>{analytics?.plannerReconciliation.syncErrors ?? 0}</strong>
+            </div>
+            <div>
+              <div className="muted">Externally completed</div>
+              <strong>{analytics?.plannerReconciliation.externallyCompleted ?? 0}</strong>
+            </div>
+            <div>
+              <div className="muted">Over 30 days old</div>
+              <strong>{analytics?.plannerReconciliation.agingBuckets.overThirtyDays ?? 0}</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2>Room performance</h2>
+        {analytics?.rooms.length ? (
+          <div className="table">
+            <div className="table-row table-head">
+              <span>Room</span>
+              <span>Tracked days</span>
+              <span>Ready / attention / blocked</span>
+              <span>Missed required items</span>
+              <span>Repeat attention / latency</span>
+            </div>
+            {analytics.rooms.map((room) => (
+              <div key={room.roomId} className="table-row">
+                <span>{room.roomLabel}</span>
+                <span>{room.trackedDays}</span>
+                <span>{room.readyDays} / {room.attentionNeededDays} / {room.blockedDays}</span>
+                <span>{room.missedRequiredItems}</span>
+                <span>
+                  {room.repeatAttentionDays} repeat
+                  {" / "}
+                  {room.averageCompletionLatencyMinutes != null ? `${room.averageCompletionLatencyMinutes} min` : "n/a"}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="muted">No room analytics are available yet for this date range.</div>
+        )}
       </div>
 
       <div className="card">

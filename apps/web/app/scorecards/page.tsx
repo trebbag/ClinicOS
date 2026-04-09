@@ -110,6 +110,67 @@ type TrainingDashboard = {
   };
 };
 
+type TrainingAnalytics = {
+  generatedAt: string;
+  employeeId: string | null;
+  employeeRole: string | null;
+  ownerRole: string | null;
+  planStatus: "active" | "inactive" | "archived" | null;
+  activePlans: number;
+  upcomingDueWindows: {
+    next7Days: number;
+    next14Days: number;
+    next30Days: number;
+  };
+  overdueRequirementBuckets: {
+    oneToSevenDays: number;
+    eightToThirtyDays: number;
+    overThirtyDays: number;
+  };
+  completionTimeliness: {
+    onTime: number;
+    late: number;
+    averageDaysLate: number | null;
+  };
+  followUpActionBurdenByRole: Array<{
+    employeeRole: string;
+    openFollowUps: number;
+    overdueFollowUps: number;
+  }>;
+  repeatedOverdueCycles: Array<{
+    employeeId: string;
+    employeeRole: string;
+    planId: string;
+    title: string;
+    repeatedCycles: number;
+  }>;
+  recentCompletionTrend: {
+    generatedAt: string;
+    periods: Array<{
+      periodLabel: string;
+      periodStart: string;
+      periodEnd: string;
+      completedRequirements: number;
+      overdueRequirements: number;
+      openFollowUps: number;
+    }>;
+  };
+  requirementCycles: Array<{
+    planId: string;
+    title: string;
+    employeeId: string | null;
+    employeeRole: string;
+    ownerRole: string;
+    activeRequirementCount: number;
+    upcomingNext7Days: number;
+    upcomingNext14Days: number;
+    upcomingNext30Days: number;
+    overdueRequirements: number;
+    repeatedOverdueCycles: number;
+    openFollowUps: number;
+  }>;
+};
+
 const defaultCsv = `employee_id,employee_role,period_start,period_end,task_completion_rate,training_completion_rate,audit_pass_rate,issue_close_rate,complaint_count,note_lag_days,refill_turnaround_hours,schedule_fill_rate
 E-100,front_desk,2026-03-01,2026-03-31,0.96,1,0.98,0.91,0,0,0,0.88
 E-200,medical_assistant,2026-03-01,2026-03-31,0.92,0.95,0.97,0.89,1,0,0,0.81`;
@@ -128,6 +189,7 @@ export default function ScorecardsPage(): JSX.Element {
   const [selectedEmployee, setSelectedEmployee] = useState<{ employeeId: string; employeeRole: string } | null>(null);
   const [history, setHistory] = useState<ScorecardHistoryPoint[]>([]);
   const [trainingDashboard, setTrainingDashboard] = useState<TrainingDashboard | null>(null);
+  const [trainingAnalytics, setTrainingAnalytics] = useState<TrainingAnalytics | null>(null);
   const [reviewFilter, setReviewFilter] = useState<"all" | "pending" | "exceptions" | "signed_off">("all");
   const [requirementTitle, setRequirementTitle] = useState("");
   const [requirementType, setRequirementType] = useState<"training" | "competency">("training");
@@ -174,7 +236,7 @@ export default function ScorecardsPage(): JSX.Element {
     }
 
     try {
-      const [points, dashboard] = await Promise.all([
+      const [points, dashboard, analytics] = await Promise.all([
         apiRequest<ScorecardHistoryPoint[]>(
           `/scorecards/history?employeeId=${employeeId}&employeeRole=${employeeRole}`,
           actor
@@ -182,10 +244,15 @@ export default function ScorecardsPage(): JSX.Element {
         apiRequest<TrainingDashboard>(
           `/training/dashboard?employeeId=${employeeId}&employeeRole=${employeeRole}`,
           actor
+        ),
+        apiRequest<TrainingAnalytics>(
+          `/training/analytics?employeeId=${employeeId}&employeeRole=${employeeRole}`,
+          actor
         )
       ]);
       setHistory(points);
       setTrainingDashboard(dashboard);
+      setTrainingAnalytics(analytics);
       setCompletionRequirementId((current) => current || dashboard.requirements[0]?.id || "");
     } catch (detailError) {
       setError(detailError instanceof Error ? detailError.message : "Unable to load scorecard detail.");
@@ -204,6 +271,7 @@ export default function ScorecardsPage(): JSX.Element {
     if (!selectedEmployee) {
       setHistory([]);
       setTrainingDashboard(null);
+      setTrainingAnalytics(null);
       return;
     }
 
@@ -525,6 +593,12 @@ export default function ScorecardsPage(): JSX.Element {
               <div className="muted">
                 Active plans: {trainingDashboard?.planSummary.activePlans ?? 0} · generated requirements {trainingDashboard?.planSummary.generatedRequirements ?? 0}
               </div>
+              <div className="muted">
+                Due next 7 / 14 / 30 days: {trainingAnalytics?.upcomingDueWindows.next7Days ?? 0} / {trainingAnalytics?.upcomingDueWindows.next14Days ?? 0} / {trainingAnalytics?.upcomingDueWindows.next30Days ?? 0}
+              </div>
+              <div className="muted">
+                Overdue buckets: {trainingAnalytics?.overdueRequirementBuckets.oneToSevenDays ?? 0} short · {trainingAnalytics?.overdueRequirementBuckets.eightToThirtyDays ?? 0} medium · {trainingAnalytics?.overdueRequirementBuckets.overThirtyDays ?? 0} long
+              </div>
             </div>
           ) : (
             <div className="muted">Select a scorecard row to inspect history and review status.</div>
@@ -561,6 +635,32 @@ export default function ScorecardsPage(): JSX.Element {
               <div className="muted">
                 Recurring plans {trainingDashboard.planSummary.activePlans} · upcoming requirements {trainingDashboard.planSummary.upcomingRequirements} · overdue planned requirements {trainingDashboard.planSummary.overdueRequirements}
               </div>
+              {trainingAnalytics ? (
+                <div className="grid cols-3">
+                  <div>
+                    <div className="muted">Completion timeliness</div>
+                    <strong>{trainingAnalytics.completionTimeliness.onTime} on time</strong>
+                    <div className="muted">
+                      {trainingAnalytics.completionTimeliness.late} late
+                      {trainingAnalytics.completionTimeliness.averageDaysLate != null
+                        ? ` · avg ${trainingAnalytics.completionTimeliness.averageDaysLate} days late`
+                        : ""}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="muted">Repeated overdue cycles</div>
+                    <strong>{trainingAnalytics.repeatedOverdueCycles.length}</strong>
+                    <div className="muted">Plans with more than one overdue cycle in the current view.</div>
+                  </div>
+                  <div>
+                    <div className="muted">Open follow-ups</div>
+                    <strong>{trainingAnalytics.followUpActionBurdenByRole.reduce((sum, entry) => sum + entry.openFollowUps, 0)}</strong>
+                    <div className="muted">
+                      {trainingAnalytics.followUpActionBurdenByRole.reduce((sum, entry) => sum + entry.overdueFollowUps, 0)} overdue
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               <ul>
                 {trainingDashboard.gapSummary.items.map((item) => (
                   <li key={item.requirementId}>
@@ -646,6 +746,56 @@ export default function ScorecardsPage(): JSX.Element {
             </div>
           ) : (
             <div className="muted">Select an employee before adding requirements or completions.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid cols-2">
+        <div className="card">
+          <h2>Recurring plan risk</h2>
+          {trainingAnalytics?.requirementCycles.length ? (
+            <div className="table">
+              <div className="table-row table-head">
+                <span>Plan</span>
+                <span>Upcoming</span>
+                <span>Overdue</span>
+                <span>Follow-ups</span>
+              </div>
+              {trainingAnalytics.requirementCycles.map((cycle) => (
+                <div key={cycle.planId} className="table-row">
+                  <span>{cycle.title}</span>
+                  <span>{cycle.upcomingNext7Days} / {cycle.upcomingNext14Days} / {cycle.upcomingNext30Days}</span>
+                  <span>{cycle.overdueRequirements}{cycle.repeatedOverdueCycles ? ` (${cycle.repeatedOverdueCycles} repeated)` : ""}</span>
+                  <span>{cycle.openFollowUps}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="muted">Recurring-plan analytics will appear once plans exist for the selected employee or role.</div>
+          )}
+        </div>
+
+        <div className="card">
+          <h2>Completion and coaching trend</h2>
+          {trainingAnalytics?.recentCompletionTrend.periods.length ? (
+            <div className="table">
+              <div className="table-row table-head">
+                <span>Period</span>
+                <span>Completed</span>
+                <span>Overdue</span>
+                <span>Open follow-ups</span>
+              </div>
+              {trainingAnalytics.recentCompletionTrend.periods.map((period) => (
+                <div key={period.periodStart} className="table-row">
+                  <span>{period.periodLabel}</span>
+                  <span>{period.completedRequirements}</span>
+                  <span>{period.overdueRequirements}</span>
+                  <span>{period.openFollowUps}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="muted">Completion trend data will populate as recurring requirements and completions accumulate.</div>
           )}
         </div>
       </div>

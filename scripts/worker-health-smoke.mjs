@@ -186,6 +186,12 @@ async function ensureAuthenticated() {
 }
 
 function buildRecommendation(health) {
+  if (health.operatingState === "not_polling") {
+    return "Worker is not polling. Compare the recent runtime history with the Render worker logs, then run one bounded batch to confirm the queue can still drain.";
+  }
+  if (health.operatingState === "polling_failed") {
+    return "Worker is polling but failing. Review the recent failed batch history before retrying stale processing cleanup.";
+  }
   if (health.health === "critical") {
     return "Worker looks stalled. Check heartbeat freshness, run one bounded worker batch, then clean stale processing locks if the same jobs remain.";
   }
@@ -202,6 +208,8 @@ function summarize(health) {
   return {
     checkedAt: health.checkedAt,
     health: health.health,
+    operatingState: health.operatingState,
+    lastPollAttemptAt: health.lastPollAttemptAt,
     lastHeartbeatAt: health.lastHeartbeatAt,
     lastCompletedBatchAt: health.lastCompletedBatchAt,
     lastManualBatchRequestAt: health.lastManualBatchRequestAt,
@@ -216,6 +224,7 @@ function summarize(health) {
       succeeded: health.backlog.succeeded
     },
     thresholds: health.thresholds,
+    recentRuntimeState: health.recentRuntimeState,
     recentEvents: health.recentEvents,
     recommendation: buildRecommendation(health)
   };
