@@ -150,6 +150,15 @@ function buildClinicDateTime(targetDate: string, hour: number, minute: number): 
   return new Date(Date.UTC(year, month - 1, day, hour, minute) - offsetMinutes * 60_000).toISOString();
 }
 
+function isPlannerTaskMissingError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return error.message.includes("Graph request failed (404)")
+    || error.message.includes("The requested item is not found.");
+}
+
 export class WorkerJobRunner {
   constructor(
     private readonly repository: ClinicRepository,
@@ -319,9 +328,45 @@ export class WorkerJobRunner {
       };
     }
 
-    const task = await this.pilotOps.getPlannerTaskState({
-      taskId: item.plannerTaskId
-    });
+    let task;
+    try {
+      task = await this.pilotOps.getPlannerTaskState({
+        taskId: item.plannerTaskId
+      });
+    } catch (error) {
+      if (!isPlannerTaskMissingError(error)) {
+        throw error;
+      }
+
+      const now = new Date().toISOString();
+      await this.repository.updateActionItem(item.id, {
+        plannerTaskId: null,
+        syncStatus: "pending_create",
+        lastSyncedAt: now,
+        lastSyncError: "Planner task was missing in Microsoft Planner; queued recreation.",
+        updatedAt: now
+      });
+      await this.enqueueWorkerJob(payload.actor, createWorkerJob({
+        type: "planner.task.create",
+        payload: {
+          actor: payload.actor,
+          actionItemId: item.id
+        },
+        sourceEntityType: "action_item",
+        sourceEntityId: item.id
+      }));
+      await this.recordAudit(payload.actor, "planner.task_missing_requeued", "action_item", item.id, {
+        previousTaskId: item.plannerTaskId,
+        reason: error instanceof Error ? error.message : String(error)
+      });
+
+      return {
+        actionItemId: item.id,
+        previousTaskId: item.plannerTaskId,
+        requeuedCreate: true
+      };
+    }
+
     const now = new Date().toISOString();
     const nextStatus = task.status === "completed" ? "done" : item.status;
     await this.repository.updateActionItem(item.id, {

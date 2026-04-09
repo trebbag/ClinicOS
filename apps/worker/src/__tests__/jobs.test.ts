@@ -868,4 +868,49 @@ describe("WorkerJobRunner", () => {
       latestBinderId: binder.id
     });
   });
+
+  it("requeues planner task creation when reconciliation finds a missing external task", async () => {
+    const repository = new MemoryClinicRepository();
+    const item = createActionItemRecord({
+      kind: "action_item",
+      title: "Recover missing planner task",
+      ownerRole: "office_manager",
+      createdBy: "office-manager",
+      plannerTaskId: "planner-task-missing",
+      syncStatus: "synced"
+    });
+    await repository.createActionItem(item);
+    await repository.enqueueWorkerJob(createWorkerJob({
+      type: "planner.task.reconcile",
+      payload: {
+        actor: {
+          actorId: "office-manager",
+          role: "office_manager",
+          name: "Office Manager"
+        },
+        actionItemId: item.id
+      },
+      sourceEntityType: "action_item",
+      sourceEntityId: item.id
+    }));
+
+    const reconcilingOps: MicrosoftPilotOps = {
+      ...buildMicrosoftPilotOps({ mode: "stub" }),
+      async getPlannerTaskState() {
+        throw new Error("Graph request failed (404): {\"error\":{\"message\":\"The requested item is not found.\"}}");
+      }
+    };
+
+    const runner = new WorkerJobRunner(repository, reconcilingOps);
+    const summary = await runner.runOnce();
+    expect(summary.succeeded).toBe(1);
+    expect(summary.failed).toBe(0);
+
+    const updatedItem = await repository.getActionItem(item.id);
+    expect(updatedItem?.plannerTaskId).toBeNull();
+    expect(updatedItem?.syncStatus).toBe("pending_create");
+    expect(updatedItem?.lastSyncError).toContain("queued recreation");
+    expect(repository.workerJobs.some((job) => job.type === "planner.task.create" && job.sourceEntityId === item.id)).toBe(true);
+    expect(repository.auditEvents.some((event) => event.eventType === "planner.task_missing_requeued")).toBe(true);
+  });
 });
