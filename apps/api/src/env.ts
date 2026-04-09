@@ -58,7 +58,12 @@ export function assertProductionConfig(): void {
     required("DATABASE_URL");
     required("AUTH_MODE");
     required("PUBLIC_APP_ORIGIN");
-    const runtimeAgentsEnabled = required("RUNTIME_AGENTS_ENABLED");
+    const runtimeAgentsEnabled = process.env.RUNTIME_AGENTS_ENABLED;
+    if (!runtimeAgentsEnabled) {
+      throw new Error(
+        "RUNTIME_AGENTS_ENABLED must be explicitly set to true or false in production. Current rollout default: false."
+      );
+    }
     if (!["true", "false"].includes(runtimeAgentsEnabled)) {
       throw new Error("RUNTIME_AGENTS_ENABLED must be explicitly set to true or false in production.");
     }

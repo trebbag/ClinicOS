@@ -110,6 +110,8 @@ Operational note from the latest live validation:
   - deployment-promotion checklist execution in Pilot Ops
   - deeper office and recurring-training analytics in the web UI
   - a formal UI/UX documentation package for the next design/build phase
-- the remaining blocker is now operational rather than product-slice breadth:
-  - runtime agents are still disabled implicitly instead of by explicit `RUNTIME_AGENTS_ENABLED=false`
-  - the Render worker still is not emitting heartbeat events, even though bounded manual batch runs succeed immediately
+- the latest local repo pass now also adds a direct mitigation for the remaining operational blocker:
+  - runtime-state audit writes are now timeout-bounded so they cannot stall startup or polling
+  - the API can run a bounded production worker-assist loop when `API_BACKGROUND_WORKER_ASSIST_ENABLED=true`
+  - `render.yaml` now enables that assist loop for the API service by default
+  - the next redeploy should confirm whether the deployed queue now drains even if the dedicated Render worker still misses polls

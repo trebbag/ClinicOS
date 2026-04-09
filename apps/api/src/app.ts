@@ -42,6 +42,7 @@ import { ClinicApiService } from "./lib/services";
 import { buildApprovedDocumentPublisher } from "./lib/publishing";
 import { env } from "./env";
 import { WorkerJobRunner } from "../../worker/src/jobs";
+import { createWorkerRuntimeRecorder } from "../../worker/src/runtime";
 
 export function buildApp(options?: {
   authMode?: AuthMode;
@@ -50,6 +51,7 @@ export function buildApp(options?: {
   deviceAuthService?: DeviceProfileAuthService;
   identityResolver?: ReturnType<typeof buildIdentityResolver>;
   databaseReadyCheck?: () => Promise<boolean>;
+  enableBackgroundWorkerAssist?: boolean;
 }) {
   const app = Fastify({
     logger: true
@@ -144,6 +146,9 @@ export function buildApp(options?: {
     const runner = new WorkerJobRunner(repository, microsoftPilotOps);
     return runner.runOnce({ limit: Number(process.env.WORKER_BATCH_SIZE ?? 10) });
   };
+  const enableBackgroundWorkerAssist =
+    options?.enableBackgroundWorkerAssist
+    ?? (env.nodeEnv === "production" && process.env.API_BACKGROUND_WORKER_ASSIST_ENABLED !== "false");
 
   app.decorate("clinicService", service);
   app.decorate("deviceAuthService", deviceAuthService);
@@ -216,6 +221,81 @@ export function buildApp(options?: {
   registerScorecardReviewRoutes(app);
   registerTrainingRoutes(app);
   registerWorkerJobRoutes(app);
+
+  if (enableBackgroundWorkerAssist) {
+    const pollIntervalMs = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 5_000);
+    const heartbeatIntervalMs = Number(process.env.WORKER_HEARTBEAT_INTERVAL_MS ?? 300_000);
+    const batchSize = Number(process.env.WORKER_BATCH_SIZE ?? 10);
+    const runtimeRecorder = createWorkerRuntimeRecorder({
+      repository,
+      source: "api_assist",
+      pollIntervalMs,
+      heartbeatIntervalMs,
+      batchSize,
+      integrationMode: env.microsoft.integrationMode,
+      log: (entry) => {
+        app.log.warn({
+          event: entry.event,
+          message: entry.message,
+          detail: entry.detail
+        }, "Clinic OS API worker assist runtime warning");
+      }
+    });
+    let timer: NodeJS.Timeout | null = null;
+    let running = false;
+
+    const tick = async () => {
+      if (running) {
+        return;
+      }
+      running = true;
+      const batchStartedAt = new Date().toISOString();
+      try {
+        const summary = await runWorkerBatch();
+        const checkedAt = new Date().toISOString();
+        if (summary.processed > 0 || summary.failed > 0) {
+          app.log.info({
+            event: "worker.assist.batch.complete",
+            summary,
+            checkedAt
+          }, "Clinic OS API worker assist processed a batch");
+        }
+        await runtimeRecorder.recordBatchCompleted(summary, checkedAt, batchStartedAt);
+      } catch (error) {
+        const checkedAt = new Date().toISOString();
+        app.log.error({
+          event: "worker.assist.batch.failed",
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          checkedAt
+        }, "Clinic OS API worker assist failed");
+        await runtimeRecorder.recordBatchFailed(error, checkedAt, batchStartedAt);
+      } finally {
+        running = false;
+      }
+    };
+
+    app.addHook("onReady", async () => {
+      app.log.info({
+        event: "worker.assist.started",
+        pollIntervalMs,
+        heartbeatIntervalMs,
+        batchSize
+      }, "Clinic OS API worker assist started");
+      await runtimeRecorder.recordStarted();
+      void tick();
+      timer = setInterval(() => {
+        void tick();
+      }, pollIntervalMs);
+    });
+
+    app.addHook("onClose", async () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    });
+  }
 
   return app;
 }

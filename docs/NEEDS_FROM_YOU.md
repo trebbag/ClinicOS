@@ -213,32 +213,40 @@ The deployed Render stack is still healthy and pilot-usable, but the main remain
 
 ## What I still need from you next
 
-1. Keep `RUNTIME_AGENTS_ENABLED=false` explicit on Render
+1. Fix the current Render API boot failure by setting `RUNTIME_AGENTS_ENABLED=false`
+   - the current API deploy failure is expected from the new production hardening rule
+   - set this on the `clinic-os-api` service at minimum
+   - recommended for consistency: also set it on `clinic-os-web` and `clinic-os-worker`
+   - after saving it, redeploy the affected services
+
+2. Keep `RUNTIME_AGENTS_ENABLED=false` explicit on Render
    - runtime agents should stay shipped but intentionally disabled
    - the live smoke path now checks this posture
    - the current deployed disabled reason is still not the explicit freeze reason
    - set the flag on the web and API environments so the deployed hardening status flips to explicit disablement
 
-2. Redeploy the latest web, API, and worker again
+3. Redeploy the latest web, API, and worker again
    - this newest local pass adds:
      - richer worker runtime-state history and poll-attempt visibility
+     - a bounded API-side production worker-assist loop
+     - timeout-bounded runtime-state audit writes so the worker cannot stall on heartbeat logging
      - deployment-promotion checklist item execution in Pilot Ops
      - room readiness/checklist analytics in Office Manager
      - recurring training/coaching analytics in Scorecards
      - the new UI/UX documentation package in `docs/product/`
 
-3. Investigate the Render `clinic-os-worker` service pickup/heartbeat behavior
-   - the bounded `run-once` fallback is working
-   - the background worker still is not emitting heartbeat events into Pilot Ops
-   - compare the worker logs to the timestamps shown in `/ops/worker-health`
+4. Recheck worker behavior after that redeploy
+   - the API service now has a bounded production worker-assist loop through `API_BACKGROUND_WORKER_ASSIST_ENABLED=true`
+   - after redeploy, `/ops/worker-health` should start showing poll activity even if the dedicated worker still is not heartbeating
+   - if the dedicated `clinic-os-worker` service still is not emitting runtime events, compare its Render logs to the timestamps shown in `/ops/worker-health`
 
-4. Optional later real-user rollout details
+5. Optional later real-user rollout details
    - one label per additional computer/device
    - primary profile for that device
    - up to two backup profiles if needed
    - named office manager / quality lead / HR lead profiles when you want them added
 
-5. Watch the new Pilot Ops worker-health surface during normal use
+6. Watch the new Pilot Ops worker-health surface during normal use
    - confirm `last heartbeat` keeps moving forward
    - confirm `operating state` is no longer stuck at `not polling`
    - confirm `last poll attempt` keeps moving
@@ -259,15 +267,15 @@ Postgres is still required even though Microsoft is now ready, because Clinic OS
 The next bounded validation step is:
 
 - set `RUNTIME_AGENTS_ENABLED=false` explicitly on Render
-- redeploy the latest web/API/worker so the newest Pilot Ops, Office Manager, and Scorecards changes are live
+- redeploy the latest web/API/worker so the newest worker-assist, Pilot Ops, Office Manager, and Scorecards changes are live
 - rerun the expanded deployed live smoke once that explicit freeze flag is live
 - use the new `/ops/worker-health` surface to confirm the worker is heartbeating before and after that smoke run
 - use `npm run smoke:worker-health -- https://your-pilot-url.example.com` when you want an auth-backed, shell-friendly worker diagnostic without opening Pilot Ops
 - because the current worker-health smoke is still `critical`, the next operational check should be:
   - open Pilot Ops
-  - use `Run one worker batch now`
-  - confirm queued work drops and heartbeat timestamps begin advancing
-  - if they do not, inspect the Render `clinic-os-worker` service logs for pickup/loop failures
+  - confirm the API-side assist loop is advancing heartbeat and poll timestamps
+  - confirm queued work drains without needing `Run one worker batch now`
+  - if the dedicated `clinic-os-worker` service still does not contribute runtime events, inspect its Render logs for pickup/loop failures
 - if needed during pilot operations, use the new `/worker-jobs/run-once` operator action as a bounded fallback while continuing to diagnose Render worker pickup
 
 After that, the next major engineering step should be:
