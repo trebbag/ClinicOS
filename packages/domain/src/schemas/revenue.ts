@@ -88,6 +88,36 @@ export const revenueDashboardSummarySchema = z.object({
   serviceLinesMissingPricingGovernance: z.number().int().nonnegative(),
   serviceLinesWeakClaimsGovernance: z.number().int().nonnegative(),
   publicAssetsAtRisk: z.number().int().nonnegative(),
+  payerIssueAging: z.object({
+    dueSoon: z.number().int().nonnegative(),
+    overdue: z.number().int().nonnegative(),
+    olderThanThirtyDays: z.number().int().nonnegative(),
+    escalated: z.number().int().nonnegative()
+  }),
+  pricingReviewBuckets: z.object({
+    reviewDueSoon: z.number().int().nonnegative(),
+    overdue: z.number().int().nonnegative(),
+    pendingApproval: z.number().int().nonnegative(),
+    attentionNeeded: z.number().int().nonnegative()
+  }),
+  trends: z.array(z.object({
+    periodLabel: z.string(),
+    periodStart: z.string(),
+    periodEnd: z.string(),
+    openPayerIssues: z.number().int().nonnegative(),
+    escalatedPayerIssues: z.number().int().nonnegative(),
+    pricingPendingApproval: z.number().int().nonnegative(),
+    overdueRevenueReviews: z.number().int().nonnegative()
+  })),
+  serviceLineRisks: z.array(z.object({
+    serviceLineId: z.enum(serviceLines),
+    publishedPack: z.boolean(),
+    latestPricingGovernanceStatus: pricingGovernanceStatusSchema.nullable(),
+    latestRevenueReviewStatus: revenueReviewStatusSchema.nullable(),
+    publicAssetsAtRisk: z.number().int().nonnegative(),
+    weakClaimsGovernance: z.boolean(),
+    missingPricingGovernance: z.boolean()
+  })),
   attentionItems: z.array(z.string())
 });
 

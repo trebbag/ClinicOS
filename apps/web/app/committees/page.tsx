@@ -57,6 +57,9 @@ type CommitteeQapiDashboardSummary = {
   criticalIncidents: number;
   openCapas: number;
   overdueCapas: number;
+  openEvidenceGaps: number;
+  criticalEvidenceGaps: number;
+  overdueEvidenceGaps: number;
   overdueActionItems: number;
   pendingApprovals: number;
   overdueScorecardReviews: number;
@@ -64,12 +67,32 @@ type CommitteeQapiDashboardSummary = {
   standardsAttentionNeeded: number;
   standardsReviewPending: number;
   overdueStandardsReviews: number;
+  standardsMissingCurrentEvidence: number;
   evidenceBindersDraft: number;
   evidenceBindersInReview: number;
   controlledSubstancePacketsNeedingReview: number;
   controlledSubstancePacketsPublished: number;
   telehealthPacketsNeedingReview: number;
   practiceAgreementsExpiringSoon: number;
+};
+
+type QapiTrendSummary = {
+  generatedAt: string;
+  periods: Array<{
+    periodLabel: string;
+    periodStart: string;
+    periodEnd: string;
+    incidentsOpened: number;
+    incidentsClosed: number;
+    capasOpened: number;
+    capasClosed: number;
+    evidenceGapsOpened: number;
+    evidenceGapsVerified: number;
+    overdueStandardsReviews: number;
+    evidenceBindersDraft: number;
+    evidenceBindersInReview: number;
+    evidenceBindersPublished: number;
+  }>;
 };
 
 type CommitteeMeetingRecord = {
@@ -170,6 +193,7 @@ export default function CommitteesPage(): JSX.Element {
   const [meetings, setMeetings] = useState<CommitteeMeetingRecord[]>([]);
   const [approvals, setApprovals] = useState<ApprovalTask[]>([]);
   const [qapiSummary, setQapiSummary] = useState<CommitteeQapiDashboardSummary | null>(null);
+  const [qapiTrends, setQapiTrends] = useState<QapiTrendSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -224,10 +248,11 @@ export default function CommitteesPage(): JSX.Element {
 
     setLoading(true);
     try {
-      const [committeeRows, meetingRows, qapiDashboard, approvalRows] = await Promise.all([
+      const [committeeRows, meetingRows, qapiDashboard, qapiTrendSummary, approvalRows] = await Promise.all([
         apiRequest<CommitteeRecord[]>("/committees?isActive=true", actor),
         apiRequest<CommitteeMeetingRecord[]>("/committee-meetings", actor),
         apiRequest<CommitteeQapiDashboardSummary>("/committees/qapi-summary", actor),
+        apiRequest<QapiTrendSummary>("/qapi/trends", actor),
         hasCapability("approvals.view")
           ? apiRequest<ApprovalTask[]>("/approvals?status=requested", actor)
           : Promise.resolve([])
@@ -235,6 +260,7 @@ export default function CommitteesPage(): JSX.Element {
       setCommittees(committeeRows);
       setMeetings(meetingRows);
       setQapiSummary(qapiDashboard);
+      setQapiTrends(qapiTrendSummary);
       setApprovals(approvalRows);
       setMeetingCommitteeId((current) => current || committeeRows[0]?.id || "");
       setSelectedMeetingId((current) => current ?? meetingRows[0]?.id ?? null);
@@ -433,6 +459,11 @@ export default function CommitteesPage(): JSX.Element {
               <div className="muted">Overdue: {qapiSummary.overdueCapas}</div>
             </div>
             <div className="card">
+              <div className="muted">Open evidence gaps</div>
+              <strong>{qapiSummary.openEvidenceGaps}</strong>
+              <div className="muted">Critical: {qapiSummary.criticalEvidenceGaps}</div>
+            </div>
+            <div className="card">
               <div className="muted">Pending approvals</div>
               <strong>{qapiSummary.pendingApprovals}</strong>
               <div className="muted">Queued jobs: {qapiSummary.queuedJobs}</div>
@@ -453,6 +484,11 @@ export default function CommitteesPage(): JSX.Element {
               <div className="muted">Overdue standard reviews</div>
               <strong>{qapiSummary.overdueStandardsReviews}</strong>
               <div className="muted">Binder drafts: {qapiSummary.evidenceBindersDraft}</div>
+            </div>
+            <div className="card">
+              <div className="muted">Standards missing current evidence</div>
+              <strong>{qapiSummary.standardsMissingCurrentEvidence}</strong>
+              <div className="muted">Overdue evidence gaps: {qapiSummary.overdueEvidenceGaps}</div>
             </div>
             <div className="card">
               <div className="muted">Evidence binders in review</div>
@@ -478,6 +514,35 @@ export default function CommitteesPage(): JSX.Element {
                   : "No critical governance escalations in the current snapshot."}
               </div>
             </div>
+          </div>
+        </article>
+      ) : null}
+
+      {qapiTrends ? (
+        <article className="card stack">
+          <div className="actions" style={{ justifyContent: "space-between" }}>
+            <h2>QAPI Trends</h2>
+            <span className="muted">Generated {new Date(qapiTrends.generatedAt).toLocaleString()}</span>
+          </div>
+          <div className="table">
+            <div className="table-row table-head">
+              <span>Period</span>
+              <span>Incidents</span>
+              <span>CAPAs</span>
+              <span>Evidence gaps</span>
+              <span>Standards / binders</span>
+            </div>
+            {qapiTrends.periods.map((period) => (
+              <div key={period.periodStart} className="table-row">
+                <span>{period.periodLabel}</span>
+                <span>{period.incidentsOpened} opened / {period.incidentsClosed} closed</span>
+                <span>{period.capasOpened} opened / {period.capasClosed} closed</span>
+                <span>{period.evidenceGapsOpened} opened / {period.evidenceGapsVerified} verified</span>
+                <span>
+                  {period.overdueStandardsReviews} overdue reviews / {period.evidenceBindersPublished} binders published
+                </span>
+              </div>
+            ))}
           </div>
         </article>
       ) : null}

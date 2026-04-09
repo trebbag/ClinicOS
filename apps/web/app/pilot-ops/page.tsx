@@ -59,6 +59,40 @@ type ConfigStatus = {
     deadLetter: number;
     succeeded: number;
   };
+  hardening: {
+    currentAuthMode: "dev_headers" | "trusted_proxy" | "device_profiles";
+    runtimeAgentsExplicitlyDisabled: boolean;
+    runtimeAgentsConfigValue: string | null;
+    trustedProxyConfigured: boolean;
+    trustedProxyReady: boolean;
+    recommendedTargetAuthMode: "dev_headers" | "trusted_proxy" | "device_profiles";
+    latestPromotion: {
+      id: string;
+      environmentKey: string;
+      status: string;
+      targetAuthMode: string;
+      runtimeAgentsDisabled: boolean;
+      latestSmokeAt: string | null;
+      rollbackVerifiedAt: string | null;
+      notes: string | null;
+    } | null;
+    latestAlertDispatchAt: string | null;
+    latestRollbackVerificationAt: string | null;
+    latestSmokeAt: string | null;
+  };
+};
+
+type DeploymentPromotion = {
+  id: string;
+  environmentKey: string;
+  status: "draft" | "in_review" | "ready" | "completed";
+  targetAuthMode: "dev_headers" | "trusted_proxy" | "device_profiles";
+  runtimeAgentsDisabled: boolean;
+  latestSmokeAt: string | null;
+  rollbackVerifiedAt: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type MaintenanceSummary = {
@@ -111,6 +145,13 @@ type WorkerHealth = {
   } | null;
   lastFailedBatchAt: string | null;
   lastFailedBatchMessage: string | null;
+  lastManualBatchRequestAt: string | null;
+  lastStaleProcessingCleanupAt: string | null;
+  recentEvents: Array<{
+    eventType: string;
+    createdAt: string;
+    detail: string | null;
+  }>;
   backlog: {
     queued: number;
     processing: number;
@@ -164,6 +205,16 @@ type WorkerRunResult = {
     succeeded: number;
     failed: number;
   };
+};
+
+type AlertDispatchResult = {
+  checkedAt: string;
+  cooldownMinutes: number;
+  criticalAlerts: number;
+  delivered: number;
+  skippedCooldown: number;
+  skippedUnavailable: number;
+  dispatchedKeys: string[];
 };
 
 type RoleCapabilityRecord = {
@@ -247,8 +298,10 @@ export default function PilotOpsPage(): JSX.Element {
   const [opsAlerts, setOpsAlerts] = useState<OpsAlertSummary | null>(null);
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null);
   const [workerRunResult, setWorkerRunResult] = useState<WorkerRunResult | null>(null);
+  const [alertDispatchResult, setAlertDispatchResult] = useState<AlertDispatchResult | null>(null);
   const [roleCapabilities, setRoleCapabilities] = useState<RoleCapabilityRecord[]>([]);
   const [overview, setOverview] = useState<OverviewStats | null>(null);
+  const [deploymentPromotions, setDeploymentPromotions] = useState<DeploymentPromotion[]>([]);
   const [authEvents, setAuthEvents] = useState<AuditEvent[]>([]);
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
@@ -261,6 +314,13 @@ export default function PilotOpsPage(): JSX.Element {
   const [primaryProfileId, setPrimaryProfileId] = useState("");
   const [backupProfileIdOne, setBackupProfileIdOne] = useState("");
   const [backupProfileIdTwo, setBackupProfileIdTwo] = useState("");
+  const [promotionEnvironmentKey, setPromotionEnvironmentKey] = useState("render_production");
+  const [promotionStatus, setPromotionStatus] = useState<DeploymentPromotion["status"]>("draft");
+  const [promotionTargetAuthMode, setPromotionTargetAuthMode] = useState<DeploymentPromotion["targetAuthMode"]>("trusted_proxy");
+  const [promotionRuntimeAgentsDisabled, setPromotionRuntimeAgentsDisabled] = useState(true);
+  const [promotionLatestSmokeAt, setPromotionLatestSmokeAt] = useState("");
+  const [promotionRollbackVerifiedAt, setPromotionRollbackVerifiedAt] = useState("");
+  const [promotionNotes, setPromotionNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -275,7 +335,7 @@ export default function PilotOpsPage(): JSX.Element {
     }
 
     try {
-      const [currentUser, microsoft, runtimeStatus, maintenance, workerRuntime, alerts, capabilityRows, overviewStats, profileRows, deviceRows, authAudit] = await Promise.all([
+      const [currentUser, microsoft, runtimeStatus, maintenance, workerRuntime, alerts, capabilityRows, overviewStats, promotionRows, profileRows, deviceRows, authAudit] = await Promise.all([
         apiRequest<WhoAmI>("/auth/whoami", actor),
         apiRequest<MicrosoftStatus>("/integrations/microsoft/status", actor),
         apiRequest<ConfigStatus>("/ops/config-status", actor),
@@ -284,6 +344,7 @@ export default function PilotOpsPage(): JSX.Element {
         apiRequest<OpsAlertSummary>("/ops/alerts", actor),
         apiRequest<RoleCapabilityRecord[]>("/ops/role-capabilities", actor),
         apiRequest<OverviewStats>("/dashboard/overview", actor),
+        apiRequest<DeploymentPromotion[]>("/ops/deployment-promotions", actor),
         apiRequest<UserProfile[]>("/user-profiles", actor),
         apiRequest<DeviceRecord[]>("/devices", actor),
         apiRequest<AuditEvent[]>("/audit-events?eventTypePrefix=auth.", actor)
@@ -296,6 +357,7 @@ export default function PilotOpsPage(): JSX.Element {
       setOpsAlerts(alerts);
       setRoleCapabilities(capabilityRows);
       setOverview(overviewStats);
+      setDeploymentPromotions(promotionRows);
       setAuthEvents(authAudit.slice(0, 12));
       setProfiles(profileRows);
       setDevices(deviceRows);
@@ -354,6 +416,38 @@ export default function PilotOpsPage(): JSX.Element {
       await load();
     } catch (validationError) {
       setError(validationError instanceof Error ? validationError.message : "Unable to validate Microsoft integration.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCreatePromotion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!actor) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await apiRequest("/ops/deployment-promotions", actor, {
+        method: "POST",
+        body: JSON.stringify({
+          environmentKey: promotionEnvironmentKey,
+          status: promotionStatus,
+          targetAuthMode: promotionTargetAuthMode,
+          runtimeAgentsDisabled: promotionRuntimeAgentsDisabled,
+          latestSmokeAt: promotionLatestSmokeAt ? new Date(`${promotionLatestSmokeAt}T12:00:00.000Z`).toISOString() : null,
+          rollbackVerifiedAt: promotionRollbackVerifiedAt ? new Date(`${promotionRollbackVerifiedAt}T12:00:00.000Z`).toISOString() : null,
+          notes: promotionNotes || null
+        })
+      });
+      setPromotionNotes("");
+      setPromotionLatestSmokeAt("");
+      setPromotionRollbackVerifiedAt("");
+      setPromotionStatus("draft");
+      await load();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Unable to create deployment promotion record.");
     } finally {
       setLoading(false);
     }
@@ -538,6 +632,25 @@ export default function PilotOpsPage(): JSX.Element {
     }
   }
 
+  async function handleDispatchCriticalAlerts() {
+    if (!actor) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await apiRequest<AlertDispatchResult>("/ops/alerts/dispatch", actor, {
+        method: "POST"
+      });
+      setAlertDispatchResult(result);
+      await load();
+    } catch (dispatchError) {
+      setError(dispatchError instanceof Error ? dispatchError.message : "Unable to dispatch critical alerts.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function toggleDeviceProfile(deviceId: string, profileId: string): void {
     setDeviceEdits((current) => {
       const edit = current[deviceId];
@@ -644,6 +757,13 @@ export default function PilotOpsPage(): JSX.Element {
           >
             Run one worker batch now
           </button>
+          <button
+            className="button secondary"
+            onClick={() => { void handleDispatchCriticalAlerts(); }}
+            disabled={loading || !actor || !hasCapability("ops.run_cleanup")}
+          >
+            Dispatch critical alerts
+          </button>
         </div>
         <div className="grid cols-3">
           <div>
@@ -653,6 +773,15 @@ export default function PilotOpsPage(): JSX.Element {
             </div>
             <div className="muted">
               queued {workerHealth?.backlog.queued ?? 0}, processing {workerHealth?.backlog.processing ?? 0}
+            </div>
+          </div>
+          <div>
+            <div className="muted">Last heartbeat</div>
+            <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>
+              {workerHealth?.lastHeartbeatAt ? new Date(workerHealth.lastHeartbeatAt).toLocaleTimeString() : "Never"}
+            </div>
+            <div className="muted">
+              Last manual batch {workerHealth?.lastManualBatchRequestAt ? new Date(workerHealth.lastManualBatchRequestAt).toLocaleString() : "never"}.
             </div>
           </div>
           <div>
@@ -705,13 +834,44 @@ export default function PilotOpsPage(): JSX.Element {
             <span>{workerHealth?.lastFailedBatchAt ? new Date(workerHealth.lastFailedBatchAt).toLocaleString() : "None"}</span>
             <span>{workerHealth?.lastFailedBatchMessage ?? "No recent worker batch failure recorded."}</span>
           </div>
+          <div className="table-row">
+            <span>Last stale-lock cleanup</span>
+            <span>{workerHealth?.lastStaleProcessingCleanupAt ? new Date(workerHealth.lastStaleProcessingCleanupAt).toLocaleString() : "Never"}</span>
+            <span>Use cleanup when stale processing jobs remain after a bounded batch run.</span>
+          </div>
         </div>
+        {workerHealth?.recentEvents.length ? (
+          <div className="table" style={{ marginTop: 12 }}>
+            <div className="table-row table-head">
+              <span>Recent runtime events</span>
+              <span>When</span>
+              <span>Detail</span>
+            </div>
+            {workerHealth.recentEvents.map((event) => (
+              <div key={`${event.eventType}-${event.createdAt}`} className="table-row">
+                <span>{event.eventType}</span>
+                <span>{new Date(event.createdAt).toLocaleString()}</span>
+                <span>{event.detail ?? "No extra detail recorded."}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {workerRunResult ? (
           <div className="card" style={{ marginTop: 12 }}>
             <strong>Last manual worker batch</strong>
             <div className="muted">
               Triggered {new Date(workerRunResult.triggeredAt).toLocaleString()}.
               {" "}Processed {workerRunResult.summary.processed}, succeeded {workerRunResult.summary.succeeded}, failed {workerRunResult.summary.failed}.
+            </div>
+          </div>
+        ) : null}
+        {alertDispatchResult ? (
+          <div className="card" style={{ marginTop: 12 }}>
+            <strong>Last critical alert dispatch</strong>
+            <div className="muted">
+              Checked {new Date(alertDispatchResult.checkedAt).toLocaleString()}.
+              {" "}Delivered {alertDispatchResult.delivered} of {alertDispatchResult.criticalAlerts} critical alerts.
+              {" "}Cooldown skips: {alertDispatchResult.skippedCooldown}. Unavailable integrations: {alertDispatchResult.skippedUnavailable}.
             </div>
           </div>
         ) : null}
@@ -781,6 +941,87 @@ export default function PilotOpsPage(): JSX.Element {
         )}
         <div className="muted" style={{ marginTop: 12 }}>
           Public origin: {configStatus?.publicAppOrigin ?? "not set"}
+        </div>
+        <div className="table" style={{ marginTop: 12 }}>
+          <div className="table-row table-head">
+            <span>Hardening signal</span>
+            <span>Value</span>
+            <span>Detail</span>
+          </div>
+          <div className="table-row">
+            <span>Runtime-agent freeze</span>
+            <span>{configStatus?.hardening.runtimeAgentsExplicitlyDisabled ? "explicit" : "not explicit"}</span>
+            <span>Config value: {configStatus?.hardening.runtimeAgentsConfigValue ?? "unset"}</span>
+          </div>
+          <div className="table-row">
+            <span>Trusted proxy readiness</span>
+            <span>{configStatus?.hardening.trustedProxyReady ? "ready" : "not ready"}</span>
+            <span>
+              Current auth {configStatus?.hardening.currentAuthMode ?? "unknown"}.
+              {" "}Recommended target {configStatus?.hardening.recommendedTargetAuthMode ?? "trusted_proxy"}.
+            </span>
+          </div>
+          <div className="table-row">
+            <span>Latest smoke / rollback proof</span>
+            <span>{configStatus?.hardening.latestSmokeAt ? new Date(configStatus.hardening.latestSmokeAt).toLocaleDateString() : "missing"}</span>
+            <span>
+              Rollback verified {configStatus?.hardening.latestRollbackVerificationAt ? new Date(configStatus.hardening.latestRollbackVerificationAt).toLocaleDateString() : "not yet"}.
+              {" "}Alert dispatch {configStatus?.hardening.latestAlertDispatchAt ? new Date(configStatus.hardening.latestAlertDispatchAt).toLocaleString() : "none recorded"}.
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2>Deployment promotion checklist</h2>
+        <div className="muted" style={{ marginBottom: 12 }}>
+          Track post-pilot hardening steps without leaving Clinic OS: auth-mode target, smoke evidence, rollback verification, and explicit agent freeze.
+        </div>
+        <form className="grid two-column" onSubmit={(event) => { void handleCreatePromotion(event); }}>
+          <input value={promotionEnvironmentKey} onChange={(event) => setPromotionEnvironmentKey(event.target.value)} placeholder="Environment key" />
+          <select value={promotionStatus} onChange={(event) => setPromotionStatus(event.target.value as DeploymentPromotion["status"])}>
+            <option value="draft">Draft</option>
+            <option value="in_review">In review</option>
+            <option value="ready">Ready</option>
+            <option value="completed">Completed</option>
+          </select>
+          <select value={promotionTargetAuthMode} onChange={(event) => setPromotionTargetAuthMode(event.target.value as DeploymentPromotion["targetAuthMode"])}>
+            <option value="device_profiles">device_profiles</option>
+            <option value="trusted_proxy">trusted_proxy</option>
+            <option value="dev_headers">dev_headers</option>
+          </select>
+          <label className="muted">
+            <input type="checkbox" checked={promotionRuntimeAgentsDisabled} onChange={(event) => setPromotionRuntimeAgentsDisabled(event.target.checked)} />
+            {" "}Runtime agents explicitly disabled
+          </label>
+          <input type="date" value={promotionLatestSmokeAt} onChange={(event) => setPromotionLatestSmokeAt(event.target.value)} />
+          <input type="date" value={promotionRollbackVerifiedAt} onChange={(event) => setPromotionRollbackVerifiedAt(event.target.value)} />
+          <textarea value={promotionNotes} onChange={(event) => setPromotionNotes(event.target.value)} rows={3} placeholder="Notes for smoke, rollback, or auth hardening status" style={{ gridColumn: "1 / -1" }} />
+          <button className="button" type="submit" disabled={loading || !actor || !hasCapability("ops.run_cleanup")}>
+            Save promotion record
+          </button>
+        </form>
+        <div className="table" style={{ marginTop: 12 }}>
+          <div className="table-row table-head">
+            <span>Environment</span>
+            <span>Status</span>
+            <span>Target auth</span>
+            <span>Proof</span>
+          </div>
+          {deploymentPromotions.map((record) => (
+            <div key={record.id} className="table-row">
+              <span>{record.environmentKey}</span>
+              <span><span className={`badge badge-${record.status}`}>{record.status}</span></span>
+              <span>
+                {record.targetAuthMode}
+                {" "}/ agents {record.runtimeAgentsDisabled ? "off" : "not frozen"}
+              </span>
+              <span>
+                smoke {record.latestSmokeAt ? toLocaleDate(record.latestSmokeAt) : "missing"}
+                {" "}· rollback {record.rollbackVerifiedAt ? toLocaleDate(record.rollbackVerifiedAt) : "missing"}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -1260,4 +1501,8 @@ export default function PilotOpsPage(): JSX.Element {
 
 function authStateFallback(actor: { role: string } | null): string {
   return actor ? "session" : "unknown";
+}
+
+function toLocaleDate(value: string): string {
+  return new Date(value).toLocaleDateString();
 }

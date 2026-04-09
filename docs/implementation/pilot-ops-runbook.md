@@ -11,6 +11,7 @@ This runbook covers the first-pilot hardening loop now built into Clinic OS:
 
 - `GET /ops/config-status`
 - `GET /ops/alerts`
+- `POST /ops/alerts/dispatch`
 - `GET /ops/maintenance-summary`
 - `POST /ops/cleanup`
 - `GET /ops/role-capabilities`
@@ -161,6 +162,12 @@ Interpret the result this way:
   - heartbeat is stale and queued or processing work is no longer clearing normally
   - use the bounded fallback steps below
 
+The worker-health surface now also shows:
+
+- a short recent runtime event history
+- the last manual `run-once` request time
+- the last cleanup that requeued stale processing locks
+
 ### Optional publish smoke
 
 If the enrolled device is allowed to use both an office-manager and medical-director profile, the same script can also run the document publish path. For that, provide:
@@ -240,13 +247,22 @@ If the queue stalls during pilot operations and you need a bounded operator reco
 3. If you want a CLI-friendly check first, run:
    - `npm run smoke:worker-health -- https://your-pilot-url.example.com`
 4. Use `Run one worker batch now`.
-5. Confirm:
+5. If critical alerts should be pushed to the Teams/webhook channel immediately, use `Dispatch critical alerts`.
+6. Confirm:
    - the batch processed at least one job
    - oldest queued job age drops
    - the specific stuck job moves out of `queued`
-6. If `processing` jobs remain stale after that, run cleanup for stale processing locks from Pilot Ops.
-7. Recheck `/ops/worker-health` and queue counts after each intervention.
-8. Keep using Render logs to diagnose the background worker, but do not block pilot operations on shell-only access.
+7. If `processing` jobs remain stale after that, run cleanup for stale processing locks from Pilot Ops.
+8. Recheck `/ops/worker-health` and queue counts after each intervention.
+9. Keep using Render logs to diagnose the background worker, but do not block pilot operations on shell-only access.
+
+## Runtime-agent freeze
+
+Runtime agents should stay shipped but disabled in pilot deployments unless you are intentionally starting an eval rollout.
+
+- set `RUNTIME_AGENTS_ENABLED=false`
+- keep `OPENAI_API_KEY` absent unless you are intentionally testing the agent slice
+- the live smoke harness now checks `/runtime-agents` and fails if the disabled reason is not the explicit configuration freeze
 
 ## Rollback checklist
 

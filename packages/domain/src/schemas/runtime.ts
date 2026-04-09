@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { authModeSchema } from "./auth";
+import { deployHardeningStatusSchema } from "./deployment";
 import { microsoftIntegrationStatusSchema, publicationModeSchema } from "./integration";
 import { workerJobSummarySchema } from "./worker";
 
@@ -19,6 +20,7 @@ export const apiRuntimeConfigStatusSchema = z.object({
   publicationMode: publicationModeSchema,
   databaseReady: z.boolean(),
   worker: workerJobSummarySchema,
+  hardening: deployHardeningStatusSchema,
   microsoft: microsoftIntegrationStatusSchema,
   pilotUsable: z.boolean(),
   startupReady: z.boolean(),

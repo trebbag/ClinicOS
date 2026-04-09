@@ -48,6 +48,11 @@ type ServiceLineSummary = {
   latestPack: ServiceLinePackRecord | null;
   linkedPublicAssetCount: number;
   publishedPublicAssetCount: number;
+  latestPricingGovernanceStatus: "draft" | "approval_pending" | "approved" | "publish_pending" | "published" | "attention_needed" | null;
+  latestPricingReviewDueAt: string | null;
+  latestRevenueReviewStatus: "draft" | "review_pending" | "completed" | "archived" | null;
+  latestRevenueReviewDate: string | null;
+  weakClaimsGovernance: boolean;
 };
 
 type ApprovalTask = {
@@ -261,6 +266,29 @@ export default function ServiceLinesPage(): JSX.Element {
                   <div className="card"><div className="muted">Published assets</div><strong>{row.publishedPublicAssetCount}</strong></div>
                   <div className="card"><div className="muted">Pending approvals</div><strong>{pendingApprovals}</strong></div>
                   <div className="card"><div className="muted">Latest pack</div><strong>{row.latestPack?.status ?? "none"}</strong></div>
+                </div>
+                <div className="grid cols-3">
+                  <div className="card">
+                    <div className="muted">Pricing governance</div>
+                    <strong>{row.latestPricingGovernanceStatus ?? "none"}</strong>
+                    <div className="muted">
+                      {row.latestPricingReviewDueAt ? `Review due ${row.latestPricingReviewDueAt.slice(0, 10)}` : "No pricing review date"}
+                    </div>
+                  </div>
+                  <div className="card">
+                    <div className="muted">Revenue review</div>
+                    <strong>{row.latestRevenueReviewStatus ?? "none"}</strong>
+                    <div className="muted">
+                      {row.latestRevenueReviewDate ? row.latestRevenueReviewDate.slice(0, 10) : "No recent revenue review"}
+                    </div>
+                  </div>
+                  <div className="card">
+                    <div className="muted">Claims-governance risk</div>
+                    <strong>{row.weakClaimsGovernance ? "Attention needed" : "Covered"}</strong>
+                    <div className="muted">
+                      {row.weakClaimsGovernance ? "Published assets outpace claims governance coverage." : "Claims inventory is keeping pace."}
+                    </div>
+                  </div>
                 </div>
                 <div className="muted">
                   Charter {row.serviceLine.hasCharter ? "yes" : "no"} / competency {row.serviceLine.hasCompetencyMatrix ? "yes" : "no"} / audit tool {row.serviceLine.hasAuditTool ? "yes" : "no"} / claims inventory {row.serviceLine.hasClaimsInventory ? "yes" : "no"}

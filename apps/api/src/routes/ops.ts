@@ -25,6 +25,30 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
     return app.clinicService.getOpsMaintenanceSummary();
   });
 
+  app.get("/ops/deployment-promotions", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "ops.view_config");
+    const query = request.query as {
+      environmentKey?: string;
+      status?: string;
+      targetAuthMode?: string;
+    };
+    return app.clinicService.listDeploymentPromotions(query);
+  });
+
+  app.post("/ops/deployment-promotions", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "ops.run_cleanup");
+    return app.clinicService.createDeploymentPromotion(actor, request.body);
+  });
+
+  app.patch("/ops/deployment-promotions/:id", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "ops.run_cleanup");
+    const params = request.params as { id: string };
+    return app.clinicService.updateDeploymentPromotion(actor, params.id, request.body);
+  });
+
   app.get("/ops/worker-health", async (request) => {
     const actor = actorFromRequest(request);
     requireCapability(actor, "ops.view_config");
@@ -39,6 +63,12 @@ export async function registerOpsRoutes(app: FastifyInstance): Promise<void> {
       publicAppOrigin: env.publicAppOrigin || null,
       databaseReady: await app.databaseReadyCheck()
     });
+  });
+
+  app.post("/ops/alerts/dispatch", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "ops.run_cleanup");
+    return app.clinicService.dispatchCriticalOpsAlerts(actor);
   });
 
   app.post("/ops/cleanup", async (request) => {

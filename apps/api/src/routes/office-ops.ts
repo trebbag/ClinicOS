@@ -2,6 +2,35 @@ import type { FastifyInstance } from "fastify";
 import { actorFromRequest, requireCapability } from "../lib/auth";
 
 export async function registerOfficeOpsRoutes(app: FastifyInstance): Promise<void> {
+  app.get("/office-ops/rooms", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "office_ops.view");
+    const query = request.query as {
+      status?: string;
+      roomType?: string;
+    };
+    return app.clinicService.listRooms(query);
+  });
+
+  app.post("/office-ops/rooms", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "office_ops.manage");
+    return app.clinicService.createRoom(actor, request.body);
+  });
+
+  app.post("/office-ops/rooms/bootstrap-defaults", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "office_ops.manage");
+    return app.clinicService.bootstrapOfficeRooms(actor);
+  });
+
+  app.patch("/office-ops/rooms/:id", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "office_ops.manage");
+    const params = request.params as { id: string };
+    return app.clinicService.updateRoom(actor, params.id, request.body);
+  });
+
   app.get("/office-ops/dashboard", async (request) => {
     const query = request.query as { date?: string };
     const targetDate = query.date ?? new Date().toISOString().slice(0, 10);

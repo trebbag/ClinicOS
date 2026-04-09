@@ -17,6 +17,12 @@ export const workerBatchSummarySchema = z.object({
   failed: z.number().int().nonnegative()
 });
 
+export const workerRuntimeEventSchema = z.object({
+  eventType: z.string(),
+  createdAt: z.string(),
+  detail: z.string().nullable()
+});
+
 export const workerRuntimeStatusSchema = z.object({
   checkedAt: z.string(),
   health: workerRuntimeHealthSchema,
@@ -32,6 +38,9 @@ export const workerRuntimeStatusSchema = z.object({
   lastCompletedBatch: workerBatchSummarySchema.nullable(),
   lastFailedBatchAt: z.string().nullable(),
   lastFailedBatchMessage: z.string().nullable(),
+  lastManualBatchRequestAt: z.string().nullable(),
+  lastStaleProcessingCleanupAt: z.string().nullable(),
+  recentEvents: z.array(workerRuntimeEventSchema),
   backlog: workerJobSummarySchema.extend({
     oldestQueuedAt: z.string().nullable(),
     oldestQueuedType: workerJobTypeSchema.nullable(),
@@ -142,6 +151,7 @@ export type OpsAlertSeverity = z.infer<typeof opsAlertSeveritySchema>;
 export type OpsAlert = z.infer<typeof opsAlertSchema>;
 export type OpsAlertSummary = z.infer<typeof opsAlertSummarySchema>;
 export type WorkerBatchSummary = z.infer<typeof workerBatchSummarySchema>;
+export type WorkerRuntimeEvent = z.infer<typeof workerRuntimeEventSchema>;
 export type WorkerRuntimeHealth = z.infer<typeof workerRuntimeHealthSchema>;
 export type WorkerRuntimeStatus = z.infer<typeof workerRuntimeStatusSchema>;
 export type OpsMaintenanceSummary = z.infer<typeof opsMaintenanceSummarySchema>;

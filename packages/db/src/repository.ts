@@ -9,11 +9,13 @@ import type {
   CommitteeMeetingRecord,
   CommitteeRecord,
   ControlledSubstanceStewardshipRecord,
+  DeploymentPromotionRecord,
   DelegationRuleRecord,
   DeviceAllowedProfile,
   DeviceEnrollmentCode,
   DeviceSession,
   DocumentRecord,
+  EvidenceGapRecord,
   EnrolledDevice,
   IncidentRecord,
   MetricRun,
@@ -22,6 +24,7 @@ import type {
   PayerIssueRecord,
   PricingGovernanceRecord,
   PracticeAgreementRecord,
+  RoomRecord,
   RevenueReviewRecord,
   RevenueDashboardSummary,
   ScorecardReviewRecord,
@@ -31,6 +34,7 @@ import type {
   TelehealthStewardshipRecord,
   EvidenceBinderRecord,
   TrainingCompletionRecord,
+  TrainingPlanRecord,
   TrainingRequirement,
   UserProfile,
   WorkerJobRecord,
@@ -47,11 +51,13 @@ import {
   committeeMeetingRecordSchema,
   committeeRecordSchema,
   controlledSubstanceStewardshipRecordSchema,
+  deploymentPromotionRecordSchema,
   delegationRuleRecordSchema,
   deviceAllowedProfileSchema,
   deviceEnrollmentCodeSchema,
   deviceSessionSchema,
   documentRecordSchema,
+  evidenceGapRecordSchema,
   enrolledDeviceSchema,
   incidentRecordSchema,
   metricRunSchema,
@@ -60,6 +66,7 @@ import {
   payerIssueRecordSchema,
   pricingGovernanceRecordSchema,
   practiceAgreementRecordSchema,
+  roomRecordSchema,
   revenueReviewRecordSchema,
   scorecardReviewRecordSchema,
   serviceLinePackRecordSchema,
@@ -68,6 +75,7 @@ import {
   telehealthStewardshipRecordSchema,
   evidenceBinderRecordSchema,
   trainingCompletionRecordSchema,
+  trainingPlanRecordSchema,
   trainingRequirementSchema,
   userProfileSchema,
   workerJobRecordSchema,
@@ -319,6 +327,68 @@ type EvidenceBinderRow = {
   publishedAt: Date | null;
   publishedPath: string | null;
 };
+type RoomRecordRow = {
+  id: string;
+  roomLabel: string;
+  roomType: string;
+  status: string;
+  checklistAreaLabel: string;
+  notes: string | null;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+type EvidenceGapRow = {
+  id: string;
+  title: string;
+  normalizedGapKey: string;
+  status: string;
+  severity: string;
+  ownerRole: string;
+  summary: string;
+  resolutionSummary: string | null;
+  standardId: string | null;
+  binderId: string | null;
+  committeeMeetingId: string | null;
+  serviceLineId: string | null;
+  actionItemId: string | null;
+  dueDate: Date | null;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+  verifiedAt: Date | null;
+  archivedAt: Date | null;
+};
+type TrainingPlanRow = {
+  id: string;
+  employeeRole: string;
+  employeeId: string | null;
+  requirementType: string;
+  title: string;
+  cadenceDays: number;
+  leadTimeDays: number;
+  validityDays: number | null;
+  ownerRole: string;
+  status: string;
+  notes: string | null;
+  lastMaterializedAt: Date | null;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+type DeploymentPromotionRow = {
+  id: string;
+  environmentKey: string;
+  status: string;
+  targetAuthMode: string;
+  runtimeAgentsDisabled: boolean;
+  latestSmokeAt: Date | null;
+  rollbackVerifiedAt: Date | null;
+  notes: string | null;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
 export type ClinicRepository = {
   createWorkflowRun(run: WorkflowRun): Promise<WorkflowRun>;
@@ -343,6 +413,13 @@ export type ClinicRepository = {
     escalationStatus?: string;
     sourceWorkflowRunId?: string;
   }): Promise<ActionItemRecord[]>;
+  createRoom(record: RoomRecord): Promise<RoomRecord>;
+  updateRoom(id: string, patch: Partial<RoomRecord>): Promise<RoomRecord>;
+  getRoom(id: string): Promise<RoomRecord | null>;
+  listRooms(filters?: {
+    status?: string;
+    roomType?: string;
+  }): Promise<RoomRecord[]>;
   createIncident(record: IncidentRecord): Promise<IncidentRecord>;
   updateIncident(id: string, patch: Partial<IncidentRecord>): Promise<IncidentRecord>;
   getIncident(id: string): Promise<IncidentRecord | null>;
@@ -481,6 +558,19 @@ export type ClinicRepository = {
     ownerRole?: string;
     sourceAuthority?: string;
   }): Promise<EvidenceBinderRecord[]>;
+  createEvidenceGap(record: EvidenceGapRecord): Promise<EvidenceGapRecord>;
+  updateEvidenceGap(id: string, patch: Partial<EvidenceGapRecord>): Promise<EvidenceGapRecord>;
+  getEvidenceGap(id: string): Promise<EvidenceGapRecord | null>;
+  listEvidenceGaps(filters?: {
+    status?: string;
+    ownerRole?: string;
+    severity?: string;
+    standardId?: string;
+    binderId?: string;
+    committeeMeetingId?: string;
+    serviceLineId?: string;
+    normalizedGapKey?: string;
+  }): Promise<EvidenceGapRecord[]>;
   createDelegationRule(record: DelegationRuleRecord): Promise<DelegationRuleRecord>;
   updateDelegationRule(id: string, patch: Partial<DelegationRuleRecord>): Promise<DelegationRuleRecord>;
   getDelegationRule(id: string): Promise<DelegationRuleRecord | null>;
@@ -530,7 +620,17 @@ export type ClinicRepository = {
     employeeId?: string;
     employeeRole?: string;
     requirementType?: string;
+    planId?: string;
   }): Promise<TrainingRequirement[]>;
+  createTrainingPlan(plan: TrainingPlanRecord): Promise<TrainingPlanRecord>;
+  updateTrainingPlan(id: string, patch: Partial<TrainingPlanRecord>): Promise<TrainingPlanRecord>;
+  getTrainingPlan(id: string): Promise<TrainingPlanRecord | null>;
+  listTrainingPlans(filters?: {
+    employeeId?: string;
+    employeeRole?: string;
+    ownerRole?: string;
+    status?: string;
+  }): Promise<TrainingPlanRecord[]>;
   createTrainingCompletion(record: TrainingCompletionRecord): Promise<TrainingCompletionRecord>;
   listTrainingCompletions(filters?: {
     requirementId?: string;
@@ -582,6 +682,14 @@ export type ClinicRepository = {
     record: MicrosoftIntegrationValidationRecord
   ): Promise<MicrosoftIntegrationValidationRecord>;
   getLatestMicrosoftIntegrationValidationRecord(): Promise<MicrosoftIntegrationValidationRecord | null>;
+  createDeploymentPromotion(record: DeploymentPromotionRecord): Promise<DeploymentPromotionRecord>;
+  updateDeploymentPromotion(id: string, patch: Partial<DeploymentPromotionRecord>): Promise<DeploymentPromotionRecord>;
+  getDeploymentPromotion(id: string): Promise<DeploymentPromotionRecord | null>;
+  listDeploymentPromotions(filters?: {
+    environmentKey?: string;
+    status?: string;
+    targetAuthMode?: string;
+  }): Promise<DeploymentPromotionRecord[]>;
 };
 
 function isoToDate(value?: string | null): Date | null | undefined {
@@ -645,6 +753,10 @@ export class PrismaClinicRepository implements ClinicRepository {
 
   private get evidenceBinderClient(): UntypedPrismaDelegate {
     return (this.client as unknown as { evidenceBinder: UntypedPrismaDelegate }).evidenceBinder;
+  }
+
+  private get evidenceGapClient(): UntypedPrismaDelegate {
+    return (this.client as unknown as { evidenceGap: UntypedPrismaDelegate }).evidenceGap;
   }
 
   private get delegationRuleClient(): UntypedPrismaDelegate {
@@ -1113,6 +1225,22 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
   }
 
+  private mapEvidenceGapRecord(record: EvidenceGapRow): EvidenceGapRecord {
+    return evidenceGapRecordSchema.parse({
+      ...record,
+      standardId: record.standardId ?? null,
+      binderId: record.binderId ?? null,
+      committeeMeetingId: record.committeeMeetingId ?? null,
+      serviceLineId: record.serviceLineId ?? null,
+      actionItemId: record.actionItemId ?? null,
+      dueDate: record.dueDate?.toISOString() ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+      verifiedAt: record.verifiedAt?.toISOString() ?? null,
+      archivedAt: record.archivedAt?.toISOString() ?? null
+    });
+  }
+
   private mapChecklistTemplate(record: {
     id: string;
     name: string;
@@ -1135,10 +1263,20 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
   }
 
+  private mapRoomRecord(record: RoomRecordRow): RoomRecord {
+    return roomRecordSchema.parse({
+      ...record,
+      notes: record.notes ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString()
+    });
+  }
+
   private mapChecklistRun(record: {
     id: string;
     templateId: string;
     workflowRunId: string;
+    roomId: string | null;
     targetDate: Date;
     createdAt: Date;
     updatedAt: Date;
@@ -1268,6 +1406,9 @@ export class PrismaClinicRepository implements ClinicRepository {
     employeeRole: string;
     requirementType: string;
     title: string;
+    planId: string | null;
+    sourceCycleKey: string | null;
+    followUpActionItemId: string | null;
     dueDate: Date | null;
     notes: string | null;
     lastReminderSentAt: Date | null;
@@ -1279,6 +1420,18 @@ export class PrismaClinicRepository implements ClinicRepository {
       ...record,
       dueDate: record.dueDate?.toISOString() ?? null,
       lastReminderSentAt: record.lastReminderSentAt?.toISOString() ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString()
+    });
+  }
+
+  private mapTrainingPlan(record: TrainingPlanRow): TrainingPlanRecord {
+    return trainingPlanRecordSchema.parse({
+      ...record,
+      employeeId: record.employeeId ?? null,
+      validityDays: record.validityDays ?? null,
+      notes: record.notes ?? null,
+      lastMaterializedAt: record.lastMaterializedAt?.toISOString() ?? null,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString()
     });
@@ -1300,6 +1453,17 @@ export class PrismaClinicRepository implements ClinicRepository {
       ...record,
       completedAt: record.completedAt.toISOString(),
       validUntil: record.validUntil?.toISOString() ?? null,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString()
+    });
+  }
+
+  private mapDeploymentPromotionRecord(record: DeploymentPromotionRow): DeploymentPromotionRecord {
+    return deploymentPromotionRecordSchema.parse({
+      ...record,
+      latestSmokeAt: record.latestSmokeAt?.toISOString() ?? null,
+      rollbackVerifiedAt: record.rollbackVerifiedAt?.toISOString() ?? null,
+      notes: record.notes ?? null,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString()
     });
@@ -1601,6 +1765,57 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
 
     return records.map((record) => this.mapActionItemRecord(record));
+  }
+
+  async createRoom(record: RoomRecord): Promise<RoomRecord> {
+    const created = await this.client.roomRecord.create({
+      data: {
+        id: record.id,
+        roomLabel: record.roomLabel,
+        roomType: record.roomType,
+        status: record.status,
+        checklistAreaLabel: record.checklistAreaLabel,
+        notes: record.notes,
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt)
+      }
+    });
+
+    return this.mapRoomRecord(created as RoomRecordRow);
+  }
+
+  async updateRoom(id: string, patch: Partial<RoomRecord>): Promise<RoomRecord> {
+    const updated = await this.client.roomRecord.update({
+      where: { id },
+      data: {
+        roomLabel: patch.roomLabel,
+        roomType: patch.roomType,
+        status: patch.status,
+        checklistAreaLabel: patch.checklistAreaLabel,
+        notes: patch.notes,
+        updatedAt: isoToRequiredDate(patch.updatedAt)
+      }
+    });
+
+    return this.mapRoomRecord(updated as RoomRecordRow);
+  }
+
+  async getRoom(id: string): Promise<RoomRecord | null> {
+    const record = await this.client.roomRecord.findUnique({ where: { id } });
+    return record ? this.mapRoomRecord(record as RoomRecordRow) : null;
+  }
+
+  async listRooms(filters?: {
+    status?: string;
+    roomType?: string;
+  }): Promise<RoomRecord[]> {
+    const records = await this.client.roomRecord.findMany({
+      where: mapListFilters(filters),
+      orderBy: [{ roomLabel: "asc" }]
+    });
+
+    return (records as RoomRecordRow[]).map((record) => this.mapRoomRecord(record));
   }
 
   async createIncident(record: IncidentRecord): Promise<IncidentRecord> {
@@ -2771,6 +2986,85 @@ export class PrismaClinicRepository implements ClinicRepository {
     return (records as EvidenceBinderRow[]).map((record) => this.mapEvidenceBinderRecord(record));
   }
 
+  async createEvidenceGap(record: EvidenceGapRecord): Promise<EvidenceGapRecord> {
+    const created = await this.evidenceGapClient.create({
+      data: {
+        id: record.id,
+        title: record.title,
+        normalizedGapKey: record.normalizedGapKey,
+        status: record.status,
+        severity: record.severity,
+        ownerRole: record.ownerRole,
+        summary: record.summary,
+        resolutionSummary: record.resolutionSummary,
+        standardId: record.standardId,
+        binderId: record.binderId,
+        committeeMeetingId: record.committeeMeetingId,
+        serviceLineId: record.serviceLineId,
+        actionItemId: record.actionItemId,
+        dueDate: isoToDate(record.dueDate),
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt),
+        verifiedAt: isoToDate(record.verifiedAt),
+        archivedAt: isoToDate(record.archivedAt)
+      }
+    });
+
+    return this.mapEvidenceGapRecord(created as EvidenceGapRow);
+  }
+
+  async updateEvidenceGap(id: string, patch: Partial<EvidenceGapRecord>): Promise<EvidenceGapRecord> {
+    const updated = await this.evidenceGapClient.update({
+      where: { id },
+      data: {
+        title: patch.title,
+        normalizedGapKey: patch.normalizedGapKey,
+        status: patch.status,
+        severity: patch.severity,
+        ownerRole: patch.ownerRole,
+        summary: patch.summary,
+        resolutionSummary: patch.resolutionSummary,
+        standardId: patch.standardId,
+        binderId: patch.binderId,
+        committeeMeetingId: patch.committeeMeetingId,
+        serviceLineId: patch.serviceLineId,
+        actionItemId: patch.actionItemId,
+        dueDate: isoToDate(patch.dueDate),
+        createdBy: patch.createdBy,
+        createdAt: isoToRequiredDate(patch.createdAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt),
+        verifiedAt: isoToDate(patch.verifiedAt),
+        archivedAt: isoToDate(patch.archivedAt)
+      }
+    });
+
+    return this.mapEvidenceGapRecord(updated as EvidenceGapRow);
+  }
+
+  async getEvidenceGap(id: string): Promise<EvidenceGapRecord | null> {
+    const record = await this.evidenceGapClient.findUnique({ where: { id } });
+    return record ? this.mapEvidenceGapRecord(record as EvidenceGapRow) : null;
+  }
+
+  async listEvidenceGaps(filters?: {
+    status?: string;
+    ownerRole?: string;
+    severity?: string;
+    standardId?: string;
+    binderId?: string;
+    committeeMeetingId?: string;
+    serviceLineId?: string;
+    normalizedGapKey?: string;
+  }): Promise<EvidenceGapRecord[]> {
+    const records = await this.evidenceGapClient.findMany({
+      where: mapListFilters(filters),
+      orderBy: [{ severity: "desc" }, { createdAt: "desc" }]
+    });
+
+    return (records as EvidenceGapRow[]).map((record) => this.mapEvidenceGapRecord(record));
+  }
+
   async createDelegationRule(record: DelegationRuleRecord): Promise<DelegationRuleRecord> {
     const created = await this.delegationRuleClient.create({
       data: {
@@ -2904,6 +3198,7 @@ export class PrismaClinicRepository implements ClinicRepository {
         id: run.id,
         templateId: run.templateId,
         workflowRunId: run.workflowRunId,
+        roomId: run.roomId,
         targetDate: new Date(`${run.targetDate}T00:00:00.000Z`),
         createdAt: new Date(run.createdAt),
         updatedAt: new Date(run.updatedAt)
@@ -2919,6 +3214,7 @@ export class PrismaClinicRepository implements ClinicRepository {
       data: {
         templateId: patch.templateId,
         workflowRunId: patch.workflowRunId,
+        roomId: patch.roomId,
         targetDate: patch.targetDate ? new Date(`${patch.targetDate}T00:00:00.000Z`) : undefined,
         updatedAt: isoToRequiredDate(patch.updatedAt)
       }
@@ -2935,6 +3231,7 @@ export class PrismaClinicRepository implements ClinicRepository {
   async listChecklistRuns(filters?: {
     workflowRunId?: string;
     templateId?: string;
+    roomId?: string;
   }): Promise<ChecklistRun[]> {
     const records = await this.client.checklistRun.findMany({
       where: mapListFilters(filters),
@@ -3105,6 +3402,9 @@ export class PrismaClinicRepository implements ClinicRepository {
         employeeRole: requirement.employeeRole,
         requirementType: requirement.requirementType,
         title: requirement.title,
+        planId: requirement.planId,
+        sourceCycleKey: requirement.sourceCycleKey,
+        followUpActionItemId: requirement.followUpActionItemId,
         dueDate: isoToDate(requirement.dueDate),
         notes: requirement.notes,
         lastReminderSentAt: isoToDate(requirement.lastReminderSentAt),
@@ -3125,6 +3425,9 @@ export class PrismaClinicRepository implements ClinicRepository {
         employeeRole: patch.employeeRole,
         requirementType: patch.requirementType,
         title: patch.title,
+        planId: patch.planId,
+        sourceCycleKey: patch.sourceCycleKey,
+        followUpActionItemId: patch.followUpActionItemId,
         dueDate: isoToDate(patch.dueDate),
         notes: patch.notes,
         lastReminderSentAt: isoToDate(patch.lastReminderSentAt),
@@ -3144,6 +3447,7 @@ export class PrismaClinicRepository implements ClinicRepository {
     employeeId?: string;
     employeeRole?: string;
     requirementType?: string;
+    planId?: string;
   }): Promise<TrainingRequirement[]> {
     const records = await this.client.trainingRequirement.findMany({
       where: mapListFilters(filters),
@@ -3151,6 +3455,71 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
 
     return records.map((record) => this.mapTrainingRequirement(record));
+  }
+
+  async createTrainingPlan(plan: TrainingPlanRecord): Promise<TrainingPlanRecord> {
+    const record = await this.client.trainingPlan.create({
+      data: {
+        id: plan.id,
+        employeeRole: plan.employeeRole,
+        employeeId: plan.employeeId,
+        requirementType: plan.requirementType,
+        title: plan.title,
+        cadenceDays: plan.cadenceDays,
+        leadTimeDays: plan.leadTimeDays,
+        validityDays: plan.validityDays,
+        ownerRole: plan.ownerRole,
+        status: plan.status,
+        notes: plan.notes,
+        lastMaterializedAt: isoToDate(plan.lastMaterializedAt),
+        createdBy: plan.createdBy,
+        createdAt: new Date(plan.createdAt),
+        updatedAt: new Date(plan.updatedAt)
+      }
+    });
+
+    return this.mapTrainingPlan(record as TrainingPlanRow);
+  }
+
+  async updateTrainingPlan(id: string, patch: Partial<TrainingPlanRecord>): Promise<TrainingPlanRecord> {
+    const record = await this.client.trainingPlan.update({
+      where: { id },
+      data: {
+        employeeRole: patch.employeeRole,
+        employeeId: patch.employeeId,
+        requirementType: patch.requirementType,
+        title: patch.title,
+        cadenceDays: patch.cadenceDays,
+        leadTimeDays: patch.leadTimeDays,
+        validityDays: patch.validityDays,
+        ownerRole: patch.ownerRole,
+        status: patch.status,
+        notes: patch.notes,
+        lastMaterializedAt: isoToDate(patch.lastMaterializedAt),
+        updatedAt: isoToRequiredDate(patch.updatedAt)
+      }
+    });
+
+    return this.mapTrainingPlan(record as TrainingPlanRow);
+  }
+
+  async getTrainingPlan(id: string): Promise<TrainingPlanRecord | null> {
+    const record = await this.client.trainingPlan.findUnique({ where: { id } });
+    return record ? this.mapTrainingPlan(record as TrainingPlanRow) : null;
+  }
+
+  async listTrainingPlans(filters?: {
+    employeeId?: string;
+    employeeRole?: string;
+    ownerRole?: string;
+    status?: string;
+  }): Promise<TrainingPlanRecord[]> {
+    const records = await this.client.trainingPlan.findMany({
+      where: mapListFilters(filters),
+      orderBy: [{ employeeRole: "asc" }, { title: "asc" }]
+    });
+
+    return (records as TrainingPlanRow[]).map((record) => this.mapTrainingPlan(record));
   }
 
   async createTrainingCompletion(record: TrainingCompletionRecord): Promise<TrainingCompletionRecord> {
@@ -3729,5 +4098,61 @@ export class PrismaClinicRepository implements ClinicRepository {
     });
 
     return record ? this.mapMicrosoftIntegrationValidationRecord(record) : null;
+  }
+
+  async createDeploymentPromotion(record: DeploymentPromotionRecord): Promise<DeploymentPromotionRecord> {
+    const created = await this.client.deploymentPromotion.create({
+      data: {
+        id: record.id,
+        environmentKey: record.environmentKey,
+        status: record.status,
+        targetAuthMode: record.targetAuthMode,
+        runtimeAgentsDisabled: record.runtimeAgentsDisabled,
+        latestSmokeAt: isoToDate(record.latestSmokeAt),
+        rollbackVerifiedAt: isoToDate(record.rollbackVerifiedAt),
+        notes: record.notes,
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt)
+      }
+    });
+
+    return this.mapDeploymentPromotionRecord(created as DeploymentPromotionRow);
+  }
+
+  async updateDeploymentPromotion(id: string, patch: Partial<DeploymentPromotionRecord>): Promise<DeploymentPromotionRecord> {
+    const updated = await this.client.deploymentPromotion.update({
+      where: { id },
+      data: {
+        environmentKey: patch.environmentKey,
+        status: patch.status,
+        targetAuthMode: patch.targetAuthMode,
+        runtimeAgentsDisabled: patch.runtimeAgentsDisabled,
+        latestSmokeAt: isoToDate(patch.latestSmokeAt),
+        rollbackVerifiedAt: isoToDate(patch.rollbackVerifiedAt),
+        notes: patch.notes,
+        updatedAt: isoToRequiredDate(patch.updatedAt)
+      }
+    });
+
+    return this.mapDeploymentPromotionRecord(updated as DeploymentPromotionRow);
+  }
+
+  async getDeploymentPromotion(id: string): Promise<DeploymentPromotionRecord | null> {
+    const record = await this.client.deploymentPromotion.findUnique({ where: { id } });
+    return record ? this.mapDeploymentPromotionRecord(record as DeploymentPromotionRow) : null;
+  }
+
+  async listDeploymentPromotions(filters?: {
+    environmentKey?: string;
+    status?: string;
+    targetAuthMode?: string;
+  }): Promise<DeploymentPromotionRecord[]> {
+    const records = await this.client.deploymentPromotion.findMany({
+      where: mapListFilters(filters),
+      orderBy: [{ updatedAt: "desc" }]
+    });
+
+    return (records as DeploymentPromotionRow[]).map((record) => this.mapDeploymentPromotionRecord(record));
   }
 }

@@ -56,10 +56,23 @@ type WorkerJob = {
 type TrainingDashboard = {
   employeeId: string;
   employeeRole: string;
+  plans: Array<{
+    id: string;
+    title: string;
+    status: string;
+    cadenceDays: number;
+    leadTimeDays: number;
+    validityDays: number | null;
+    ownerRole: string;
+    employeeRole: string;
+    employeeId: string | null;
+    notes: string | null;
+  }>;
   requirements: Array<{
     id: string;
     requirementType: string;
     title: string;
+    planId: string | null;
     dueDate: string | null;
     notes: string | null;
   }>;
@@ -88,6 +101,13 @@ type TrainingDashboard = {
       notes: string | null;
     }>;
   };
+  planSummary: {
+    activePlans: number;
+    generatedRequirements: number;
+    upcomingRequirements: number;
+    overdueRequirements: number;
+    openFollowUps: number;
+  };
 };
 
 const defaultCsv = `employee_id,employee_role,period_start,period_end,task_completion_rate,training_completion_rate,audit_pass_rate,issue_close_rate,complaint_count,note_lag_days,refill_turnaround_hours,schedule_fill_rate
@@ -115,6 +135,11 @@ export default function ScorecardsPage(): JSX.Element {
   const [completionRequirementId, setCompletionRequirementId] = useState("");
   const [completionValidUntil, setCompletionValidUntil] = useState("");
   const [completionNote, setCompletionNote] = useState("");
+  const [planTitle, setPlanTitle] = useState("");
+  const [planCadenceDays, setPlanCadenceDays] = useState("90");
+  const [planLeadTimeDays, setPlanLeadTimeDays] = useState("14");
+  const [planValidityDays, setPlanValidityDays] = useState("90");
+  const [planApplyToRoleOnly, setPlanApplyToRoleOnly] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -313,6 +338,64 @@ export default function ScorecardsPage(): JSX.Element {
     }
   }
 
+  async function handleCreateTrainingPlan(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedEmployee || !actor) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await apiRequest("/training-plans", actor, {
+        method: "POST",
+        body: JSON.stringify({
+          employeeRole: selectedEmployee.employeeRole,
+          employeeId: planApplyToRoleOnly ? null : selectedEmployee.employeeId,
+          requirementType,
+          title: planTitle,
+          cadenceDays: Number(planCadenceDays),
+          leadTimeDays: Number(planLeadTimeDays),
+          validityDays: planValidityDays ? Number(planValidityDays) : null,
+          ownerRole: actor.role
+        })
+      });
+      setPlanTitle("");
+      setPlanCadenceDays("90");
+      setPlanLeadTimeDays("14");
+      setPlanValidityDays("90");
+      setPlanApplyToRoleOnly(false);
+      await loadEmployeeDetail(selectedEmployee.employeeId, selectedEmployee.employeeRole);
+      setError(null);
+    } catch (planError) {
+      setError(planError instanceof Error ? planError.message : "Unable to create training plan.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleBootstrapTrainingPlans() {
+    if (!selectedEmployee || !actor) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await apiRequest("/training-plans/bootstrap-defaults", actor, {
+        method: "POST",
+        body: JSON.stringify({
+          employeeRole: selectedEmployee.employeeRole,
+          employeeId: selectedEmployee.employeeId
+        })
+      });
+      await loadEmployeeDetail(selectedEmployee.employeeId, selectedEmployee.employeeRole);
+      setError(null);
+    } catch (bootstrapError) {
+      setError(bootstrapError instanceof Error ? bootstrapError.message : "Unable to bootstrap training plans.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="grid" style={{ gap: 16 }}>
       <div className="card">
@@ -439,6 +522,9 @@ export default function ScorecardsPage(): JSX.Element {
               <div className="muted">
                 Training gaps: {(trainingDashboard?.gapSummary.counts.overdue ?? 0) + (trainingDashboard?.gapSummary.counts.missing ?? 0) + (trainingDashboard?.gapSummary.counts.expiringSoon ?? 0)}
               </div>
+              <div className="muted">
+                Active plans: {trainingDashboard?.planSummary.activePlans ?? 0} · generated requirements {trainingDashboard?.planSummary.generatedRequirements ?? 0}
+              </div>
             </div>
           ) : (
             <div className="muted">Select a scorecard row to inspect history and review status.</div>
@@ -472,6 +558,9 @@ export default function ScorecardsPage(): JSX.Element {
               <div className="muted">
                 Complete {trainingDashboard.gapSummary.counts.complete} · expiring soon {trainingDashboard.gapSummary.counts.expiringSoon} · overdue {trainingDashboard.gapSummary.counts.overdue} · missing {trainingDashboard.gapSummary.counts.missing}
               </div>
+              <div className="muted">
+                Recurring plans {trainingDashboard.planSummary.activePlans} · upcoming requirements {trainingDashboard.planSummary.upcomingRequirements} · overdue planned requirements {trainingDashboard.planSummary.overdueRequirements}
+              </div>
               <ul>
                 {trainingDashboard.gapSummary.items.map((item) => (
                   <li key={item.requirementId}>
@@ -492,6 +581,27 @@ export default function ScorecardsPage(): JSX.Element {
           <h2>Manage requirements</h2>
           {selectedEmployee ? (
             <div className="grid" style={{ gap: 16 }}>
+              <div className="stack">
+                <div className="actions">
+                  <button className="button secondary" type="button" onClick={() => { void handleBootstrapTrainingPlans(); }} disabled={loading || actor?.role === "office_manager"}>
+                    Bootstrap recurring plans
+                  </button>
+                </div>
+                <ul>
+                  {(trainingDashboard?.plans ?? []).map((plan) => (
+                    <li key={plan.id}>
+                      <strong>{plan.title}</strong> <span className={`badge badge-${plan.status}`}>{prettyStatus(plan.status)}</span>
+                      <div className="muted">
+                        every {plan.cadenceDays} days · lead {plan.leadTimeDays} days · valid {plan.validityDays ?? "n/a"} days · owner {plan.ownerRole}
+                      </div>
+                      <div className="muted">
+                        scope {plan.employeeId ? plan.employeeId : `all ${plan.employeeRole.replaceAll("_", " ")}`}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
               <form className="stack" onSubmit={(event) => { void handleCreateRequirement(event); }}>
                 <input value={requirementTitle} onChange={(event) => setRequirementTitle(event.target.value)} placeholder="Requirement title" required />
                 <select value={requirementType} onChange={(event) => setRequirementType(event.target.value as "training" | "competency")}>
@@ -499,7 +609,23 @@ export default function ScorecardsPage(): JSX.Element {
                   <option value="competency">Competency</option>
                 </select>
                 <input type="date" value={requirementDueDate} onChange={(event) => setRequirementDueDate(event.target.value)} />
-                <button className="button" type="submit" disabled={loading || actor?.role !== "hr_lead"}>Add requirement</button>
+                <button className="button" type="submit" disabled={loading || !["hr_lead", "medical_director"].includes(actor?.role ?? "")}>Add requirement</button>
+              </form>
+
+              <form className="stack" onSubmit={(event) => { void handleCreateTrainingPlan(event); }}>
+                <input value={planTitle} onChange={(event) => setPlanTitle(event.target.value)} placeholder="Recurring plan title" required />
+                <div className="grid cols-3">
+                  <input type="number" min={30} value={planCadenceDays} onChange={(event) => setPlanCadenceDays(event.target.value)} placeholder="Cadence days" />
+                  <input type="number" min={0} value={planLeadTimeDays} onChange={(event) => setPlanLeadTimeDays(event.target.value)} placeholder="Lead days" />
+                  <input type="number" min={1} value={planValidityDays} onChange={(event) => setPlanValidityDays(event.target.value)} placeholder="Validity days" />
+                </div>
+                <label className="muted">
+                  <input type="checkbox" checked={planApplyToRoleOnly} onChange={(event) => setPlanApplyToRoleOnly(event.target.checked)} />
+                  {" "}Apply to all {selectedEmployee.employeeRole.replaceAll("_", " ")} profiles
+                </label>
+                <button className="button secondary" type="submit" disabled={loading || actor?.role === "office_manager"}>
+                  Add recurring plan
+                </button>
               </form>
 
               <form className="stack" onSubmit={(event) => { void handleRecordCompletion(event); }}>
@@ -513,7 +639,7 @@ export default function ScorecardsPage(): JSX.Element {
                 </select>
                 <input type="date" value={completionValidUntil} onChange={(event) => setCompletionValidUntil(event.target.value)} />
                 <textarea value={completionNote} onChange={(event) => setCompletionNote(event.target.value)} rows={3} placeholder="Optional note" />
-                <button className="button secondary" type="submit" disabled={loading || !completionRequirementId || actor?.role !== "hr_lead"}>
+                <button className="button secondary" type="submit" disabled={loading || !completionRequirementId || !["hr_lead", "medical_director"].includes(actor?.role ?? "")}>
                   Record completion
                 </button>
               </form>

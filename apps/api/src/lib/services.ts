@@ -23,7 +23,9 @@ import {
   createChecklistRun,
   createChecklistTemplate,
   createControlledSubstanceStewardshipRecord,
+  createDeploymentPromotionRecord,
   createDelegationRuleRecord,
+  createEvidenceGapRecord,
   createEvidenceBinderRecord,
   createIncidentRecord,
   createMicrosoftIntegrationValidationRecord,
@@ -31,26 +33,34 @@ import {
   createPayerIssueRecord,
   createPricingGovernanceRecord,
   createRevenueReviewRecord,
+  createRoomRecord,
   createActionItemRecord,
   createAuditEvent,
   createDraftDocument,
   createScorecardReviewRecord,
   createStandardMappingRecord,
   createTrainingCompletionRecord,
+  createTrainingPlanRecord,
   createTrainingRequirement,
   createWorkerJob,
   createWorkflowRun,
   createServiceLinePackRecord,
   createServiceLineRecord,
+  defaultRoomTemplates,
   defaultWorkerHeartbeatIntervalMs,
   deidentifiedOperationalRowSchema,
   delegationEvaluationQuerySchema,
   delegationRuleCreateSchema,
   delegationRuleUpdateSchema,
+  deploymentPromotionCreateSchema,
+  deploymentPromotionUpdateSchema,
   documentMetadataSchema,
   evaluateDelegationRule,
   evidenceBinderCreateSchema,
   evidenceBinderUpdateSchema,
+  evidenceGapCreateSchema,
+  evidenceGapUpdateSchema,
+  evidenceGapVerifySchema,
   incidentCreateSchema,
   incidentReviewDecisionCommandSchema,
   incidentUpdateSchema,
@@ -65,6 +75,8 @@ import {
   pricingGovernanceUpdateSchema,
   revenueReviewCreateSchema,
   revenueReviewUpdateSchema,
+  roomCreateSchema,
+  roomUpdateSchema,
   claimsReviewDecisionCommandSchema,
   controlledSubstanceStewardshipCreateSchema,
   controlledSubstanceStewardshipUpdateSchema,
@@ -82,6 +94,8 @@ import {
   standardMappingCreateSchema,
   standardMappingUpdateSchema,
   trainingCompletionCreateSchema,
+  trainingPlanCreateSchema,
+  trainingPlanUpdateSchema,
   trainingRequirementCreateSchema,
   workflowTransitionCommandSchema,
   approvalDecisionCommandSchema,
@@ -105,10 +119,13 @@ import {
   type CommitteeQapiSnapshot,
   type CommitteeRecord,
   type ControlledSubstanceStewardshipRecord,
+  type DeploymentPromotionRecord,
+  type DeployHardeningStatus,
   type MetricRun,
   type MicrosoftIntegrationStatus,
   type MicrosoftIntegrationValidationRecord,
   type DocumentRecord,
+  type EvidenceGapRecord,
   type EvidenceBinderRecord,
   type IncidentRecord,
   type OpsAlert,
@@ -122,6 +139,9 @@ import {
   type PayerIssueRecord,
   type PricingGovernanceRecord,
   type PracticeAgreementRecord,
+  type QapiTrendSummary,
+  type RoomReadinessSummary,
+  type RoomRecord,
   type RevenueDashboardSummary,
   type RevenueReviewRecord,
   type RoleCapabilityRecord,
@@ -138,17 +158,20 @@ import {
   type TrainingGapSummary,
   type TrainingRequirement,
   type TrainingCompletionRecord,
+  type TrainingPlanRecord,
   type Role,
   type RoleScorecard,
   type ScorecardHistoryPoint,
   type ScorecardReviewRecord,
   type WorkerBatchSummary,
+  type WorkerRuntimeEvent,
   type WorkerJobSummary,
   type WorkerRuntimeStatus,
   type WorkerJobRecord,
   type WorkflowDefinition,
   type WorkflowRun,
   workerBatchSummarySchema,
+  normalizeEvidenceGapKey,
   workerRuntimeEntityId
 } from "@clinic-os/domain";
 import { randomId } from "@clinic-os/domain";
@@ -194,6 +217,37 @@ function ageMinutes(now: string, earlier: string | null): number | null {
   }
 
   return Math.max(0, Math.round((new Date(now).getTime() - new Date(earlier).getTime()) / 60_000));
+}
+
+function startOfMonth(input: string): string {
+  const date = new Date(input);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1)).toISOString();
+}
+
+function endOfMonth(input: string): string {
+  const date = new Date(input);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0, 23, 59, 59, 999)).toISOString();
+}
+
+function toDateInputValue(value: string | null | undefined): string | null {
+  return value ? value.slice(0, 10) : null;
+}
+
+function latestIsoDate(values: Array<string | null | undefined>): string | null {
+  const sorted = values.filter((value): value is string => Boolean(value)).sort((left, right) => right.localeCompare(left));
+  return sorted[0] ?? null;
+}
+
+function requirementCycleKey(planId: string, dueDate: string): string {
+  return `${planId}:${dueDate.slice(0, 10)}`;
+}
+
+function systemActor(role: Role = "quality_lead"): ActorContext {
+  return {
+    actorId: "clinic-os-system",
+    role,
+    name: "Clinic OS system"
+  };
 }
 
 function parseWorkerBatchSummary(input: unknown): WorkerBatchSummary | null {
@@ -675,6 +729,7 @@ export class ClinicApiService {
       authMode: AuthMode;
       integrationMode: "stub" | "live";
       openaiApiKey?: string;
+      runtimeAgentsConfigValue?: string | null;
       runtimeAgentsEnabled?: boolean;
       pilotOps?: {
         readonly mode: "stub" | "live";
@@ -800,12 +855,89 @@ export class ClinicApiService {
     return created;
   }
 
+  async listRooms(filters?: {
+    status?: string;
+    roomType?: string;
+  }): Promise<RoomRecord[]> {
+    return this.repository.listRooms(filters);
+  }
+
+  async createRoom(actor: ActorContext, input: unknown): Promise<RoomRecord> {
+    const command = roomCreateSchema.parse(input);
+    const existing = await this.repository.getRoom(command.id);
+    if (existing) {
+      badRequest(`Room already exists: ${command.id}`);
+    }
+
+    const created = await this.repository.createRoom(createRoomRecord({
+      ...command,
+      createdBy: actor.actorId
+    }));
+    await this.recordAudit(actor, "office_ops.room_created", "room", created.id, {
+      roomType: created.roomType,
+      status: created.status
+    });
+    return created;
+  }
+
+  async updateRoom(actor: ActorContext, roomId: string, input: unknown): Promise<RoomRecord> {
+    const command = roomUpdateSchema.parse(input);
+    const room = await this.repository.getRoom(roomId);
+    if (!room) {
+      notFound(`Room not found: ${roomId}`);
+    }
+
+    const updated = await this.repository.updateRoom(room.id, {
+      roomLabel: command.roomLabel ?? room.roomLabel,
+      roomType: command.roomType ?? room.roomType,
+      status: command.status ?? room.status,
+      checklistAreaLabel: command.checklistAreaLabel ?? room.checklistAreaLabel,
+      notes: command.notes !== undefined ? command.notes : room.notes,
+      updatedAt: new Date().toISOString()
+    });
+    await this.recordAudit(actor, "office_ops.room_updated", "room", updated.id, {
+      status: updated.status,
+      roomType: updated.roomType
+    });
+    return updated;
+  }
+
+  async bootstrapOfficeRooms(actor: ActorContext): Promise<{
+    created: RoomRecord[];
+    existing: RoomRecord[];
+  }> {
+    const existingRooms = await this.repository.listRooms();
+    const created: RoomRecord[] = [];
+    const existing: RoomRecord[] = [];
+
+    for (const template of defaultRoomTemplates(actor.actorId)) {
+      const match = existingRooms.find((room) => room.id === template.id);
+      if (match) {
+        existing.push(match);
+        continue;
+      }
+      created.push(await this.repository.createRoom(template));
+    }
+
+    if (created.length > 0) {
+      await this.recordAudit(actor, "office_ops.rooms_bootstrapped", "room", created[0]!.id, {
+        createdCount: created.length,
+        existingCount: existing.length
+      });
+    }
+
+    return {
+      created,
+      existing
+    };
+  }
+
   async generateOfficeOpsDailyPacket(actor: ActorContext, input: unknown): Promise<OfficeOpsDailyStatus> {
     const command = officeOpsPacketCommandSchema.parse(input);
     const targetDate = command.targetDate ?? new Date().toISOString().slice(0, 10);
     const existing = await this.findOfficeOpsWorkflowRun(targetDate);
     if (existing) {
-      await this.ensureChecklistRunForWorkflow(actor, existing, targetDate);
+      await this.ensureChecklistRunsForWorkflow(actor, existing, targetDate);
       return this.buildOfficeOpsDashboard(targetDate);
     }
 
@@ -835,7 +967,7 @@ export class ClinicApiService {
       serviceLines: [],
       body: `# Daily Huddle Packet\n\nGenerated ${targetDate}\n\n## Open issues\n${openIssues.map((item) => `- ${item.title}`).join("\n") || "- No open issues"}`
     });
-    await this.ensureChecklistRunForWorkflow(actor, workflow, targetDate);
+    await this.ensureChecklistRunsForWorkflow(actor, workflow, targetDate);
     await this.transitionWorkflowRun(actor, workflow.id, { nextState: "drafted" });
     await this.createActionItem(actor, {
       kind: "review",
@@ -1983,6 +2115,10 @@ export class ClinicApiService {
     return this.buildCommitteeQapiDashboardSummary();
   }
 
+  async getQapiTrendSummary(): Promise<QapiTrendSummary> {
+    return this.buildQapiTrendSummary();
+  }
+
   async listCommitteeMeetings(filters?: {
     committeeId?: string;
     status?: string;
@@ -2256,21 +2392,35 @@ export class ClinicApiService {
     latestPack: ServiceLinePackRecord | null;
     linkedPublicAssetCount: number;
     publishedPublicAssetCount: number;
+    latestPricingGovernanceStatus: PricingGovernanceRecord["status"] | null;
+    latestPricingReviewDueAt: string | null;
+    latestRevenueReviewStatus: RevenueReviewRecord["status"] | null;
+    latestRevenueReviewDate: string | null;
+    weakClaimsGovernance: boolean;
   }>> {
-    const [serviceLines, packs, publicAssets] = await Promise.all([
+    const [serviceLines, packs, publicAssets, pricingGovernance, revenueReviews] = await Promise.all([
       this.repository.listServiceLines(filters),
       this.repository.listServiceLinePacks(),
-      this.repository.listPublicAssets()
+      this.repository.listPublicAssets(),
+      this.repository.listPricingGovernance(),
+      this.repository.listRevenueReviews()
     ]);
 
     return serviceLines.map((serviceLine) => {
       const serviceLinePacks = packs.filter((pack) => pack.serviceLineId === serviceLine.id);
       const serviceAssets = publicAssets.filter((asset) => asset.serviceLine === serviceLine.id);
+      const latestPricing = pricingGovernance.find((record) => record.serviceLineId === serviceLine.id) ?? null;
+      const latestReview = revenueReviews.find((record) => record.serviceLineId === serviceLine.id) ?? null;
       return {
         serviceLine,
         latestPack: serviceLinePacks[0] ?? null,
         linkedPublicAssetCount: serviceAssets.length,
-        publishedPublicAssetCount: serviceAssets.filter((asset) => asset.status === "published").length
+        publishedPublicAssetCount: serviceAssets.filter((asset) => asset.status === "published").length,
+        latestPricingGovernanceStatus: latestPricing?.status ?? null,
+        latestPricingReviewDueAt: latestPricing?.reviewDueAt ?? null,
+        latestRevenueReviewStatus: latestReview?.status ?? null,
+        latestRevenueReviewDate: latestReview?.targetReviewDate ?? latestReview?.completedAt ?? null,
+        weakClaimsGovernance: !serviceLine.hasClaimsInventory && serviceAssets.some((asset) => asset.status === "published")
       };
     });
   }
@@ -3461,6 +3611,8 @@ export class ClinicApiService {
       status: updated.status
     });
 
+    await this.syncEvidenceGapSignalsFromStandard(actor, updated);
+
     return updated;
   }
 
@@ -3696,6 +3848,8 @@ export class ClinicApiService {
       approvalCount: result.approvals.length
     });
 
+    await this.syncEvidenceGapSignalsFromBinder(actor, synced ?? binder);
+
     return {
       binder: synced ?? binder,
       document: result.document,
@@ -3722,10 +3876,131 @@ export class ClinicApiService {
       documentId: binder.documentId
     });
 
+    await this.syncEvidenceGapSignalsFromBinder(actor, synced ?? binder);
+
     return {
       binder: synced ?? binder,
       document
     };
+  }
+
+  async listEvidenceGaps(filters?: {
+    status?: string;
+    ownerRole?: string;
+    severity?: string;
+    standardId?: string;
+    binderId?: string;
+    committeeMeetingId?: string;
+    serviceLineId?: string;
+  }): Promise<EvidenceGapRecord[]> {
+    return this.repository.listEvidenceGaps(filters);
+  }
+
+  async createEvidenceGap(actor: ActorContext, input: unknown): Promise<EvidenceGapRecord> {
+    const command = evidenceGapCreateSchema.parse(input);
+    await this.assertEvidenceGapLinks(command);
+    const result = await this.createOrRefreshEvidenceGap(actor, {
+      title: command.title,
+      severity: command.severity,
+      ownerRole: command.ownerRole,
+      summary: command.summary,
+      standardId: command.standardId ?? null,
+      binderId: command.binderId ?? null,
+      committeeMeetingId: command.committeeMeetingId ?? null,
+      serviceLineId: command.serviceLineId ?? null,
+      dueDate: command.dueDate ?? null,
+      resolutionSummary: command.resolutionSummary ?? null,
+      escalateToActionItem: command.escalateToActionItem ?? false
+    });
+
+    return result.record;
+  }
+
+  async updateEvidenceGap(actor: ActorContext, evidenceGapId: string, input: unknown): Promise<EvidenceGapRecord> {
+    const command = evidenceGapUpdateSchema.parse(input);
+    const gap = await this.repository.getEvidenceGap(evidenceGapId);
+    if (!gap) {
+      notFound(`Evidence gap not found: ${evidenceGapId}`);
+    }
+
+    await this.assertEvidenceGapLinks({
+      standardId: command.standardId === undefined ? gap.standardId : command.standardId,
+      binderId: command.binderId === undefined ? gap.binderId : command.binderId,
+      committeeMeetingId: command.committeeMeetingId === undefined ? gap.committeeMeetingId : command.committeeMeetingId,
+      serviceLineId: command.serviceLineId === undefined ? gap.serviceLineId : command.serviceLineId
+    });
+
+    const updatedAt = new Date().toISOString();
+    const nextStatus = command.status ?? gap.status;
+    const patched = await this.repository.updateEvidenceGap(gap.id, {
+      title: command.title ?? gap.title,
+      normalizedGapKey: normalizeEvidenceGapKey({
+        title: command.title ?? gap.title,
+        standardId: command.standardId === undefined ? gap.standardId : command.standardId,
+        binderId: command.binderId === undefined ? gap.binderId : command.binderId,
+        committeeMeetingId: command.committeeMeetingId === undefined ? gap.committeeMeetingId : command.committeeMeetingId,
+        serviceLineId: command.serviceLineId === undefined ? gap.serviceLineId : command.serviceLineId
+      }),
+      status: nextStatus,
+      severity: command.severity ?? gap.severity,
+      ownerRole: command.ownerRole ?? gap.ownerRole,
+      summary: command.summary ?? gap.summary,
+      resolutionSummary: command.resolutionSummary !== undefined ? command.resolutionSummary : gap.resolutionSummary,
+      standardId: command.standardId === undefined ? gap.standardId : command.standardId,
+      binderId: command.binderId === undefined ? gap.binderId : command.binderId,
+      committeeMeetingId: command.committeeMeetingId === undefined ? gap.committeeMeetingId : command.committeeMeetingId,
+      serviceLineId: command.serviceLineId === undefined ? gap.serviceLineId : command.serviceLineId,
+      dueDate: command.dueDate === undefined ? gap.dueDate : command.dueDate,
+      archivedAt: nextStatus === "archived" ? (gap.archivedAt ?? updatedAt) : null,
+      updatedAt
+    });
+
+    const escalated = command.escalateToActionItem
+      ? await this.ensureEvidenceGapActionItem(actor, patched)
+      : patched;
+
+    await this.recordAudit(actor, "evidence_gap.updated", "evidence_gap", escalated.id, {
+      status: escalated.status,
+      severity: escalated.severity,
+      actionItemId: escalated.actionItemId
+    });
+
+    return escalated;
+  }
+
+  async verifyEvidenceGap(actor: ActorContext, evidenceGapId: string, input: unknown): Promise<EvidenceGapRecord> {
+    const command = evidenceGapVerifySchema.parse(input);
+    const gap = await this.repository.getEvidenceGap(evidenceGapId);
+    if (!gap) {
+      notFound(`Evidence gap not found: ${evidenceGapId}`);
+    }
+    if (gap.status !== "ready_for_verification") {
+      badRequest("Only evidence gaps ready for verification can be verified.");
+    }
+
+    const now = new Date().toISOString();
+    const nextStatus = command.archive ? "archived" : "verified";
+    const updated = await this.repository.updateEvidenceGap(gap.id, {
+      status: nextStatus,
+      resolutionSummary: command.resolutionSummary,
+      verifiedAt: now,
+      archivedAt: command.archive ? now : gap.archivedAt,
+      updatedAt: now
+    });
+
+    if (updated.actionItemId) {
+      await this.updateActionItem(actor, updated.actionItemId, {
+        status: "done",
+        resolutionNote: command.resolutionSummary
+      });
+    }
+
+    await this.recordAudit(actor, "evidence_gap.verified", "evidence_gap", updated.id, {
+      archived: command.archive,
+      actionItemId: updated.actionItemId
+    });
+
+    return updated;
   }
 
   async listDelegationRules(filters?: {
@@ -4341,6 +4616,12 @@ export class ClinicApiService {
     const latestStarted = relevantEvents.find((event) => event.eventType === "worker.started") ?? null;
     const latestCompleted = relevantEvents.find((event) => event.eventType === "worker.batch.completed") ?? null;
     const latestFailed = relevantEvents.find((event) => event.eventType === "worker.batch.failed") ?? null;
+    const latestManualBatchRequest = relevantEvents.find((event) => event.eventType === "worker.batch_run_requested") ?? null;
+    const latestCleanup = relevantEvents.find((event) =>
+      event.eventType === "ops.cleanup_ran"
+      && typeof event.payload?.requeuedStaleProcessingJobs === "number"
+      && event.payload.requeuedStaleProcessingJobs > 0
+    ) ?? null;
     const latestHeartbeat = latestCompleted ?? latestFailed ?? latestStarted;
 
     const queuedJobs = jobs
@@ -4382,6 +4663,35 @@ export class ClinicApiService {
       health = "critical";
     }
 
+    const recentEvents: WorkerRuntimeEvent[] = relevantEvents
+      .slice(0, 6)
+      .map((event) => {
+        let detail: string | null = null;
+        if (event.eventType === "worker.batch.completed" || event.eventType === "worker.batch.failed") {
+          const summary = parseWorkerBatchSummary(event.payload?.summary);
+          detail = summary
+            ? `${summary.succeeded} succeeded, ${summary.failed} failed out of ${summary.processed} processed`
+            : typeof event.payload?.message === "string"
+              ? event.payload.message
+              : null;
+        } else if (event.eventType === "worker.batch_run_requested") {
+          const summary = parseWorkerBatchSummary(event.payload?.summary);
+          detail = summary ? `Operator requested one batch: ${summary.succeeded}/${summary.processed} succeeded` : null;
+        } else if (event.eventType === "ops.cleanup_ran") {
+          const requeued = typeof event.payload?.requeuedStaleProcessingJobs === "number"
+            ? event.payload.requeuedStaleProcessingJobs
+            : 0;
+          detail = `Cleanup requeued ${requeued} stale processing job${requeued === 1 ? "" : "s"}.`;
+        } else if (event.eventType === "worker.started") {
+          detail = "Worker loop started.";
+        }
+        return {
+          eventType: event.eventType,
+          createdAt: event.createdAt,
+          detail
+        };
+      });
+
     return {
       checkedAt,
       health,
@@ -4397,6 +4707,9 @@ export class ClinicApiService {
       lastCompletedBatch: parseWorkerBatchSummary(latestCompleted?.payload?.summary),
       lastFailedBatchAt: latestFailed?.createdAt ?? null,
       lastFailedBatchMessage,
+      lastManualBatchRequestAt: latestManualBatchRequest?.createdAt ?? null,
+      lastStaleProcessingCleanupAt: latestCleanup?.createdAt ?? null,
+      recentEvents,
       backlog: {
         ...summary,
         oldestQueuedAt: oldestQueued?.scheduledAt ?? null,
@@ -4413,12 +4726,90 @@ export class ClinicApiService {
     return listRoleCapabilities();
   }
 
+  async listDeploymentPromotions(filters?: {
+    environmentKey?: string;
+    status?: string;
+    targetAuthMode?: string;
+  }): Promise<DeploymentPromotionRecord[]> {
+    return this.repository.listDeploymentPromotions(filters);
+  }
+
+  async createDeploymentPromotion(actor: ActorContext, input: unknown): Promise<DeploymentPromotionRecord> {
+    const command = deploymentPromotionCreateSchema.parse(input);
+    const created = await this.repository.createDeploymentPromotion(createDeploymentPromotionRecord({
+      ...command,
+      latestSmokeAt: command.latestSmokeAt ?? null,
+      rollbackVerifiedAt: command.rollbackVerifiedAt ?? null,
+      createdBy: actor.actorId
+    }));
+    await this.recordAudit(actor, "deployment.promotion_created", "deployment_promotion", created.id, {
+      environmentKey: created.environmentKey,
+      status: created.status,
+      targetAuthMode: created.targetAuthMode
+    });
+    return created;
+  }
+
+  async updateDeploymentPromotion(actor: ActorContext, promotionId: string, input: unknown): Promise<DeploymentPromotionRecord> {
+    const command = deploymentPromotionUpdateSchema.parse(input);
+    const record = await this.repository.getDeploymentPromotion(promotionId);
+    if (!record) {
+      notFound(`Deployment promotion not found: ${promotionId}`);
+    }
+
+    const updated = await this.repository.updateDeploymentPromotion(record.id, {
+      status: command.status ?? record.status,
+      targetAuthMode: command.targetAuthMode ?? record.targetAuthMode,
+      runtimeAgentsDisabled: command.runtimeAgentsDisabled ?? record.runtimeAgentsDisabled,
+      latestSmokeAt: command.latestSmokeAt !== undefined ? command.latestSmokeAt : record.latestSmokeAt,
+      rollbackVerifiedAt: command.rollbackVerifiedAt !== undefined ? command.rollbackVerifiedAt : record.rollbackVerifiedAt,
+      notes: command.notes !== undefined ? command.notes : record.notes,
+      updatedAt: new Date().toISOString()
+    });
+    await this.recordAudit(actor, "deployment.promotion_updated", "deployment_promotion", updated.id, {
+      status: updated.status,
+      targetAuthMode: updated.targetAuthMode
+    });
+    return updated;
+  }
+
+  async getDeployHardeningStatus(input?: {
+    currentAuthMode?: AuthMode;
+  }): Promise<DeployHardeningStatus> {
+    const [promotions, alerts] = await Promise.all([
+      this.repository.listDeploymentPromotions(),
+      this.listAuditEvents({ eventTypePrefix: "ops.alert_dispatched" })
+    ]);
+    const latestPromotion = promotions[0] ?? null;
+    const latestSmokeAt = latestIsoDate(promotions.map((record) => record.latestSmokeAt));
+    const latestRollbackVerificationAt = latestIsoDate(promotions.map((record) => record.rollbackVerifiedAt));
+    const latestAlertDispatchAt = alerts[0]?.createdAt ?? null;
+    const runtimeAgentsExplicitlyDisabled = this.options.runtimeAgentsConfigValue === "false";
+    const trustedProxyConfigured = Boolean(process.env.TRUSTED_PROXY_SHARED_SECRET);
+
+    return {
+      currentAuthMode: input?.currentAuthMode ?? this.options.authMode,
+      runtimeAgentsExplicitlyDisabled,
+      runtimeAgentsConfigValue: this.options.runtimeAgentsConfigValue ?? null,
+      trustedProxyConfigured,
+      trustedProxyReady: trustedProxyConfigured,
+      recommendedTargetAuthMode: "trusted_proxy",
+      latestPromotion,
+      latestAlertDispatchAt,
+      latestRollbackVerificationAt,
+      latestSmokeAt
+    };
+  }
+
   getRuntimeAgentStatus(): RuntimeAgentStatus {
     const enabled = Boolean(this.options.runtimeAgentsEnabled && this.options.openaiApiKey);
+    const explicitlyDisabled = this.options.runtimeAgentsConfigValue === "false";
     const reason = enabled
       ? null
-      : this.options.openaiApiKey
+      : explicitlyDisabled
         ? "Runtime agents are disabled by configuration."
+        : !this.options.runtimeAgentsEnabled
+          ? "Runtime agents are not enabled for this environment."
         : "OPENAI_API_KEY is not configured for runtime-agent execution.";
 
     return {
@@ -4694,6 +5085,30 @@ export class ClinicApiService {
       });
     }
 
+    if (!runtime.hardening.runtimeAgentsExplicitlyDisabled) {
+      pushAlert({
+        key: "runtime.runtime_agents_not_explicitly_frozen",
+        scope: "runtime",
+        severity: "warning",
+        title: "Runtime-agent freeze is not explicit",
+        detail: "Runtime agents are meant to stay shipped but disabled until a later eval rollout, and the deployment is not explicitly declaring that freeze.",
+        action: "Set RUNTIME_AGENTS_ENABLED=false in the deployed environment before enabling any later OpenAI key or agent rollout.",
+        count: null
+      });
+    }
+
+    if (runtime.hardening.latestPromotion && runtime.hardening.latestPromotion.status !== "completed") {
+      pushAlert({
+        key: "runtime.deployment_promotion_incomplete",
+        scope: "runtime",
+        severity: "info",
+        title: "Deployment promotion checklist is still in progress",
+        detail: `The latest deployment promotion record for ${runtime.hardening.latestPromotion.environmentKey} is ${runtime.hardening.latestPromotion.status}.`,
+        action: "Update the deployment promotion record when smoke, rollback verification, and auth-mode hardening checks are complete.",
+        count: null
+      });
+    }
+
     if (runtime.integrationMode === "live" && !runtime.microsoft.readyForLive) {
       pushAlert({
         key: "microsoft.live_not_ready",
@@ -4844,6 +5259,77 @@ export class ClinicApiService {
     };
   }
 
+  async dispatchCriticalOpsAlerts(actor: ActorContext, input?: {
+    cooldownMinutes?: number;
+  }): Promise<{
+    checkedAt: string;
+    cooldownMinutes: number;
+    criticalAlerts: number;
+    delivered: number;
+    skippedCooldown: number;
+    skippedUnavailable: number;
+    dispatchedKeys: string[];
+  }> {
+    const checkedAt = new Date().toISOString();
+    const cooldownMinutes = Math.max(5, input?.cooldownMinutes ?? 60);
+    const summary = await this.getOpsAlertSummary();
+    const criticalAlerts = summary.alerts.filter((alert) =>
+      alert.severity === "critical" && ["runtime", "microsoft", "worker"].includes(alert.scope)
+    );
+
+    const priorDispatches = await this.repository.listAuditEvents({
+      entityType: "ops_alert_dispatch"
+    });
+
+    let delivered = 0;
+    let skippedCooldown = 0;
+    let skippedUnavailable = 0;
+    const dispatchedKeys: string[] = [];
+
+    for (const alert of criticalAlerts) {
+      const lastDispatch = priorDispatches.find((event) =>
+        event.entityId === alert.key
+        && event.eventType === "ops.alert_dispatched"
+      );
+      const recentlyDelivered = lastDispatch
+        ? ageMinutes(checkedAt, lastDispatch.createdAt) !== null && (ageMinutes(checkedAt, lastDispatch.createdAt) ?? 0) < cooldownMinutes
+        : false;
+      if (recentlyDelivered) {
+        skippedCooldown += 1;
+        continue;
+      }
+
+      if (!this.options.pilotOps) {
+        skippedUnavailable += 1;
+        continue;
+      }
+
+      const result = await this.options.pilotOps.sendOfficeOpsNotification({
+        title: `[${alert.scope}] ${alert.title}`,
+        body: `${alert.detail}${alert.action ? `\n\nRecommended action: ${alert.action}` : ""}`
+      });
+
+      await this.recordAudit(actor, "ops.alert_dispatched", "ops_alert_dispatch", alert.key, {
+        scope: alert.scope,
+        severity: alert.severity,
+        messageId: result.messageId,
+        cooldownMinutes
+      });
+      delivered += 1;
+      dispatchedKeys.push(alert.key);
+    }
+
+    return {
+      checkedAt,
+      cooldownMinutes,
+      criticalAlerts: criticalAlerts.length,
+      delivered,
+      skippedCooldown,
+      skippedUnavailable,
+      dispatchedKeys
+    };
+  }
+
   async runOpsCleanup(actor: ActorContext, input: unknown): Promise<OpsCleanupResult> {
     const command = opsCleanupCommandSchema.parse(input);
     const now = new Date().toISOString();
@@ -4940,9 +5426,12 @@ export class ClinicApiService {
     publicAppOrigin: string | null;
     databaseReady: boolean;
   }): Promise<ApiRuntimeConfigStatus> {
-    const [worker, microsoft] = await Promise.all([
+    const [worker, microsoft, hardening] = await Promise.all([
       this.getWorkerJobSummary(),
-      this.getMicrosoftIntegrationStatus()
+      this.getMicrosoftIntegrationStatus(),
+      this.getDeployHardeningStatus({
+        currentAuthMode: this.options.authMode
+      })
     ]);
 
     const publicationMode: PublicationMode = microsoft.publicationMode;
@@ -4955,6 +5444,9 @@ export class ClinicApiService {
     }
     if (this.options.authMode !== "device_profiles") {
       blockingIssues.push("AUTH_MODE should be device_profiles for the first pilot.");
+    }
+    if (input.nodeEnv === "production" && !hardening.runtimeAgentsExplicitlyDisabled) {
+      blockingIssues.push("RUNTIME_AGENTS_ENABLED should be explicitly set to false until the eval rollout is approved.");
     }
     if (input.nodeEnv === "production" && publicationMode !== "local_stub" && !microsoft.readyForLive) {
       blockingIssues.push("Microsoft live publication is selected but has not passed validation.");
@@ -4986,6 +5478,7 @@ export class ClinicApiService {
       publicationMode,
       databaseReady: input.databaseReady,
       worker,
+      hardening,
       microsoft,
       pilotUsable,
       startupReady,
@@ -5199,6 +5692,7 @@ export class ClinicApiService {
       employeeId,
       employeeRole
     });
+    await this.materializeTrainingPlanRequirementsForEmployee(systemActor("hr_lead"), query.employeeId, query.employeeRole);
     const [requirements, completions, gapSummary] = await Promise.all([
       this.repository.listTrainingRequirements({
         employeeId: query.employeeId,
@@ -5210,13 +5704,188 @@ export class ClinicApiService {
       }),
       this.buildTrainingGapSummary(query.employeeId, query.employeeRole)
     ]);
+    const plans = await this.repository.listTrainingPlans({
+      employeeRole: query.employeeRole,
+      status: "active"
+    });
+    const applicablePlans = plans.filter((plan) => !plan.employeeId || plan.employeeId === query.employeeId);
+    const generatedRequirements = requirements.filter((requirement) => requirement.planId !== null);
+    const followUpActionIds = generatedRequirements
+      .map((requirement) => requirement.followUpActionItemId)
+      .filter((value): value is string => Boolean(value));
+    const followUpActions = await Promise.all(
+      followUpActionIds.map((actionItemId) => this.repository.getActionItem(actionItemId))
+    );
+    const upcomingRequirements = generatedRequirements.filter((requirement) =>
+      requirement.dueDate !== null
+      && requirement.dueDate >= new Date().toISOString()
+      && requirement.dueDate <= addDays(new Date().toISOString(), 30)
+    ).length;
+    const overdueRequirements = gapSummary.items.filter((item) =>
+      isTrainingGapOpen(item.status) && item.dueDate !== null && item.dueDate < new Date().toISOString()
+    ).length;
 
     return {
       employeeId: query.employeeId,
       employeeRole: query.employeeRole,
+      plans: applicablePlans,
       requirements,
       completions,
-      gapSummary
+      gapSummary,
+      planSummary: {
+        activePlans: applicablePlans.length,
+        generatedRequirements: generatedRequirements.length,
+        upcomingRequirements,
+        overdueRequirements,
+        openFollowUps: followUpActions.filter((item) => item && isOpenActionStatus(item.status)).length
+      }
+    };
+  }
+
+  async listTrainingPlans(filters?: {
+    employeeId?: string;
+    employeeRole?: string;
+    ownerRole?: string;
+    status?: string;
+  }): Promise<TrainingPlanRecord[]> {
+    return this.repository.listTrainingPlans(filters);
+  }
+
+  async createTrainingPlan(actor: ActorContext, input: unknown): Promise<TrainingPlanRecord> {
+    if (!["hr_lead", "medical_director"].includes(actor.role)) {
+      forbidden(`Role ${actor.role} cannot create training plans.`);
+    }
+
+    const command = trainingPlanCreateSchema.parse(input);
+    const created = await this.repository.createTrainingPlan(createTrainingPlanRecord({
+      ...command,
+      employeeId: command.employeeId ?? null,
+      validityDays: command.validityDays ?? null,
+      createdBy: actor.actorId
+    }));
+    await this.recordAudit(actor, "training.plan_created", "training_plan", created.id, {
+      employeeRole: created.employeeRole,
+      employeeId: created.employeeId,
+      cadenceDays: created.cadenceDays
+    });
+    if (created.employeeId) {
+      await this.materializeTrainingPlanRequirementsForEmployee(actor, created.employeeId, created.employeeRole);
+    }
+    return created;
+  }
+
+  async updateTrainingPlan(actor: ActorContext, trainingPlanId: string, input: unknown): Promise<TrainingPlanRecord> {
+    if (!["hr_lead", "medical_director"].includes(actor.role)) {
+      forbidden(`Role ${actor.role} cannot update training plans.`);
+    }
+
+    const command = trainingPlanUpdateSchema.parse(input);
+    const plan = await this.repository.getTrainingPlan(trainingPlanId);
+    if (!plan) {
+      notFound(`Training plan not found: ${trainingPlanId}`);
+    }
+
+    const updated = await this.repository.updateTrainingPlan(plan.id, {
+      status: command.status ?? plan.status,
+      cadenceDays: command.cadenceDays ?? plan.cadenceDays,
+      leadTimeDays: command.leadTimeDays ?? plan.leadTimeDays,
+      validityDays: command.validityDays !== undefined ? command.validityDays : plan.validityDays,
+      ownerRole: command.ownerRole ?? plan.ownerRole,
+      notes: command.notes !== undefined ? command.notes : plan.notes,
+      updatedAt: new Date().toISOString()
+    });
+    await this.recordAudit(actor, "training.plan_updated", "training_plan", updated.id, {
+      status: updated.status,
+      cadenceDays: updated.cadenceDays
+    });
+    if (updated.employeeId) {
+      await this.materializeTrainingPlanRequirementsForEmployee(actor, updated.employeeId, updated.employeeRole);
+    }
+    return updated;
+  }
+
+  async bootstrapTrainingPlans(actor: ActorContext, input?: unknown): Promise<{
+    created: TrainingPlanRecord[];
+    existing: TrainingPlanRecord[];
+  }> {
+    if (!["hr_lead", "medical_director"].includes(actor.role)) {
+      forbidden(`Role ${actor.role} cannot bootstrap training plans.`);
+    }
+
+    const command = z.object({
+      employeeRole: z.string().optional(),
+      employeeId: z.string().optional()
+    }).parse(input ?? {});
+    const defaults = [
+      {
+        employeeRole: "medical_assistant",
+        requirementType: "competency" as const,
+        title: "Room readiness competency refresh",
+        cadenceDays: 90,
+        leadTimeDays: 14,
+        validityDays: 90,
+        ownerRole: "hr_lead" as const,
+        notes: "Covers room turnover, stocking, and escalation readiness."
+      },
+      {
+        employeeRole: "front_desk",
+        requirementType: "training" as const,
+        title: "Front-desk closeout and escalation refresher",
+        cadenceDays: 180,
+        leadTimeDays: 21,
+        validityDays: 180,
+        ownerRole: "hr_lead" as const,
+        notes: "Covers closeout completeness, call-back escalation, and same-day follow-through."
+      },
+      {
+        employeeRole: "office_manager",
+        requirementType: "training" as const,
+        title: "Planner reconciliation and daily packet oversight",
+        cadenceDays: 180,
+        leadTimeDays: 21,
+        validityDays: 180,
+        ownerRole: "medical_director" as const,
+        notes: "Ensures the office-manager lead keeps the daily operating rhythm and Planner sync current."
+      }
+    ].filter((plan) => !command.employeeRole || plan.employeeRole === command.employeeRole);
+
+    const existingPlans = await this.repository.listTrainingPlans();
+    const created: TrainingPlanRecord[] = [];
+    const existing: TrainingPlanRecord[] = [];
+
+    for (const template of defaults) {
+      const match = existingPlans.find((plan) =>
+        plan.employeeRole === template.employeeRole
+        && plan.title === template.title
+        && plan.employeeId === (command.employeeId ?? null)
+      );
+      if (match) {
+        existing.push(match);
+        continue;
+      }
+      created.push(await this.repository.createTrainingPlan(createTrainingPlanRecord({
+        ...template,
+        employeeId: command.employeeId ?? null,
+        createdBy: actor.actorId
+      })));
+    }
+
+    if (created.length > 0) {
+      await this.recordAudit(actor, "training.plans_bootstrapped", "training_plan", created[0]!.id, {
+        createdCount: created.length,
+        existingCount: existing.length,
+        employeeRole: command.employeeRole ?? null,
+        employeeId: command.employeeId ?? null
+      });
+    }
+
+    if (command.employeeId && command.employeeRole) {
+      await this.materializeTrainingPlanRequirementsForEmployee(actor, command.employeeId, command.employeeRole);
+    }
+
+    return {
+      created,
+      existing
     };
   }
 
@@ -5227,6 +5896,8 @@ export class ClinicApiService {
     const command = trainingRequirementCreateSchema.parse(input);
     const requirement = createTrainingRequirement({
       ...command,
+      planId: command.planId ?? null,
+      sourceCycleKey: command.sourceCycleKey ?? null,
       createdBy: actor.actorId
     });
     const created = await this.repository.createTrainingRequirement(requirement);
@@ -5235,8 +5906,9 @@ export class ClinicApiService {
       employeeRole: created.employeeRole,
       requirementType: created.requirementType
     });
+    const reconciled = await this.reconcileRecurringTrainingRequirementFollowUp(actor, created, null);
     await this.reconcileTrainingFollowUpsForEmployee(actor, created.employeeId, created.employeeRole);
-    return created;
+    return reconciled;
   }
 
   async createTrainingCompletion(actor: ActorContext, input: unknown): Promise<TrainingCompletionRecord> {
@@ -5266,6 +5938,8 @@ export class ClinicApiService {
       employeeRole: created.employeeRole
     });
 
+    await this.reconcileRecurringTrainingRequirementFollowUp(actor, requirement, created);
+    await this.materializeTrainingPlanRequirementsForEmployee(actor, created.employeeId, created.employeeRole);
     await this.reconcileTrainingFollowUpsForEmployee(actor, created.employeeId, created.employeeRole);
     return created;
   }
@@ -5500,24 +6174,20 @@ export class ClinicApiService {
   private async buildOfficeOpsDashboard(targetDate: string): Promise<OfficeOpsDailyStatus> {
     const workflowRun = await this.findOfficeOpsWorkflowRun(targetDate);
     const closeoutDueAt = buildClinicDateTime(targetDate, 18, 0);
-    const [allDocuments, officeManagerItems, escalationItems, allJobs, checklistRun, checklistItems] = await Promise.all([
+    const [allDocuments, officeManagerItems, escalationItems, allJobs, rooms, checklistRuns] = await Promise.all([
       this.repository.listDocuments(),
       this.repository.listActionItems({ ownerRole: "office_manager" }),
       this.repository.listActionItems({ ownerRole: "medical_director" }),
       this.repository.listWorkerJobs(),
-      workflowRun
-        ? this.repository.listChecklistRuns({ workflowRunId: workflowRun.id }).then((runs) => runs[0] ?? null)
-        : Promise.resolve(null),
-      workflowRun
-        ? this.repository.listChecklistRuns({ workflowRunId: workflowRun.id }).then(async (runs) => {
-            const run = runs[0];
-            if (!run) {
-              return [];
-            }
-            return this.repository.listChecklistItems({ checklistRunId: run.id });
-          })
-        : Promise.resolve([])
+      this.getOfficeOpsRooms(),
+      workflowRun ? this.repository.listChecklistRuns({ workflowRunId: workflowRun.id }) : Promise.resolve([])
     ]);
+    const checklistItems = workflowRun
+      ? (await Promise.all(
+        checklistRuns.map((run) => this.repository.listChecklistItems({ checklistRunId: run.id }))
+      )).flat()
+      : [];
+    const checklistRun = checklistRuns[0] ?? null;
 
     const workflowDocuments = workflowRun
       ? allDocuments.filter((document) => document.workflowRunId === workflowRun.id)
@@ -5558,6 +6228,41 @@ export class ClinicApiService {
       syncErrors: [...routineItems, ...escalations].filter((item) => item.syncStatus === "sync_error").length,
       externallyCompleted: [...routineItems, ...escalations].filter((item) => item.syncStatus === "completed_external").length
     };
+    const roomSummaries: RoomReadinessSummary[] = rooms.map((room) => {
+      const run = checklistRuns.find((candidate) => candidate.roomId === room.id) ?? null;
+      const roomItems = run ? checklistItems.filter((item) => item.checklistRunId === run.id) : [];
+      const counts = {
+        totalItems: roomItems.length,
+        completedItems: roomItems.filter((item) => item.status === "complete").length,
+        blockedItems: roomItems.filter((item) => item.status === "blocked").length,
+        waivedItems: roomItems.filter((item) => item.status === "waived").length,
+        pendingItems: roomItems.filter((item) => item.status === "pending").length,
+        requiredRemaining: roomItems.filter((item) => item.required && !["complete", "waived"].includes(item.status)).length
+      };
+      const readinessStatus = room.status !== "active"
+        ? "inactive"
+        : workflowRun && run === null
+          ? "attention_needed"
+        : counts.blockedItems > 0
+          ? "blocked"
+          : counts.requiredRemaining > 0
+            ? "attention_needed"
+            : "ready";
+      return {
+        room,
+        checklistRun: run,
+        checklistItems: roomItems,
+        readinessStatus,
+        counts
+      };
+    });
+    const roomSummary = {
+      activeRooms: roomSummaries.filter((entry) => entry.room.status === "active").length,
+      readyRooms: roomSummaries.filter((entry) => entry.readinessStatus === "ready").length,
+      attentionNeededRooms: roomSummaries.filter((entry) => entry.readinessStatus === "attention_needed").length,
+      blockedRooms: roomSummaries.filter((entry) => entry.readinessStatus === "blocked").length,
+      inactiveRooms: roomSummaries.filter((entry) => entry.readinessStatus === "inactive").length
+    };
 
     return {
       targetDate,
@@ -5568,7 +6273,10 @@ export class ClinicApiService {
       dailyPacket,
       closeoutDocument,
       checklistRun,
+      checklistRuns,
       checklistItems,
+      rooms: roomSummaries,
+      roomSummary,
       issues,
       routineItems,
       escalations,
@@ -5581,6 +6289,23 @@ export class ClinicApiService {
         escalatedItems: [...issues, ...routineItems].filter((item) => item.escalationStatus === "escalated").length
       }
     };
+  }
+
+  private async getOfficeOpsRooms(): Promise<RoomRecord[]> {
+    const rooms = await this.repository.listRooms();
+    if (rooms.length > 0) {
+      return rooms;
+    }
+
+    return [
+      await this.repository.createRoom(createRoomRecord({
+        id: "clinic_core",
+        roomLabel: "Clinic Core",
+        roomType: "common",
+        checklistAreaLabel: "Clinic core",
+        createdBy: "clinic-os-system"
+      }))
+    ];
   }
 
   private async getOrCreateActiveOfficeOpsChecklistTemplate(actor: ActorContext): Promise<ChecklistTemplate> {
@@ -5601,42 +6326,204 @@ export class ClinicApiService {
     return this.repository.createChecklistTemplate(template);
   }
 
-  private async ensureChecklistRunForWorkflow(
+  private async ensureChecklistRunsForWorkflow(
     actor: ActorContext,
     workflow: WorkflowRun,
     targetDate: string
-  ): Promise<ChecklistRun> {
-    const existing = (await this.repository.listChecklistRuns({
+  ): Promise<ChecklistRun[]> {
+    const template = await this.getOrCreateActiveOfficeOpsChecklistTemplate(actor);
+    const rooms = (await this.getOfficeOpsRooms()).filter((room) => room.status === "active");
+    const existingRuns = await this.repository.listChecklistRuns({
       workflowRunId: workflow.id
-    })).find((run) => run.targetDate === targetDate);
-    if (existing) {
-      return existing;
+    });
+    const runs: ChecklistRun[] = [];
+
+    for (const room of rooms) {
+      const existing = existingRuns.find((run) => run.targetDate === targetDate && run.roomId === room.id);
+      if (existing) {
+        runs.push(existing);
+        continue;
+      }
+
+      const run = createChecklistRun({
+        templateId: template.id,
+        workflowRunId: workflow.id,
+        roomId: room.id,
+        targetDate
+      });
+      const createdRun = await this.repository.createChecklistRun(run);
+      await this.repository.createChecklistItems(template.items.map((item) =>
+        createChecklistItemRecord({
+          checklistRunId: createdRun.id,
+          templateItemId: item.id,
+          label: item.label,
+          areaLabel: room.checklistAreaLabel,
+          required: item.required
+        })
+      ));
+
+      await this.recordAudit(actor, "office_ops.checklist_created", "checklist_run", createdRun.id, {
+        workflowRunId: workflow.id,
+        targetDate,
+        roomId: room.id,
+        itemCount: template.items.length
+      });
+      runs.push(createdRun);
     }
 
-    const template = await this.getOrCreateActiveOfficeOpsChecklistTemplate(actor);
-    const run = createChecklistRun({
-      templateId: template.id,
-      workflowRunId: workflow.id,
-      targetDate
-    });
-    const createdRun = await this.repository.createChecklistRun(run);
-    await this.repository.createChecklistItems(template.items.map((item) =>
-      createChecklistItemRecord({
-        checklistRunId: createdRun.id,
-        templateItemId: item.id,
-        label: item.label,
-        areaLabel: item.areaLabel,
-        required: item.required
+    return runs;
+  }
+
+  private shouldMaterializeTrainingRequirement(
+    plan: TrainingPlanRecord,
+    latestRequirement: TrainingRequirement | null,
+    latestCompletion: TrainingCompletionRecord | null,
+    referenceDate: string
+  ): { shouldMaterialize: boolean; dueDate: string } {
+    const nextDueDate = latestCompletion
+      ? latestCompletion.validUntil ?? addDays(latestCompletion.completedAt, plan.cadenceDays)
+      : latestRequirement?.dueDate
+        ? latestRequirement.dueDate
+      : addDays(referenceDate, plan.leadTimeDays);
+    const leadWindowStartsAt = subtractDays(nextDueDate, plan.leadTimeDays);
+    return {
+      shouldMaterialize: latestRequirement === null && (latestCompletion === null || leadWindowStartsAt <= referenceDate),
+      dueDate: nextDueDate
+    };
+  }
+
+  private async reconcileRecurringTrainingRequirementFollowUp(
+    actor: ActorContext,
+    requirement: TrainingRequirement,
+    latestCompletion: TrainingCompletionRecord | null
+  ): Promise<TrainingRequirement> {
+    if (!requirement.planId) {
+      return requirement;
+    }
+
+    const now = new Date().toISOString();
+    const completionCoversRequirement = Boolean(
+      latestCompletion
+      && (!requirement.dueDate || latestCompletion.completedAt >= requirement.createdAt || (latestCompletion.validUntil ?? now) >= requirement.dueDate)
+      && (!latestCompletion.validUntil || latestCompletion.validUntil >= now)
+    );
+    const overdue = Boolean(requirement.dueDate && requirement.dueDate < now && !completionCoversRequirement);
+
+    if (overdue) {
+      const description = `Recurring training plan requirement is overdue for ${requirement.employeeRole} (${requirement.employeeId}).`;
+      if (requirement.followUpActionItemId) {
+        await this.updateActionItem(actor, requirement.followUpActionItemId, {
+          status: "open",
+          description,
+          resolutionNote: null,
+          dueDate: requirement.dueDate
+        });
+        return requirement;
+      }
+
+      const actionItem = await this.createActionItem(actor, {
+        kind: "review",
+        title: `Recurring training overdue: ${requirement.title}`,
+        description,
+        ownerRole: "hr_lead",
+        dueDate: requirement.dueDate ?? undefined
+      });
+      return this.repository.updateTrainingRequirement(requirement.id, {
+        followUpActionItemId: actionItem.id,
+        updatedAt: now
+      });
+    }
+
+    if (requirement.followUpActionItemId) {
+      const actionItem = await this.repository.getActionItem(requirement.followUpActionItemId);
+      if (actionItem && isOpenActionStatus(actionItem.status) && completionCoversRequirement) {
+        await this.applyActionItemUpdate(actor, actionItem, {
+          status: "done",
+          resolutionNote: "Recurring training plan requirement completed."
+        });
+      }
+    }
+
+    return requirement;
+  }
+
+  private async materializeTrainingPlanRequirementsForEmployee(
+    actor: ActorContext,
+    employeeId: string,
+    employeeRole: string,
+    referenceDate?: string
+  ): Promise<TrainingRequirement[]> {
+    const now = referenceDate ?? new Date().toISOString();
+    const [plans, requirements, completions] = await Promise.all([
+      this.repository.listTrainingPlans({
+        employeeRole,
+        status: "active"
+      }),
+      this.repository.listTrainingRequirements({
+        employeeId,
+        employeeRole
+      }),
+      this.repository.listTrainingCompletions({
+        employeeId,
+        employeeRole
       })
-    ));
+    ]);
 
-    await this.recordAudit(actor, "office_ops.checklist_created", "checklist_run", createdRun.id, {
-      workflowRunId: workflow.id,
-      targetDate,
-      itemCount: template.items.length
-    });
+    const applicablePlans = plans.filter((plan) => !plan.employeeId || plan.employeeId === employeeId);
+    const materialized: TrainingRequirement[] = [];
 
-    return createdRun;
+    for (const plan of applicablePlans) {
+      const planRequirements = requirements.filter((requirement) => requirement.planId === plan.id);
+      const openRequirement = planRequirements
+        .filter((requirement) => !completions.some((completion) => completion.requirementId === requirement.id))
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
+      const latestCompletion = completions
+        .filter((completion) => planRequirements.some((requirement) => requirement.id === completion.requirementId))
+        .sort((left, right) => right.completedAt.localeCompare(left.completedAt))[0] ?? null;
+      const next = this.shouldMaterializeTrainingRequirement(plan, openRequirement, latestCompletion, now);
+      const cycleKey = requirementCycleKey(plan.id, next.dueDate);
+      const matchingRequirement = planRequirements
+        .filter((requirement) => requirement.sourceCycleKey === cycleKey)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
+
+      if (next.shouldMaterialize && !matchingRequirement) {
+        const requirement = await this.repository.createTrainingRequirement(createTrainingRequirement({
+          employeeId,
+          employeeRole,
+          requirementType: plan.requirementType,
+          title: plan.title,
+          planId: plan.id,
+          sourceCycleKey: cycleKey,
+          dueDate: next.dueDate,
+          notes: plan.notes ?? `Generated from recurring ${plan.requirementType} plan.`,
+          createdBy: actor.actorId
+        }));
+        materialized.push(await this.reconcileRecurringTrainingRequirementFollowUp(actor, requirement, latestCompletion));
+        await this.repository.updateTrainingPlan(plan.id, {
+          lastMaterializedAt: now,
+          updatedAt: now
+        });
+        await this.recordAudit(actor, "training.plan_requirement_materialized", "training_plan", plan.id, {
+          employeeId,
+          employeeRole,
+          requirementId: requirement.id,
+          dueDate: requirement.dueDate
+        });
+        continue;
+      }
+
+      if (matchingRequirement) {
+        const updatedRequirement = matchingRequirement.dueDate !== next.dueDate
+          ? await this.repository.updateTrainingRequirement(matchingRequirement.id, {
+              dueDate: next.dueDate,
+              updatedAt: now
+            })
+          : matchingRequirement;
+        materialized.push(await this.reconcileRecurringTrainingRequirementFollowUp(actor, updatedRequirement, latestCompletion));
+      }
+    }
+
+    return materialized;
   }
 
   private async buildTrainingGapSummary(
@@ -5909,6 +6796,7 @@ export class ClinicApiService {
       overview,
       incidents,
       capas,
+      evidenceGaps,
       workerSummary,
       standards,
       binders,
@@ -5919,6 +6807,7 @@ export class ClinicApiService {
       this.getOverviewStats(),
       this.repository.listIncidents(),
       this.repository.listCapas(),
+      this.repository.listEvidenceGaps(),
       this.getWorkerJobSummary(),
       this.repository.listStandardMappings(),
       this.repository.listEvidenceBinders(),
@@ -5929,6 +6818,7 @@ export class ClinicApiService {
 
     const openIncidents = incidents.filter((incident) => incident.status !== "closed");
     const openCapas = capas.filter((capa) => capa.status !== "closed");
+    const openEvidenceGaps = evidenceGaps.filter((gap) => !["verified", "archived"].includes(gap.status));
     const overdueStandardsReviews = standards.filter((standard) =>
       standard.nextReviewDueAt !== null && standard.nextReviewDueAt < now
     );
@@ -5944,12 +6834,16 @@ export class ClinicApiService {
     const practiceAgreementsExpiringSoon = practiceAgreements.filter((agreement) =>
       agreement.expiresAt !== null && agreement.expiresAt <= practiceAgreementExpiryThreshold
     );
+    const standardsMissingCurrentEvidence = standards.filter((standard) => standard.evidenceDocumentIds.length === 0);
 
     return {
       openIncidents: openIncidents.length,
       criticalIncidents: openIncidents.filter((incident) => incident.severity === "critical").length,
       openCapas: openCapas.length,
       overdueCapas: openCapas.filter((capa) => capa.dueDate < now).length,
+      openEvidenceGaps: openEvidenceGaps.length,
+      criticalEvidenceGaps: openEvidenceGaps.filter((gap) => gap.severity === "critical").length,
+      overdueEvidenceGaps: openEvidenceGaps.filter((gap) => gap.dueDate !== null && gap.dueDate < now).length,
       overdueActionItems: overview.overdueActionItems,
       pendingApprovals: overview.openApprovals,
       overdueScorecardReviews: overview.overdueScorecardReviews,
@@ -5957,12 +6851,73 @@ export class ClinicApiService {
       standardsAttentionNeeded: standards.filter((standard) => standard.status === "attention_needed").length,
       standardsReviewPending: standards.filter((standard) => standard.status === "review_pending").length,
       overdueStandardsReviews: overdueStandardsReviews.length,
+      standardsMissingCurrentEvidence: standardsMissingCurrentEvidence.length,
       evidenceBindersDraft: binders.filter((binder) => binder.status === "draft").length,
       evidenceBindersInReview: evidenceBindersInReview.length,
       controlledSubstancePacketsNeedingReview: controlledSubstancePacketsNeedingReview.length,
       controlledSubstancePacketsPublished: controlledSubstancePackets.filter((packet) => packet.status === "published").length,
       telehealthPacketsNeedingReview: telehealthPacketsNeedingReview.length,
       practiceAgreementsExpiringSoon: practiceAgreementsExpiringSoon.length
+    };
+  }
+
+  private async buildQapiTrendSummary(): Promise<QapiTrendSummary> {
+    const generatedAt = new Date().toISOString();
+    const [
+      incidents,
+      capas,
+      evidenceGaps,
+      standards,
+      binders
+    ] = await Promise.all([
+      this.repository.listIncidents(),
+      this.repository.listCapas(),
+      this.repository.listEvidenceGaps(),
+      this.repository.listStandardMappings(),
+      this.repository.listEvidenceBinders()
+    ]);
+
+    const periods = Array.from({ length: 6 }, (_value, index) => {
+      const date = new Date();
+      date.setUTCMonth(date.getUTCMonth() - (5 - index));
+      const periodStart = startOfMonth(date.toISOString());
+      const periodEnd = endOfMonth(date.toISOString());
+      const periodLabel = new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        year: "numeric",
+        timeZone: "UTC"
+      }).format(new Date(periodStart));
+
+      const within = (value: string | null | undefined): boolean =>
+        Boolean(value && value >= periodStart && value <= periodEnd);
+
+      return {
+        periodLabel,
+        periodStart,
+        periodEnd,
+        incidentsOpened: incidents.filter((record) => within(record.createdAt)).length,
+        incidentsClosed: incidents.filter((record) => within(record.closedAt)).length,
+        capasOpened: capas.filter((record) => within(record.createdAt)).length,
+        capasClosed: capas.filter((record) => within(record.closedAt)).length,
+        evidenceGapsOpened: evidenceGaps.filter((record) => within(record.createdAt)).length,
+        evidenceGapsVerified: evidenceGaps.filter((record) => within(record.verifiedAt)).length,
+        overdueStandardsReviews: standards.filter((record) =>
+          record.nextReviewDueAt !== null
+          && record.nextReviewDueAt <= periodEnd
+          && (record.lastReviewedAt === null || record.lastReviewedAt < record.nextReviewDueAt)
+        ).length,
+        evidenceBindersDraft: binders.filter((record) => record.status === "draft" && within(record.updatedAt)).length,
+        evidenceBindersInReview: binders.filter((record) =>
+          ["approval_pending", "approved", "publish_pending"].includes(record.status)
+          && within(record.updatedAt)
+        ).length,
+        evidenceBindersPublished: binders.filter((record) => record.publishedAt !== null && within(record.publishedAt)).length
+      };
+    });
+
+    return {
+      generatedAt,
+      periods
     };
   }
 
@@ -5987,6 +6942,7 @@ export class ClinicApiService {
   }): Promise<RevenueDashboardSummary> {
     const serviceLineId = input?.serviceLineId;
     const now = new Date().toISOString();
+    const dueSoonThreshold = addDays(now, 30);
     const [payerIssues, pricingGovernance, revenueReviews, serviceLines, publicAssets] = await Promise.all([
       this.repository.listPayerIssues(serviceLineId ? { serviceLineId } : undefined),
       this.repository.listPricingGovernance(serviceLineId ? { serviceLineId } : undefined),
@@ -6004,6 +6960,14 @@ export class ClinicApiService {
     const activePricing = pricingGovernance.filter((record) => ["approval_pending", "approved", "publish_pending", "published"].includes(record.status));
     const pricingPendingApproval = pricingGovernance.filter((record) => ["approval_pending", "publish_pending"].includes(record.status));
     const pricingAttentionNeeded = pricingGovernance.filter((record) => record.status === "attention_needed");
+    const pricingReviewDueSoon = pricingGovernance.filter((record) =>
+      record.reviewDueAt !== null
+      && record.reviewDueAt >= now
+      && record.reviewDueAt <= dueSoonThreshold
+    );
+    const pricingReviewOverdue = pricingGovernance.filter((record) =>
+      record.reviewDueAt !== null && record.reviewDueAt < now
+    );
     const overdueRevenueReviews = revenueReviews.filter((review) =>
       !["completed", "archived"].includes(review.status)
       && Boolean(review.targetReviewDate && review.targetReviewDate < now)
@@ -6020,6 +6984,69 @@ export class ClinicApiService {
     const publicAssetsAtRisk = publishedAssets.filter((asset) =>
       scopedServiceLines.some((serviceLine) => serviceLine.id === asset.serviceLine && !serviceLine.hasClaimsInventory)
     );
+    const payerIssueAging = {
+      dueSoon: openPayerIssues.filter((issue) => issue.dueDate !== null && issue.dueDate >= now && issue.dueDate <= dueSoonThreshold).length,
+      overdue: overduePayerIssues.length,
+      olderThanThirtyDays: openPayerIssues.filter((issue) => issue.createdAt <= subtractDays(now, 30)).length,
+      escalated: escalatedPayerIssues.length
+    };
+    const pricingReviewBuckets = {
+      reviewDueSoon: pricingReviewDueSoon.length,
+      overdue: pricingReviewOverdue.length,
+      pendingApproval: pricingPendingApproval.length,
+      attentionNeeded: pricingAttentionNeeded.length
+    };
+    const serviceLineRisks = scopedServiceLines.map((serviceLine) => {
+      const latestPricing = pricingGovernance.find((record) => record.serviceLineId === serviceLine.id) ?? null;
+      const latestReview = revenueReviews.find((review) => review.serviceLineId === serviceLine.id) ?? null;
+      const serviceLinePublishedAssets = publishedAssets.filter((asset) => asset.serviceLine === serviceLine.id);
+      const publishedPack = serviceLine.governanceStatus === "published";
+      return {
+        serviceLineId: serviceLine.id,
+        publishedPack,
+        latestPricingGovernanceStatus: latestPricing?.status ?? null,
+        latestRevenueReviewStatus: latestReview?.status ?? null,
+        publicAssetsAtRisk: serviceLinePublishedAssets.length > 0 && !serviceLine.hasClaimsInventory ? serviceLinePublishedAssets.length : 0,
+        weakClaimsGovernance: !serviceLine.hasClaimsInventory && serviceLinePublishedAssets.length > 0,
+        missingPricingGovernance: publishedPack && !activePricing.some((record) => record.serviceLineId === serviceLine.id)
+      };
+    });
+    const trends = Array.from({ length: 6 }, (_value, index) => {
+      const date = new Date();
+      date.setUTCMonth(date.getUTCMonth() - (5 - index));
+      const periodStart = startOfMonth(date.toISOString());
+      const periodEnd = endOfMonth(date.toISOString());
+      const periodLabel = new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        year: "numeric",
+        timeZone: "UTC"
+      }).format(new Date(periodStart));
+      return {
+        periodLabel,
+        periodStart,
+        periodEnd,
+        openPayerIssues: payerIssues.filter((issue) =>
+          issue.createdAt <= periodEnd
+          && (issue.closedAt === null || issue.closedAt > periodEnd)
+          && (issue.resolvedAt === null || issue.resolvedAt > periodEnd)
+        ).length,
+        escalatedPayerIssues: payerIssues.filter((issue) =>
+          issue.status === "escalated"
+          && issue.createdAt <= periodEnd
+          && (issue.closedAt === null || issue.closedAt > periodEnd)
+        ).length,
+        pricingPendingApproval: pricingGovernance.filter((record) =>
+          ["approval_pending", "publish_pending"].includes(record.status)
+          && record.createdAt <= periodEnd
+          && (record.publishedAt === null || record.publishedAt > periodEnd)
+        ).length,
+        overdueRevenueReviews: revenueReviews.filter((review) =>
+          !["completed", "archived"].includes(review.status)
+          && review.targetReviewDate !== null
+          && review.targetReviewDate <= periodEnd
+        ).length
+      };
+    });
 
     return {
       openPayerIssues: openPayerIssues.length,
@@ -6031,6 +7058,10 @@ export class ClinicApiService {
       serviceLinesMissingPricingGovernance: serviceLinesMissingPricingGovernance.length,
       serviceLinesWeakClaimsGovernance: serviceLinesWeakClaimsGovernance.length,
       publicAssetsAtRisk: publicAssetsAtRisk.length,
+      payerIssueAging,
+      pricingReviewBuckets,
+      trends,
+      serviceLineRisks,
       attentionItems: [
         ...escalatedPayerIssues.slice(0, 3).map((issue) => `Escalated payer issue: ${issue.title}`),
         ...pricingAttentionNeeded.slice(0, 3).map((record) => `Pricing governance needs attention: ${record.title}`),
@@ -6211,12 +7242,24 @@ export class ClinicApiService {
     const summary = await this.buildRevenueDashboardSummary({
       serviceLineId: committee.serviceLine ?? undefined
     });
+    const payerIssues = await this.repository.listPayerIssues(
+      committee.serviceLine ? { serviceLineId: committee.serviceLine, status: "escalated" } : { status: "escalated" }
+    );
+    const pricingGovernance = await this.repository.listPricingGovernance(
+      committee.serviceLine ? { serviceLineId: committee.serviceLine } : undefined
+    );
     const reviews = await this.repository.listRevenueReviews({
       linkedCommitteeId: committee.id
     });
     const relevantReviews = reviews
       .filter((review) => !committee.serviceLine || review.serviceLineId === committee.serviceLine)
       .slice(0, 3);
+    const agingPricingItems = pricingGovernance
+      .filter((record) => record.reviewDueAt !== null || ["approval_pending", "publish_pending", "attention_needed"].includes(record.status))
+      .slice(0, 4);
+    const serviceLineRiskLines = summary.serviceLineRisks
+      .filter((risk) => risk.missingPricingGovernance || risk.weakClaimsGovernance || risk.publicAssetsAtRisk > 0)
+      .slice(0, 4);
 
     return [
       "## Revenue / Commercial Snapshot",
@@ -6234,6 +7277,27 @@ export class ClinicApiService {
       ...(summary.attentionItems.length > 0
         ? summary.attentionItems.map((item) => `- ${item}`)
         : ["- No active commercial attention items."]),
+      "",
+      "### Top escalated payer issues",
+      ...(payerIssues.length > 0
+        ? payerIssues.slice(0, 4).map((issue) =>
+            `- ${issue.title}${issue.dueDate ? ` (due ${issue.dueDate.slice(0, 10)})` : ""}`
+          )
+        : ["- No escalated payer issues right now."]),
+      "",
+      "### Aging pricing-governance items",
+      ...(agingPricingItems.length > 0
+        ? agingPricingItems.map((record) =>
+            `- ${record.title} (${record.status})${record.reviewDueAt ? ` review due ${record.reviewDueAt.slice(0, 10)}` : ""}`
+          )
+        : ["- No aging pricing-governance items right now."]),
+      "",
+      "### Service-line commercial risks",
+      ...(serviceLineRiskLines.length > 0
+        ? serviceLineRiskLines.map((risk) =>
+            `- ${risk.serviceLineId.replaceAll("_", " ")}: missing pricing=${risk.missingPricingGovernance ? "yes" : "no"}, weak claims=${risk.weakClaimsGovernance ? "yes" : "no"}, public assets at risk=${risk.publicAssetsAtRisk}`
+          )
+        : ["- No current service-line risk flags."]),
       "",
       "### Recent revenue reviews",
       ...(relevantReviews.length > 0
@@ -6648,7 +7712,197 @@ export class ClinicApiService {
       });
     }
 
+    await this.syncEvidenceGapSignalsFromBinder(systemActor(), updatedBinder);
+
     return updatedBinder;
+  }
+
+  private async assertEvidenceGapLinks(input: {
+    standardId?: string | null;
+    binderId?: string | null;
+    committeeMeetingId?: string | null;
+    serviceLineId?: string | null;
+  }): Promise<void> {
+    if (input.standardId) {
+      const standard = await this.repository.getStandardMapping(input.standardId);
+      if (!standard) {
+        notFound(`Standard mapping not found: ${input.standardId}`);
+      }
+    }
+    if (input.binderId) {
+      const binder = await this.repository.getEvidenceBinder(input.binderId);
+      if (!binder) {
+        notFound(`Evidence binder not found: ${input.binderId}`);
+      }
+    }
+    if (input.committeeMeetingId) {
+      const meeting = await this.repository.getCommitteeMeeting(input.committeeMeetingId);
+      if (!meeting) {
+        notFound(`Committee meeting not found: ${input.committeeMeetingId}`);
+      }
+    }
+    if (input.serviceLineId) {
+      const serviceLine = await this.repository.getServiceLine(input.serviceLineId);
+      if (!serviceLine) {
+        notFound(`Service line not found: ${input.serviceLineId}`);
+      }
+    }
+  }
+
+  private async ensureEvidenceGapActionItem(actor: ActorContext, gap: EvidenceGapRecord): Promise<EvidenceGapRecord> {
+    const title = `Evidence gap: ${gap.title}`;
+    const description = `${gap.summary}${gap.resolutionSummary ? `\n\nResolution context: ${gap.resolutionSummary}` : ""}`;
+    if (gap.actionItemId) {
+      await this.updateActionItem(actor, gap.actionItemId, {
+        status: "open",
+        description,
+        dueDate: gap.dueDate ?? undefined,
+        resolutionNote: null
+      });
+      return gap;
+    }
+
+    const actionItem = await this.createActionItem(actor, {
+      kind: "review",
+      title,
+      description,
+      ownerRole: gap.ownerRole,
+      dueDate: gap.dueDate ?? undefined
+    });
+
+    return this.repository.updateEvidenceGap(gap.id, {
+      actionItemId: actionItem.id,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  private async createOrRefreshEvidenceGap(actor: ActorContext, input: {
+    title: string;
+    severity: EvidenceGapRecord["severity"];
+    ownerRole: EvidenceGapRecord["ownerRole"];
+    summary: string;
+    standardId?: string | null;
+    binderId?: string | null;
+    committeeMeetingId?: string | null;
+    serviceLineId?: ServiceLineRecord["id"] | null;
+    dueDate?: string | null;
+    resolutionSummary?: string | null;
+    escalateToActionItem?: boolean;
+  }): Promise<{ record: EvidenceGapRecord; created: boolean }> {
+    const normalizedGapKey = normalizeEvidenceGapKey({
+      title: input.title,
+      standardId: input.standardId ?? null,
+      binderId: input.binderId ?? null,
+      committeeMeetingId: input.committeeMeetingId ?? null,
+      serviceLineId: input.serviceLineId ?? null
+    });
+    const existing = (await this.repository.listEvidenceGaps({
+      normalizedGapKey,
+      standardId: input.standardId ?? undefined,
+      binderId: input.binderId ?? undefined,
+      committeeMeetingId: input.committeeMeetingId ?? undefined,
+      serviceLineId: input.serviceLineId ?? undefined
+    })).find((gap) => !["verified", "archived"].includes(gap.status));
+
+    const updatedAt = new Date().toISOString();
+    if (existing) {
+      let record = await this.repository.updateEvidenceGap(existing.id, {
+        title: input.title,
+        normalizedGapKey,
+        severity: input.severity,
+        ownerRole: input.ownerRole,
+        summary: input.summary,
+        resolutionSummary: input.resolutionSummary ?? existing.resolutionSummary,
+        dueDate: input.dueDate ?? existing.dueDate,
+        updatedAt
+      });
+      if (input.escalateToActionItem) {
+        record = await this.ensureEvidenceGapActionItem(actor, record);
+      }
+      await this.recordAudit(actor, "evidence_gap.refreshed", "evidence_gap", record.id, {
+        normalizedGapKey,
+        actionItemId: record.actionItemId
+      });
+      return { record, created: false };
+    }
+
+    let record = await this.repository.createEvidenceGap(createEvidenceGapRecord({
+      title: input.title,
+      severity: input.severity,
+      ownerRole: input.ownerRole,
+      summary: input.summary,
+      standardId: input.standardId ?? null,
+      binderId: input.binderId ?? null,
+      committeeMeetingId: input.committeeMeetingId ?? null,
+      serviceLineId: input.serviceLineId ?? null,
+      dueDate: input.dueDate ?? null,
+      resolutionSummary: input.resolutionSummary ?? null,
+      createdBy: actor.actorId
+    }));
+    if (input.escalateToActionItem) {
+      record = await this.ensureEvidenceGapActionItem(actor, record);
+    }
+    await this.recordAudit(actor, "evidence_gap.created", "evidence_gap", record.id, {
+      normalizedGapKey,
+      actionItemId: record.actionItemId
+    });
+    return { record, created: true };
+  }
+
+  private async syncEvidenceGapSignalsFromStandard(actor: ActorContext, standard: StandardMappingRecord): Promise<void> {
+    const now = new Date().toISOString();
+    if (standard.status === "attention_needed") {
+      await this.createOrRefreshEvidenceGap(actor, {
+        title: `${standard.standardCode} evidence remediation`,
+        severity: "high",
+        ownerRole: standard.ownerRole,
+        summary: standard.notes
+          ?? `${standard.standardCode} currently needs evidence remediation before it should be treated as survey-ready.`,
+        standardId: standard.id,
+        dueDate: standard.nextReviewDueAt ?? addDays(now, 14)
+      });
+    }
+
+    if (standard.nextReviewDueAt !== null && standard.nextReviewDueAt < now) {
+      await this.createOrRefreshEvidenceGap(actor, {
+        title: `${standard.standardCode} review overdue`,
+        severity: "medium",
+        ownerRole: standard.ownerRole,
+        summary: `${standard.standardCode} is overdue for review and needs refreshed evidence coverage.`,
+        standardId: standard.id,
+        dueDate: standard.nextReviewDueAt
+      });
+    }
+  }
+
+  private async syncEvidenceGapSignalsFromBinder(actor: ActorContext, binder: EvidenceBinderRecord): Promise<void> {
+    const linkedStandards = await Promise.all(
+      binder.standardIds.map((standardId) => this.repository.getStandardMapping(standardId))
+    );
+    const availableStandards = linkedStandards.filter(Boolean) as StandardMappingRecord[];
+
+    if (binder.openGapSummary.trim().length > 0) {
+      await this.createOrRefreshEvidenceGap(actor, {
+        title: `${binder.title} remediation items`,
+        severity: binder.status === "published" ? "high" : "medium",
+        ownerRole: binder.ownerRole,
+        summary: binder.openGapSummary,
+        binderId: binder.id,
+        dueDate: addDays(new Date().toISOString(), 14)
+      });
+    }
+
+    for (const standard of availableStandards.filter((record) => record.evidenceDocumentIds.length === 0)) {
+      await this.createOrRefreshEvidenceGap(actor, {
+        title: `${standard.standardCode} current evidence missing`,
+        severity: "high",
+        ownerRole: standard.ownerRole,
+        summary: `${standard.standardCode} is linked to ${binder.title} but still lacks a current published evidence artifact.`,
+        standardId: standard.id,
+        binderId: binder.id,
+        dueDate: standard.nextReviewDueAt ?? addDays(new Date().toISOString(), 14)
+      });
+    }
   }
 
   private async syncIncidentSideEffects(actor: ActorContext, incident: IncidentRecord): Promise<void> {

@@ -204,6 +204,8 @@ function summarize(health) {
     health: health.health,
     lastHeartbeatAt: health.lastHeartbeatAt,
     lastCompletedBatchAt: health.lastCompletedBatchAt,
+    lastManualBatchRequestAt: health.lastManualBatchRequestAt,
+    lastStaleProcessingCleanupAt: health.lastStaleProcessingCleanupAt,
     oldestQueuedMinutes: health.backlog.oldestQueuedMinutes,
     oldestProcessingMinutes: health.backlog.oldestProcessingMinutes,
     queueCounts: {
@@ -214,6 +216,7 @@ function summarize(health) {
       succeeded: health.backlog.succeeded
     },
     thresholds: health.thresholds,
+    recentEvents: health.recentEvents,
     recommendation: buildRecommendation(health)
   };
 }

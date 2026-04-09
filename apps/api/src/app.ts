@@ -89,6 +89,7 @@ export function buildApp(options?: {
         authMode,
         integrationMode: env.microsoft.integrationMode,
         openaiApiKey: env.openaiApiKey,
+        runtimeAgentsConfigValue: env.runtimeAgentsConfigValue,
         runtimeAgentsEnabled: env.runtimeAgentsEnabled,
         pilotOps: microsoftPilotOps,
         microsoftPreflight: buildMicrosoftPreflightService({

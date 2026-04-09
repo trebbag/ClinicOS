@@ -8,6 +8,12 @@ export async function registerCommitteeRoutes(app: FastifyInstance): Promise<voi
     return app.clinicService.getCommitteeQapiDashboardSummary();
   });
 
+  app.get("/qapi/trends", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "committees.view");
+    return app.clinicService.getQapiTrendSummary();
+  });
+
   app.get("/committees", async (request) => {
     const actor = actorFromRequest(request);
     requireCapability(actor, "committees.view");

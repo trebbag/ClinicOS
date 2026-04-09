@@ -443,6 +443,35 @@ model EvidenceBinder {
   @@index([sourceAuthority, status])
 }
 
+model EvidenceGap {
+  id                String   @id
+  title             String
+  normalizedGapKey  String
+  status            String
+  severity          String
+  ownerRole         String
+  summary           String
+  resolutionSummary String?
+  standardId        String?
+  binderId          String?
+  committeeMeetingId String?
+  serviceLineId     String?
+  actionItemId      String?
+  dueDate           DateTime?
+  createdBy         String
+  createdAt         DateTime
+  updatedAt         DateTime
+  verifiedAt        DateTime?
+  archivedAt        DateTime?
+
+  @@index([status, severity])
+  @@index([ownerRole, status])
+  @@index([standardId, status])
+  @@index([binderId, status])
+  @@index([normalizedGapKey])
+  @@index([dueDate])
+}
+
 model DelegationRule {
   id                         String   @id
   serviceLineId              String
@@ -584,6 +613,20 @@ model ActionItem {
   @@index([plannerTaskId])
 }
 
+model RoomRecord {
+  id                 String   @id
+  roomLabel          String
+  roomType           String
+  status             String
+  checklistAreaLabel String
+  notes              String?
+  createdBy          String
+  createdAt          DateTime
+  updatedAt          DateTime
+
+  @@index([status, roomType])
+}
+
 model ScorecardReviewRecord {
   id                          String   @id
   workflowRunId               String
@@ -633,12 +676,14 @@ model ChecklistRun {
   id            String   @id
   templateId    String
   workflowRunId String
+  roomId        String?
   targetDate    DateTime
   createdAt     DateTime
   updatedAt     DateTime
 
   @@index([workflowRunId, targetDate])
   @@index([templateId])
+  @@index([roomId, targetDate])
 }
 
 model ChecklistItemRecord {
@@ -665,6 +710,9 @@ model TrainingRequirement {
   employeeRole       String
   requirementType    String
   title              String
+  planId             String?
+  sourceCycleKey     String?
+  followUpActionItemId String?
   dueDate            DateTime?
   notes              String?
   lastReminderSentAt DateTime?
@@ -673,6 +721,30 @@ model TrainingRequirement {
   updatedAt          DateTime
 
   @@index([employeeId, employeeRole, requirementType])
+  @@index([planId, employeeId])
+  @@index([followUpActionItemId])
+}
+
+model TrainingPlan {
+  id                 String   @id
+  employeeRole       String
+  employeeId         String?
+  requirementType    String
+  title              String
+  cadenceDays        Int
+  leadTimeDays       Int
+  validityDays       Int?
+  ownerRole          String
+  status             String
+  notes              String?
+  lastMaterializedAt DateTime?
+  createdBy          String
+  createdAt          DateTime
+  updatedAt          DateTime
+
+  @@index([employeeRole, status])
+  @@index([employeeId, status])
+  @@index([ownerRole, status])
 }
 
 model TrainingCompletionRecord {
@@ -689,6 +761,22 @@ model TrainingCompletionRecord {
 
   @@index([requirementId, completedAt])
   @@index([employeeId, employeeRole, completedAt])
+}
+
+model DeploymentPromotion {
+  id                    String   @id
+  environmentKey        String
+  status                String
+  targetAuthMode        String
+  runtimeAgentsDisabled Boolean
+  latestSmokeAt         DateTime?
+  rollbackVerifiedAt    DateTime?
+  notes                 String?
+  createdBy             String
+  createdAt             DateTime
+  updatedAt             DateTime
+
+  @@index([environmentKey, status])
 }
 
 model WorkerJobRecord {

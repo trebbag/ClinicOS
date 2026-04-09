@@ -28,6 +28,36 @@ type RevenueSummary = {
   serviceLinesMissingPricingGovernance: number;
   serviceLinesWeakClaimsGovernance: number;
   publicAssetsAtRisk: number;
+  payerIssueAging?: {
+    dueSoon: number;
+    overdue: number;
+    olderThanThirtyDays: number;
+    escalated: number;
+  };
+  pricingReviewBuckets?: {
+    reviewDueSoon: number;
+    overdue: number;
+    pendingApproval: number;
+    attentionNeeded: number;
+  };
+  trends?: Array<{
+    periodLabel: string;
+    periodStart: string;
+    periodEnd: string;
+    openPayerIssues: number;
+    escalatedPayerIssues: number;
+    pricingPendingApproval: number;
+    overdueRevenueReviews: number;
+  }>;
+  serviceLineRisks?: Array<{
+    serviceLineId: ServiceLineId;
+    publishedPack: boolean;
+    latestPricingGovernanceStatus: PricingGovernanceRecord["status"] | null;
+    latestRevenueReviewStatus: RevenueReviewRecord["status"] | null;
+    publicAssetsAtRisk: number;
+    weakClaimsGovernance: boolean;
+    missingPricingGovernance: boolean;
+  }>;
   attentionItems: string[];
 };
 
@@ -348,6 +378,22 @@ export default function RevenuePage(): JSX.Element {
               <div className="card"><div className="muted">Weak claims governance</div><strong>{summary.serviceLinesWeakClaimsGovernance}</strong></div>
               <div className="card"><div className="muted">Public assets at risk</div><strong>{summary.publicAssetsAtRisk}</strong></div>
             </div>
+            {summary.payerIssueAging ? (
+              <div className="grid cols-4">
+                <div className="card"><div className="muted">Payer issues due soon</div><strong>{summary.payerIssueAging.dueSoon}</strong></div>
+                <div className="card"><div className="muted">Payer issues overdue</div><strong>{summary.payerIssueAging.overdue}</strong></div>
+                <div className="card"><div className="muted">Older than 30 days</div><strong>{summary.payerIssueAging.olderThanThirtyDays}</strong></div>
+                <div className="card"><div className="muted">Escalated issues</div><strong>{summary.payerIssueAging.escalated}</strong></div>
+              </div>
+            ) : null}
+            {summary.pricingReviewBuckets ? (
+              <div className="grid cols-4">
+                <div className="card"><div className="muted">Pricing due soon</div><strong>{summary.pricingReviewBuckets.reviewDueSoon}</strong></div>
+                <div className="card"><div className="muted">Pricing overdue</div><strong>{summary.pricingReviewBuckets.overdue}</strong></div>
+                <div className="card"><div className="muted">Pending approval</div><strong>{summary.pricingReviewBuckets.pendingApproval}</strong></div>
+                <div className="card"><div className="muted">Attention needed</div><strong>{summary.pricingReviewBuckets.attentionNeeded}</strong></div>
+              </div>
+            ) : null}
             <div className="stack">
               <strong>Attention items</strong>
               {summary.attentionItems.length > 0 ? (
@@ -360,6 +406,46 @@ export default function RevenuePage(): JSX.Element {
                 <p className="muted">No active commercial attention items right now.</p>
               )}
             </div>
+            {summary.trends?.length ? (
+              <div className="table">
+                <div className="table-row table-head">
+                  <span>Period</span>
+                  <span>Payer issues</span>
+                  <span>Pricing approvals</span>
+                  <span>Overdue reviews</span>
+                </div>
+                {summary.trends.map((period) => (
+                  <div key={period.periodStart} className="table-row">
+                    <span>{period.periodLabel}</span>
+                    <span>{period.openPayerIssues} open / {period.escalatedPayerIssues} escalated</span>
+                    <span>{period.pricingPendingApproval} pending</span>
+                    <span>{period.overdueRevenueReviews}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {summary.serviceLineRisks?.length ? (
+              <div className="table">
+                <div className="table-row table-head">
+                  <span>Service line</span>
+                  <span>Pricing</span>
+                  <span>Revenue review</span>
+                  <span>Risk</span>
+                </div>
+                {summary.serviceLineRisks.map((risk) => (
+                  <div key={risk.serviceLineId} className="table-row">
+                    <span>{risk.serviceLineId.replaceAll("_", " ")}</span>
+                    <span>{risk.latestPricingGovernanceStatus ?? "none"}</span>
+                    <span>{risk.latestRevenueReviewStatus ?? "none"}</span>
+                    <span>
+                      {risk.missingPricingGovernance ? "Missing pricing governance. " : ""}
+                      {risk.weakClaimsGovernance ? "Weak claims governance. " : ""}
+                      {risk.publicAssetsAtRisk > 0 ? `${risk.publicAssetsAtRisk} public assets at risk.` : "No active commercial risk flags."}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </>
         ) : (
           <p className="muted">Loading revenue summary...</p>

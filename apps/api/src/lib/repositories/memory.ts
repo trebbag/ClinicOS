@@ -9,11 +9,13 @@ import type {
   CommitteeMeetingRecord,
   CommitteeRecord,
   ControlledSubstanceStewardshipRecord,
+  DeploymentPromotionRecord,
   DelegationRuleRecord,
   DeviceAllowedProfile,
   DeviceEnrollmentCode,
   DeviceSession,
   DocumentRecord,
+  EvidenceGapRecord,
   EnrolledDevice,
   IncidentRecord,
   MetricRun,
@@ -22,6 +24,7 @@ import type {
   PayerIssueRecord,
   PricingGovernanceRecord,
   PracticeAgreementRecord,
+  RoomRecord,
   RevenueReviewRecord,
   ScorecardReviewRecord,
   ServiceLinePackRecord,
@@ -30,6 +33,7 @@ import type {
   TelehealthStewardshipRecord,
   EvidenceBinderRecord,
   TrainingCompletionRecord,
+  TrainingPlanRecord,
   TrainingRequirement,
   UserProfile,
   WorkerJobRecord,
@@ -49,6 +53,7 @@ export class MemoryClinicRepository implements ClinicRepository {
   public readonly documents: DocumentRecord[] = [];
   public readonly approvals: ApprovalTask[] = [];
   public readonly actionItems: ActionItemRecord[] = [];
+  public readonly rooms: RoomRecord[] = [];
   public readonly incidents: IncidentRecord[] = [];
   public readonly capas: CapaRecord[] = [];
   public readonly publicAssets: PublicAssetRecord[] = [];
@@ -64,6 +69,7 @@ export class MemoryClinicRepository implements ClinicRepository {
   public readonly serviceLinePacks: ServiceLinePackRecord[] = [];
   public readonly standardMappings: StandardMappingRecord[] = [];
   public readonly evidenceBinders: EvidenceBinderRecord[] = [];
+  public readonly evidenceGaps: EvidenceGapRecord[] = [];
   public readonly delegationRules: DelegationRuleRecord[] = [];
   public readonly checklistTemplates: ChecklistTemplate[] = [];
   public readonly checklistRuns: ChecklistRun[] = [];
@@ -71,6 +77,7 @@ export class MemoryClinicRepository implements ClinicRepository {
   public readonly metrics: MetricRun[] = [];
   public readonly scorecardReviews: ScorecardReviewRecord[] = [];
   public readonly trainingRequirements: TrainingRequirement[] = [];
+  public readonly trainingPlans: TrainingPlanRecord[] = [];
   public readonly trainingCompletions: TrainingCompletionRecord[] = [];
   public readonly auditEvents: AuditEvent[] = [];
   public readonly userProfiles: UserProfile[] = [];
@@ -80,6 +87,7 @@ export class MemoryClinicRepository implements ClinicRepository {
   public readonly deviceSessions: DeviceSession[] = [];
   public readonly workerJobs: WorkerJobRecord[] = [];
   public readonly integrationValidations: MicrosoftIntegrationValidationRecord[] = [];
+  public readonly deploymentPromotions: DeploymentPromotionRecord[] = [];
 
   async createWorkflowRun(run: WorkflowRun): Promise<WorkflowRun> {
     this.workflows.unshift(run);
@@ -161,6 +169,28 @@ export class MemoryClinicRepository implements ClinicRepository {
 
   async getActionItem(id: string): Promise<ActionItemRecord | null> {
     return this.actionItems.find((item) => item.id === id) ?? null;
+  }
+
+  async createRoom(record: RoomRecord): Promise<RoomRecord> {
+    this.rooms.unshift(record);
+    return record;
+  }
+
+  async updateRoom(id: string, patch: Partial<RoomRecord>): Promise<RoomRecord> {
+    const index = this.rooms.findIndex((room) => room.id === id);
+    this.rooms[index] = { ...this.rooms[index], ...patch };
+    return this.rooms[index];
+  }
+
+  async getRoom(id: string): Promise<RoomRecord | null> {
+    return this.rooms.find((room) => room.id === id) ?? null;
+  }
+
+  async listRooms(filters?: {
+    status?: string;
+    roomType?: string;
+  }): Promise<RoomRecord[]> {
+    return this.rooms.filter((room) => matchesFilters(room, filters));
   }
 
   async createIncident(record: IncidentRecord): Promise<IncidentRecord> {
@@ -459,6 +489,34 @@ export class MemoryClinicRepository implements ClinicRepository {
     return this.evidenceBinders.filter((record) => matchesFilters(record, filters));
   }
 
+  async createEvidenceGap(record: EvidenceGapRecord): Promise<EvidenceGapRecord> {
+    this.evidenceGaps.unshift(record);
+    return record;
+  }
+
+  async updateEvidenceGap(id: string, patch: Partial<EvidenceGapRecord>): Promise<EvidenceGapRecord> {
+    const index = this.evidenceGaps.findIndex((record) => record.id === id);
+    this.evidenceGaps[index] = { ...this.evidenceGaps[index], ...patch };
+    return this.evidenceGaps[index];
+  }
+
+  async getEvidenceGap(id: string): Promise<EvidenceGapRecord | null> {
+    return this.evidenceGaps.find((record) => record.id === id) ?? null;
+  }
+
+  async listEvidenceGaps(filters?: {
+    status?: string;
+    ownerRole?: string;
+    severity?: string;
+    standardId?: string;
+    binderId?: string;
+    committeeMeetingId?: string;
+    serviceLineId?: string;
+    normalizedGapKey?: string;
+  }): Promise<EvidenceGapRecord[]> {
+    return this.evidenceGaps.filter((record) => matchesFilters(record, filters));
+  }
+
   async createCommittee(record: CommitteeRecord): Promise<CommitteeRecord> {
     this.committees.unshift(record);
     return record;
@@ -629,6 +687,7 @@ export class MemoryClinicRepository implements ClinicRepository {
   async listChecklistRuns(filters?: {
     workflowRunId?: string;
     templateId?: string;
+    roomId?: string;
   }): Promise<ChecklistRun[]> {
     return this.checklistRuns.filter((run) => matchesFilters(run, filters));
   }
@@ -708,8 +767,33 @@ export class MemoryClinicRepository implements ClinicRepository {
     employeeId?: string;
     employeeRole?: string;
     requirementType?: string;
+    planId?: string;
   }): Promise<TrainingRequirement[]> {
     return this.trainingRequirements.filter((requirement) => matchesFilters(requirement, filters));
+  }
+
+  async createTrainingPlan(plan: TrainingPlanRecord): Promise<TrainingPlanRecord> {
+    this.trainingPlans.unshift(plan);
+    return plan;
+  }
+
+  async updateTrainingPlan(id: string, patch: Partial<TrainingPlanRecord>): Promise<TrainingPlanRecord> {
+    const index = this.trainingPlans.findIndex((plan) => plan.id === id);
+    this.trainingPlans[index] = { ...this.trainingPlans[index], ...patch };
+    return this.trainingPlans[index];
+  }
+
+  async getTrainingPlan(id: string): Promise<TrainingPlanRecord | null> {
+    return this.trainingPlans.find((plan) => plan.id === id) ?? null;
+  }
+
+  async listTrainingPlans(filters?: {
+    employeeId?: string;
+    employeeRole?: string;
+    ownerRole?: string;
+    status?: string;
+  }): Promise<TrainingPlanRecord[]> {
+    return this.trainingPlans.filter((plan) => matchesFilters(plan, filters));
   }
 
   async createTrainingCompletion(record: TrainingCompletionRecord): Promise<TrainingCompletionRecord> {
@@ -963,5 +1047,28 @@ export class MemoryClinicRepository implements ClinicRepository {
 
   async getLatestMicrosoftIntegrationValidationRecord(): Promise<MicrosoftIntegrationValidationRecord | null> {
     return this.integrationValidations[0] ?? null;
+  }
+
+  async createDeploymentPromotion(record: DeploymentPromotionRecord): Promise<DeploymentPromotionRecord> {
+    this.deploymentPromotions.unshift(record);
+    return record;
+  }
+
+  async updateDeploymentPromotion(id: string, patch: Partial<DeploymentPromotionRecord>): Promise<DeploymentPromotionRecord> {
+    const index = this.deploymentPromotions.findIndex((record) => record.id === id);
+    this.deploymentPromotions[index] = { ...this.deploymentPromotions[index], ...patch };
+    return this.deploymentPromotions[index];
+  }
+
+  async getDeploymentPromotion(id: string): Promise<DeploymentPromotionRecord | null> {
+    return this.deploymentPromotions.find((record) => record.id === id) ?? null;
+  }
+
+  async listDeploymentPromotions(filters?: {
+    environmentKey?: string;
+    status?: string;
+    targetAuthMode?: string;
+  }): Promise<DeploymentPromotionRecord[]> {
+    return this.deploymentPromotions.filter((record) => matchesFilters(record, filters));
   }
 }

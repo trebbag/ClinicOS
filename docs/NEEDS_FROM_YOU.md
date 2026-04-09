@@ -75,12 +75,20 @@ Using the current local `.env` and repo code:
   - pricing-governance packets that reuse the existing approval and publication path
   - revenue-review records with live commercial snapshots and committee linkage
   - a dedicated `/revenue` dashboard for commercial governance
+- the evidence-gap and deeper analytics slice is now implemented in the repo
+  - explicit evidence-gap records with manual creation, deterministic deduped refresh, and verification workflow
+  - QAPI trend buckets for incidents, CAPAs, evidence gaps, overdue standards reviews, and evidence-binder states
+  - richer revenue and service-line analytics for aging, stale governance coverage, and claims-governance risk
+- the room/training/deploy-hardening slice is now implemented in the repo
+  - room master-data records with default bootstrap and per-room office-readiness checklist binding
+  - recurring training plans with deterministic requirement materialization, cycle tracking, and follow-up task closure
+  - deployment-promotion checklist records and Pilot Ops hardening visibility for smoke proof, rollback proof, target auth mode, and explicit runtime-agent freeze posture
 - the live smoke path now also checks that deployed runtime agents remain intentionally disabled
 - the repo now ships an authenticated worker-health diagnostic command:
   - `npm run smoke:worker-health -- https://your-pilot-url.example.com`
   - it signs in through device-profile auth, reads `/ops/worker-health`, prints queue ages and thresholds, and exits nonzero only for `critical` worker health
 
-That means the remaining pilot blockers are now mostly broader pilot validation, Render deployment consistency, and operations hardening.
+That means the remaining pilot blockers are now mostly the latest Render redeploy, broader pilot validation, and worker/runtime operations hardening.
 
 ## Current rollout checkpoint
 
@@ -187,30 +195,32 @@ The deployed Render stack is still healthy and pilot-usable, but the main remain
    - The first bounded execution slice is implemented and verified locally.
    - The current chosen default is to keep them deployed but disabled until a later rollout.
 
+6. Room-based office ops, recurring training plans, and deployment hardening are now implemented locally and in the live database.
+   - The remaining open item for those three slices is just getting the newest code deployed on Render and then validating the live UI/API paths.
+
 ## What I still need from you next
 
-1. A decision on whether to keep the optional trusted-proxy path documented as a later hardening phase
-   - it is still not required for the first pilot
-   - it can remain a future infrastructure path if desired
+1. Redeploy the latest web, API, and worker
+   - this newest pass adds room master data, recurring training plans, and deployment-promotion checklist surfaces
+   - the repo and database are ready, but the deployed app will not show them until this redeploy happens
 
-2. Optional later real-user rollout details
+2. Keep `RUNTIME_AGENTS_ENABLED=false` explicit on Render
+   - runtime agents should stay shipped but intentionally disabled
+   - the live smoke path now checks this posture
+   - the current deployed disabled reason may still be coming from missing runtime-agent key/config rather than the explicit freeze flag
+
+3. Optional later real-user rollout details
    - one label per additional computer/device
    - primary profile for that device
    - up to two backup profiles if needed
    - named office manager / quality lead / HR lead profiles when you want them added
 
-3. After the next deploy, watch the new Pilot Ops worker-health surface
+4. After the next deploy, watch the new Pilot Ops worker-health surface
    - confirm `last heartbeat` keeps moving forward
    - confirm `oldest queued job` does not keep climbing during normal use
    - if the queue stalls again, compare Pilot Ops worker-health timing with the Render worker logs
    - if the queue is stuck and you need an immediate recovery path, use `Run one worker batch now` in Pilot Ops
    - no new secrets or Microsoft tenant setup are required for this step
-
-4. Keep `RUNTIME_AGENTS_ENABLED=false` in deployed environments for now
-   - this matches the current rollout choice
-   - the live smoke path now verifies that runtime agents stay disabled
-   - current deployed status is disabled because `OPENAI_API_KEY` is absent, not because the explicit flag is set
-   - if you want the freeze to stay explicit even after later adding the key, set `RUNTIME_AGENTS_ENABLED=false` on Render now
 
 ## Database rule
 
@@ -223,7 +233,8 @@ Postgres is still required even though Microsoft is now ready, because Clinic OS
 
 The next bounded validation step is:
 
-- rerun the expanded deployed live smoke once the latest revenue-governance code is deployed
+- redeploy the latest room/training/deploy-hardening code on Render
+- rerun the expanded deployed live smoke once that newest code is live
 - use the new `/ops/worker-health` surface to confirm the worker is heartbeating before and after that smoke run
 - use `npm run smoke:worker-health -- https://your-pilot-url.example.com` when you want an auth-backed, shell-friendly worker diagnostic without opening Pilot Ops
 - because the current worker-health smoke is still `critical`, the next operational check should be:
@@ -235,4 +246,4 @@ The next bounded validation step is:
 
 After that, the next major engineering step should be:
 
-- evidence-gap remediation, richer trend/history reporting, or broader runtime-agent eval/rollout work
+- live validation of the new room/training/deploy-hardening surfaces, then either deeper office/HR analytics or later post-pilot identity hardening and runtime-agent rollout discipline

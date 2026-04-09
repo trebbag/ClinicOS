@@ -281,9 +281,9 @@ async function verifyRuntimeAgentsDisabled() {
     throw new Error("Runtime agents were expected to stay disabled in the deployed pilot environment.");
   }
 
-  const reason = String(runtimeAgentStatus?.reason ?? "").toLowerCase();
-  if (!reason.includes("disabled") && !reason.includes("not configured")) {
-    throw new Error(`Runtime agents are disabled, but the reason was not clear enough: ${runtimeAgentStatus?.reason ?? "missing reason"}`);
+  const reason = String(runtimeAgentStatus?.reason ?? "");
+  if (reason !== "Runtime agents are disabled by configuration.") {
+    throw new Error(`Runtime agents are disabled, but not by the expected explicit configuration flag: ${runtimeAgentStatus?.reason ?? "missing reason"}`);
   }
 
   return runtimeAgentStatus;

@@ -809,6 +809,37 @@ describe("Clinic API", () => {
     }>().checklist.requiredRemaining).toBe(0);
   });
 
+  it("binds office checklist runs to rooms and reports room readiness", async () => {
+    const bootstrapResponse = await app.inject({
+      method: "POST",
+      url: "/office-ops/rooms/bootstrap-defaults",
+      headers: headers("office_manager")
+    });
+    expect(bootstrapResponse.statusCode).toBe(200);
+
+    const packetResponse = await app.inject({
+      method: "POST",
+      url: "/office-ops/daily-packet",
+      headers: headers("office_manager"),
+      payload: {
+        targetDate: "2026-03-28"
+      }
+    });
+
+    expect(packetResponse.statusCode).toBe(200);
+    const dashboard = packetResponse.json<{
+      checklistRuns: Array<{ id: string; roomId: string | null }>;
+      rooms: Array<{ room: { id: string }; checklistRun: { id: string } | null; readinessStatus: string }>;
+      roomSummary: { activeRooms: number };
+      checklistItems: Array<{ checklistRunId: string }>;
+    }>();
+
+    expect(dashboard.roomSummary.activeRooms).toBeGreaterThan(1);
+    expect(dashboard.rooms.every((entry) => entry.checklistRun?.id)).toBe(true);
+    expect(new Set(dashboard.checklistRuns.map((run) => run.roomId)).size).toBe(dashboard.checklistRuns.length);
+    expect(dashboard.checklistItems.every((item) => item.checklistRunId)).toBe(true);
+  });
+
   it("creates scorecard reviews and completes the workflow after sign-off", async () => {
     const importResponse = await app.inject({
       method: "POST",
@@ -1005,6 +1036,69 @@ describe("Clinic API", () => {
     ).toBe("done");
   });
 
+  it("materializes recurring training plans and closes overdue follow-up tasks after completion", async () => {
+    const planResponse = await app.inject({
+      method: "POST",
+      url: "/training-plans",
+      headers: headers("hr_lead"),
+      payload: {
+        employeeId: "E-300",
+        employeeRole: "medical_assistant",
+        requirementType: "training",
+        title: "Quarterly room turnover refresher",
+        cadenceDays: 90,
+        leadTimeDays: 14,
+        validityDays: 90,
+        ownerRole: "hr_lead"
+      }
+    });
+    expect(planResponse.statusCode).toBe(200);
+    const plan = planResponse.json<{ id: string }>();
+
+    const requirementResponse = await app.inject({
+      method: "POST",
+      url: "/training-requirements",
+      headers: headers("hr_lead"),
+      payload: {
+        employeeId: "E-300",
+        employeeRole: "medical_assistant",
+        requirementType: "training",
+        title: "Quarterly room turnover refresher",
+        planId: plan.id,
+        sourceCycleKey: `${plan.id}:2026-03-01`,
+        dueDate: "2026-03-01T12:00:00.000Z"
+      }
+    });
+    expect(requirementResponse.statusCode).toBe(200);
+    const requirement = requirementResponse.json<{ id: string; followUpActionItemId: string | null }>();
+    expect(requirement.followUpActionItemId).toBeTruthy();
+
+    const dashboardBefore = await app.inject({
+      method: "GET",
+      url: "/training/dashboard?employeeId=E-300&employeeRole=medical_assistant",
+      headers: headers("hr_lead")
+    });
+    expect(dashboardBefore.statusCode).toBe(200);
+    expect(dashboardBefore.json<{ planSummary: { activePlans: number; openFollowUps: number } }>().planSummary.activePlans).toBe(1);
+    expect(dashboardBefore.json<{ gapSummary: { counts: { overdue: number } } }>().gapSummary.counts.overdue).toBeGreaterThan(0);
+
+    const completionResponse = await app.inject({
+      method: "POST",
+      url: "/training-completions",
+      headers: headers("hr_lead"),
+      payload: {
+        requirementId: requirement.id,
+        validUntil: "2026-12-01T12:00:00.000Z",
+        note: "Completed recurring refresher"
+      }
+    });
+    expect(completionResponse.statusCode).toBe(200);
+
+    expect(
+      repository.actionItems.find((item) => item.id === requirement.followUpActionItemId)?.status
+    ).toBe("done");
+  });
+
   it("enqueues Microsoft sync jobs for office-manager actions and retries failed jobs", async () => {
     const issueResponse = await app.inject({
       method: "POST",
@@ -1193,6 +1287,7 @@ describe("Clinic API", () => {
       integrationMode: "stub",
       openaiApiKey: "present-for-status-check",
       runtimeAgentsEnabled: false,
+      runtimeAgentsConfigValue: "false",
       microsoftPreflight: {
         getMissingConfigKeys: () => [],
         validate: async () => ({
@@ -2934,5 +3029,225 @@ describe("Clinic API", () => {
         .filter((standard) => created.binder.documentId && standards.slice(0, 3).some((entry) => entry.id === standard.id))
         .every((standard) => standard.status === "complete" && standard.latestBinderId === created.binder.id)
     ).toBe(true);
+  });
+
+  it("tracks evidence gaps through verification and exposes them in QAPI summaries and trends", async () => {
+    const standardsBootstrap = await app.inject({
+      method: "POST",
+      url: "/standards/bootstrap-defaults",
+      headers: headers("quality_lead")
+    });
+    expect(standardsBootstrap.statusCode).toBe(200);
+
+    const standardsResponse = await app.inject({
+      method: "GET",
+      url: "/standards",
+      headers: headers("quality_lead")
+    });
+    const standards = standardsResponse.json<Array<{ id: string; ownerRole: string }>>();
+    expect(standards.length).toBeGreaterThan(0);
+
+    const createGap = await app.inject({
+      method: "POST",
+      url: "/evidence-gaps",
+      headers: headers("quality_lead"),
+      payload: {
+        title: "Missing current evidence binder coverage",
+        severity: "critical",
+        ownerRole: "quality_lead",
+        standardId: standards[0]!.id,
+        summary: "The mapped standard does not yet have current published evidence support.",
+        dueDate: "2026-04-20T00:00:00.000Z"
+      }
+    });
+    expect(createGap.statusCode).toBe(200);
+    const gap = createGap.json<{ id: string; status: string }>();
+    expect(gap.status).toBe("open");
+
+    const qapiSummary = await app.inject({
+      method: "GET",
+      url: "/committees/qapi-summary",
+      headers: headers("medical_director")
+    });
+    expect(qapiSummary.statusCode).toBe(200);
+    expect(qapiSummary.json<{ openEvidenceGaps: number; criticalEvidenceGaps: number }>().openEvidenceGaps).toBeGreaterThanOrEqual(1);
+    expect(qapiSummary.json<{ openEvidenceGaps: number; criticalEvidenceGaps: number }>().criticalEvidenceGaps).toBeGreaterThanOrEqual(1);
+
+    const readyForVerification = await app.inject({
+      method: "PATCH",
+      url: `/evidence-gaps/${gap.id}`,
+      headers: headers("quality_lead"),
+      payload: {
+        status: "ready_for_verification",
+        resolutionSummary: "Binder published and the standard now points to a current evidence artifact."
+      }
+    });
+    expect(readyForVerification.statusCode).toBe(200);
+
+    const verifyGap = await app.inject({
+      method: "POST",
+      url: `/evidence-gaps/${gap.id}/verify`,
+      headers: headers("quality_lead"),
+      payload: {
+        resolutionSummary: "Verification completed during QAPI remediation review."
+      }
+    });
+    expect(verifyGap.statusCode).toBe(200);
+    expect(verifyGap.json<{ status: string; verifiedAt: string | null }>().status).toBe("verified");
+    expect(verifyGap.json<{ status: string; verifiedAt: string | null }>().verifiedAt).toBeTruthy();
+
+    const qapiTrends = await app.inject({
+      method: "GET",
+      url: "/qapi/trends",
+      headers: headers("medical_director")
+    });
+    expect(qapiTrends.statusCode).toBe(200);
+    const trendBody = qapiTrends.json<{ periods: Array<{ evidenceGapsOpened: number; evidenceGapsVerified: number }> }>();
+    expect(trendBody.periods).toHaveLength(6);
+    expect(trendBody.periods.some((period) => period.evidenceGapsOpened >= 1)).toBe(true);
+    expect(trendBody.periods.some((period) => period.evidenceGapsVerified >= 1)).toBe(true);
+  });
+
+  it("dispatches critical ops alerts and exposes deeper revenue and service-line analytics", async () => {
+    const alertRepository = new MemoryClinicRepository();
+    const sendOfficeOpsNotification = vi.fn(async () => ({ messageId: "teams_msg_1" }));
+    const alertService = new ClinicApiService(alertRepository, new LocalApprovedDocumentPublisher(), {
+      authMode: "dev_headers",
+      integrationMode: "stub",
+      pilotOps: {
+        mode: "live",
+        sendOfficeOpsNotification
+      },
+      microsoftPreflight: {
+        getMissingConfigKeys: () => [],
+        validate: async () => ({
+          mode: "stub",
+          configComplete: true,
+          overallStatus: "ready",
+          readyForLive: true,
+          missingConfigKeys: [],
+          surfaces: []
+        })
+      }
+    });
+    const alertApp = buildApp({
+      authMode: "dev_headers",
+      service: alertService,
+      repository: alertRepository,
+      databaseReadyCheck: async () => true
+    });
+
+    alertRepository.workerJobs.push({
+      ...createWorkerJob({
+        type: "lists.issue.upsert",
+        payload: { smoke: true },
+        scheduledAt: new Date(Date.now() - 90 * 60_000).toISOString()
+      }),
+      updatedAt: new Date(Date.now() - 90 * 60_000).toISOString()
+    });
+
+    const dispatchResponse = await alertApp.inject({
+      method: "POST",
+      url: "/ops/alerts/dispatch",
+      headers: headers("medical_director")
+    });
+    expect(dispatchResponse.statusCode).toBe(200);
+    expect(dispatchResponse.json<{ delivered: number }>().delivered).toBeGreaterThanOrEqual(1);
+    expect(sendOfficeOpsNotification).toHaveBeenCalled();
+
+    const bootstrapResponse = await alertApp.inject({
+      method: "POST",
+      url: "/service-lines/bootstrap-defaults",
+      headers: headers("medical_director")
+    });
+    expect(bootstrapResponse.statusCode).toBe(200);
+
+    const payerIssueResponse = await alertApp.inject({
+      method: "POST",
+      url: "/payer-issues",
+      headers: headers("cfo"),
+      payload: {
+        title: "Telehealth pricing dispute",
+        payerName: "Regional Commercial Plan",
+        issueType: "coverage_policy",
+        serviceLineId: "telehealth",
+        ownerRole: "cfo",
+        summary: "Coverage rules remain ambiguous for bundled follow-up visits.",
+        dueDate: "2026-04-15T00:00:00.000Z"
+      }
+    });
+    expect(payerIssueResponse.statusCode).toBe(200);
+    const payerIssue = payerIssueResponse.json<{ id: string }>();
+
+    const escalated = await alertApp.inject({
+      method: "PATCH",
+      url: `/payer-issues/${payerIssue.id}`,
+      headers: headers("cfo"),
+      payload: { status: "escalated" }
+    });
+    expect(escalated.statusCode).toBe(200);
+
+    const pricingResponse = await alertApp.inject({
+      method: "POST",
+      url: "/pricing-governance",
+      headers: headers("cfo"),
+      payload: {
+        title: "Telehealth pricing review",
+        serviceLineId: "telehealth",
+        ownerRole: "cfo",
+        pricingSummary: "Review visit pricing and package guardrails.",
+        marginGuardrailsSummary: "Stay within approved pilot margin tolerances.",
+        discountGuardrailsSummary: "No ad hoc discounts.",
+        payerAlignmentSummary: "Coordinate with payer coverage posture.",
+        claimsConstraintSummary: "Do not overstate coverage or outcomes.",
+        reviewDueAt: "2026-04-18T00:00:00.000Z"
+      }
+    });
+    expect(pricingResponse.statusCode).toBe(200);
+
+    const revenueReviewResponse = await alertApp.inject({
+      method: "POST",
+      url: "/revenue-reviews",
+      headers: headers("cfo"),
+      payload: {
+        title: "April telehealth review",
+        ownerRole: "cfo",
+        serviceLineId: "telehealth",
+        reviewWindowLabel: "April 2026",
+        targetReviewDate: "2026-04-30T00:00:00.000Z"
+      }
+    });
+    expect(revenueReviewResponse.statusCode).toBe(200);
+
+    const summaryResponse = await alertApp.inject({
+      method: "GET",
+      url: "/revenue/summary?serviceLineId=telehealth",
+      headers: headers("medical_director")
+    });
+    expect(summaryResponse.statusCode).toBe(200);
+    const summary = summaryResponse.json<{
+      payerIssueAging: { escalated: number; dueSoon: number };
+      pricingReviewBuckets: { reviewDueSoon: number };
+      trends: Array<{ periodLabel: string }>;
+      serviceLineRisks: Array<{ serviceLineId: string }>;
+    }>();
+    expect(summary.payerIssueAging.escalated).toBeGreaterThanOrEqual(1);
+    expect(summary.pricingReviewBuckets.reviewDueSoon).toBeGreaterThanOrEqual(1);
+    expect(summary.trends.length).toBe(6);
+    expect(summary.serviceLineRisks.some((risk) => risk.serviceLineId === "telehealth")).toBe(true);
+
+    const serviceLinesResponse = await alertApp.inject({
+      method: "GET",
+      url: "/service-lines",
+      headers: headers("medical_director")
+    });
+    expect(serviceLinesResponse.statusCode).toBe(200);
+    const telehealth = serviceLinesResponse
+      .json<Array<{ serviceLine: { id: string }; latestPricingGovernanceStatus: string | null; latestRevenueReviewStatus: string | null }>>()
+      .find((row) => row.serviceLine.id === "telehealth");
+    expect(telehealth?.latestPricingGovernanceStatus).toBeTruthy();
+    expect(telehealth?.latestRevenueReviewStatus).toBeTruthy();
+
+    await alertApp.close();
   });
 });

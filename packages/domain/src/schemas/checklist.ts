@@ -30,6 +30,7 @@ export const checklistRunSchema = z.object({
   id: z.string(),
   templateId: z.string(),
   workflowRunId: z.string(),
+  roomId: z.string().nullable().default(null),
   targetDate: z.string(),
   createdAt: z.string(),
   updatedAt: z.string()
@@ -90,6 +91,7 @@ export function createChecklistTemplate(input: {
 export function createChecklistRun(input: {
   templateId: string;
   workflowRunId: string;
+  roomId?: string | null;
   targetDate: string;
 }): ChecklistRun {
   const now = new Date().toISOString();
@@ -97,6 +99,7 @@ export function createChecklistRun(input: {
     id: randomId("checklist_run"),
     templateId: input.templateId,
     workflowRunId: input.workflowRunId,
+    roomId: input.roomId ?? null,
     targetDate: input.targetDate,
     createdAt: now,
     updatedAt: now

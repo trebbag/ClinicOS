@@ -53,6 +53,24 @@ type EvidenceBinderRecord = {
   publishedPath: string | null;
 };
 
+type EvidenceGapRecord = {
+  id: string;
+  title: string;
+  status: "open" | "in_progress" | "blocked" | "ready_for_verification" | "verified" | "archived";
+  severity: "low" | "medium" | "high" | "critical";
+  ownerRole: ActorRole;
+  summary: string;
+  resolutionSummary: string | null;
+  standardId: string | null;
+  binderId: string | null;
+  committeeMeetingId: string | null;
+  serviceLineId: string | null;
+  actionItemId: string | null;
+  dueDate: string | null;
+  verifiedAt: string | null;
+  archivedAt: string | null;
+};
+
 const actorRoles: ActorRole[] = [
   "medical_director",
   "quality_lead",
@@ -82,11 +100,13 @@ export default function StandardsPage(): JSX.Element {
   const { actor, hasCapability } = useAppAuth();
   const [standards, setStandards] = useState<StandardMappingRecord[]>([]);
   const [binders, setBinders] = useState<EvidenceBinderRecord[]>([]);
+  const [evidenceGaps, setEvidenceGaps] = useState<EvidenceGapRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingStandardId, setEditingStandardId] = useState<string | null>(null);
   const [editingBinderId, setEditingBinderId] = useState<string | null>(null);
+  const [editingGapId, setEditingGapId] = useState<string | null>(null);
 
   const [standardCode, setStandardCode] = useState("MM.03.01.01");
   const [standardTitle, setStandardTitle] = useState("Medication management oversight");
@@ -109,6 +129,15 @@ export default function StandardsPage(): JSX.Element {
   const [binderReviewCadenceDays, setBinderReviewCadenceDays] = useState("60");
   const [binderNotes, setBinderNotes] = useState("Use this as the current mock-survey packet until broader standards coverage is needed.");
 
+  const [gapTitle, setGapTitle] = useState("Missing evidence trail for current standard");
+  const [gapSeverity, setGapSeverity] = useState<EvidenceGapRecord["severity"]>("high");
+  const [gapOwnerRole, setGapOwnerRole] = useState<ActorRole>("quality_lead");
+  const [gapStandardId, setGapStandardId] = useState("");
+  const [gapBinderId, setGapBinderId] = useState("");
+  const [gapDueDate, setGapDueDate] = useState("");
+  const [gapSummary, setGapSummary] = useState("This standard does not yet have a current approved evidence artifact tied to the latest binder.");
+  const [gapResolutionSummary, setGapResolutionSummary] = useState("");
+
   const canView = hasCapability("standards.view");
   const canManage = hasCapability("standards.manage");
 
@@ -116,6 +145,44 @@ export default function StandardsPage(): JSX.Element {
     () => standards.filter((standard) => standard.status === "complete").length,
     [standards]
   );
+  const openEvidenceGaps = useMemo(
+    () => evidenceGaps.filter((gap) => !["verified", "archived"].includes(gap.status)),
+    [evidenceGaps]
+  );
+  const verificationBacklog = useMemo(
+    () => evidenceGaps.filter((gap) => gap.status === "ready_for_verification").length,
+    [evidenceGaps]
+  );
+
+  function standardGapSummary(standardId: string) {
+    const linked = openEvidenceGaps.filter((gap) => gap.standardId === standardId);
+    const highestSeverity = ["critical", "high", "medium", "low"].find((severity) =>
+      linked.some((gap) => gap.severity === severity)
+    ) ?? null;
+    return {
+      openCount: linked.length,
+      highestSeverity,
+      oldestDueAt: linked
+        .filter((gap) => gap.dueDate)
+        .sort((left, right) => (left.dueDate ?? "").localeCompare(right.dueDate ?? ""))[0]?.dueDate ?? null,
+      verificationBacklog: linked.filter((gap) => gap.status === "ready_for_verification").length
+    };
+  }
+
+  function binderGapSummary(binderId: string) {
+    const linked = openEvidenceGaps.filter((gap) => gap.binderId === binderId);
+    const highestSeverity = ["critical", "high", "medium", "low"].find((severity) =>
+      linked.some((gap) => gap.severity === severity)
+    ) ?? null;
+    return {
+      openCount: linked.length,
+      highestSeverity,
+      oldestDueAt: linked
+        .filter((gap) => gap.dueDate)
+        .sort((left, right) => (left.dueDate ?? "").localeCompare(right.dueDate ?? ""))[0]?.dueDate ?? null,
+      verificationBacklog: linked.filter((gap) => gap.status === "ready_for_verification").length
+    };
+  }
 
   function resetStandardForm(): void {
     setEditingStandardId(null);
@@ -142,6 +209,18 @@ export default function StandardsPage(): JSX.Element {
     setOpenGapSummary("Track missing signatures, stale policy versions, delayed committee review artifacts, or competency follow-up gaps before treating the binder as survey-ready.");
     setBinderReviewCadenceDays("60");
     setBinderNotes("Use this as the current mock-survey packet until broader standards coverage is needed.");
+  }
+
+  function resetGapForm(): void {
+    setEditingGapId(null);
+    setGapTitle("Missing evidence trail for current standard");
+    setGapSeverity("high");
+    setGapOwnerRole("quality_lead");
+    setGapStandardId(standards[0]?.id ?? "");
+    setGapBinderId("");
+    setGapDueDate("");
+    setGapSummary("This standard does not yet have a current approved evidence artifact tied to the latest binder.");
+    setGapResolutionSummary("");
   }
 
   function loadStandardIntoForm(record: StandardMappingRecord): void {
@@ -171,19 +250,34 @@ export default function StandardsPage(): JSX.Element {
     setBinderNotes(record.notes ?? "");
   }
 
+  function loadGapIntoForm(record: EvidenceGapRecord): void {
+    setEditingGapId(record.id);
+    setGapTitle(record.title);
+    setGapSeverity(record.severity);
+    setGapOwnerRole(record.ownerRole);
+    setGapStandardId(record.standardId ?? "");
+    setGapBinderId(record.binderId ?? "");
+    setGapDueDate(record.dueDate ? record.dueDate.slice(0, 10) : "");
+    setGapSummary(record.summary);
+    setGapResolutionSummary(record.resolutionSummary ?? "");
+  }
+
   async function loadData(): Promise<void> {
     if (!actor || !canView) {
       return;
     }
     setLoading(true);
     try {
-      const [nextStandards, nextBinders] = await Promise.all([
+      const [nextStandards, nextBinders, nextEvidenceGaps] = await Promise.all([
         apiRequest<StandardMappingRecord[]>("/standards", actor),
-        apiRequest<EvidenceBinderRecord[]>("/evidence-binders", actor)
+        apiRequest<EvidenceBinderRecord[]>("/evidence-binders", actor),
+        apiRequest<EvidenceGapRecord[]>("/evidence-gaps", actor)
       ]);
       setStandards(nextStandards);
       setBinders(nextBinders);
+      setEvidenceGaps(nextEvidenceGaps);
       setSelectedStandardIds((current) => current.length > 0 ? current : nextStandards.slice(0, 4).map((standard) => standard.id));
+      setGapStandardId((current) => current || nextStandards[0]?.id || "");
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load standards tooling.");
@@ -308,6 +402,60 @@ export default function StandardsPage(): JSX.Element {
     });
   }
 
+  async function handleSaveGap(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!actor) return;
+    const payload = {
+      title: gapTitle,
+      severity: gapSeverity,
+      ownerRole: gapOwnerRole,
+      standardId: gapStandardId || undefined,
+      binderId: gapBinderId || undefined,
+      dueDate: gapDueDate || undefined,
+      summary: gapSummary,
+      resolutionSummary: gapResolutionSummary || undefined
+    };
+
+    await runMutation(async () => {
+      if (editingGapId) {
+        await apiRequest(`/evidence-gaps/${editingGapId}`, actor, {
+          method: "PATCH",
+          body: JSON.stringify(payload)
+        });
+      } else {
+        await apiRequest("/evidence-gaps", actor, {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+      }
+      resetGapForm();
+    });
+  }
+
+  async function handleGapStatus(gapId: string, status: EvidenceGapRecord["status"]): Promise<void> {
+    if (!actor) return;
+    await runMutation(async () => {
+      await apiRequest(`/evidence-gaps/${gapId}`, actor, {
+        method: "PATCH",
+        body: JSON.stringify({ status })
+      });
+    });
+  }
+
+  async function handleVerifyGap(gapId: string, archive = false): Promise<void> {
+    if (!actor) return;
+    await runMutation(async () => {
+      await apiRequest(`/evidence-gaps/${gapId}/verify`, actor, {
+        method: "POST",
+        body: JSON.stringify({
+          resolutionSummary: gapResolutionSummary || "Verified through standards evidence review.",
+          archive
+        })
+      });
+      resetGapForm();
+    });
+  }
+
   if (!actor) {
     return <div className="card">Sign in to view standards mapping and evidence binders.</div>;
   }
@@ -329,6 +477,8 @@ export default function StandardsPage(): JSX.Element {
           <div className="status-badges">
             <span className="badge badge-info">Mapped standards: {standards.length}</span>
             <span className="badge badge-success">Complete standards: {completeCount}</span>
+            <span className="badge badge-warning">Open evidence gaps: {openEvidenceGaps.length}</span>
+            <span className="badge badge-info">Verification backlog: {verificationBacklog}</span>
           </div>
         </div>
         {error ? <div className="alert alert-error">{error}</div> : null}
@@ -494,11 +644,139 @@ export default function StandardsPage(): JSX.Element {
         </div>
       </div>
 
+      <div className="grid two-column">
+        <div className="card">
+          <div className="section-heading">
+            <div>
+              <h2>Evidence-gap register</h2>
+              <p className="muted">Track remediation work without auto-closing gaps or losing verification history.</p>
+            </div>
+            <div className="status-badges">
+              <span className="badge badge-warning">Open: {openEvidenceGaps.length}</span>
+              <span className="badge badge-info">Ready for verification: {verificationBacklog}</span>
+            </div>
+          </div>
+          <form className="stack" onSubmit={(event) => void handleSaveGap(event)}>
+            <label>
+              Gap title
+              <input value={gapTitle} onChange={(event) => setGapTitle(event.target.value)} disabled={!canManage || submitting} />
+            </label>
+            <div className="grid two-column">
+              <label>
+                Severity
+                <select value={gapSeverity} onChange={(event) => setGapSeverity(event.target.value as EvidenceGapRecord["severity"])} disabled={!canManage || submitting}>
+                  {["low", "medium", "high", "critical"].map((severity) => (
+                    <option key={severity} value={severity}>{severity}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Owner role
+                <select value={gapOwnerRole} onChange={(event) => setGapOwnerRole(event.target.value as ActorRole)} disabled={!canManage || submitting}>
+                  {actorRoles.map((role) => <option key={role} value={role}>{role}</option>)}
+                </select>
+              </label>
+            </div>
+            <div className="grid two-column">
+              <label>
+                Linked standard
+                <select value={gapStandardId} onChange={(event) => setGapStandardId(event.target.value)} disabled={!canManage || submitting}>
+                  <option value="">None</option>
+                  {standards.map((standard) => (
+                    <option key={standard.id} value={standard.id}>{standard.standardCode}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Linked binder
+                <select value={gapBinderId} onChange={(event) => setGapBinderId(event.target.value)} disabled={!canManage || submitting}>
+                  <option value="">None</option>
+                  {binders.map((binder) => (
+                    <option key={binder.id} value={binder.id}>{binder.title}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label>
+              Due date
+              <input type="date" value={gapDueDate} onChange={(event) => setGapDueDate(event.target.value)} disabled={!canManage || submitting} />
+            </label>
+            <label>
+              Summary
+              <textarea value={gapSummary} onChange={(event) => setGapSummary(event.target.value)} rows={3} disabled={!canManage || submitting} />
+            </label>
+            <label>
+              Resolution / verification note
+              <textarea value={gapResolutionSummary} onChange={(event) => setGapResolutionSummary(event.target.value)} rows={2} disabled={!canManage || submitting} />
+            </label>
+            {canManage ? (
+              <div className="actions">
+                <button type="submit" className="primary-button" disabled={submitting}>
+                  {editingGapId ? "Save gap" : "Create gap"}
+                </button>
+                <button type="button" className="secondary-button" onClick={resetGapForm} disabled={submitting}>
+                  Reset
+                </button>
+              </div>
+            ) : null}
+          </form>
+        </div>
+
+        <div className="card">
+          <h2>Open remediation queue</h2>
+          <div className="stack">
+            {evidenceGaps.map((gap) => (
+              <article key={gap.id} className="card subtle-card">
+                <div className="section-heading">
+                  <div>
+                    <h3>{gap.title}</h3>
+                    <p className="muted">
+                      {gap.severity} / owner {gap.ownerRole}
+                      {gap.dueDate ? ` / due ${gap.dueDate.slice(0, 10)}` : ""}
+                    </p>
+                  </div>
+                  <div className="status-badges">
+                    <span className="badge badge-warning">{gap.status.replaceAll("_", " ")}</span>
+                  </div>
+                </div>
+                <p>{gap.summary}</p>
+                {gap.actionItemId ? <p className="muted">Linked action item: {gap.actionItemId}</p> : null}
+                {canManage ? (
+                  <div className="actions">
+                    <button type="button" className="secondary-button" onClick={() => loadGapIntoForm(gap)} disabled={submitting}>
+                      Edit
+                    </button>
+                    {gap.status === "open" ? (
+                      <button type="button" className="secondary-button" onClick={() => void handleGapStatus(gap.id, "in_progress")} disabled={submitting}>
+                        Start work
+                      </button>
+                    ) : null}
+                    {gap.status === "in_progress" || gap.status === "blocked" ? (
+                      <button type="button" className="secondary-button" onClick={() => void handleGapStatus(gap.id, "ready_for_verification")} disabled={submitting}>
+                        Ready for verification
+                      </button>
+                    ) : null}
+                    {gap.status === "ready_for_verification" ? (
+                      <button type="button" className="secondary-button" onClick={() => void handleVerifyGap(gap.id)} disabled={submitting}>
+                        Verify
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </article>
+            ))}
+            {!loading && evidenceGaps.length === 0 ? <p className="muted">No evidence gaps tracked yet.</p> : null}
+          </div>
+        </div>
+      </div>
+
       <div className="card">
         <h2>Registry</h2>
         {loading ? <p className="muted">Loading…</p> : null}
         <div className="stack">
-          {standards.map((standard) => (
+          {standards.map((standard) => {
+            const summary = standardGapSummary(standard.id);
+            return (
             <article key={standard.id} className="card subtle-card">
               <div className="section-heading">
                 <div>
@@ -508,18 +786,36 @@ export default function StandardsPage(): JSX.Element {
                 <div className="status-badges">
                   <span className="badge badge-info">{standard.status}</span>
                   {standard.nextReviewDueAt ? <span className="badge badge-warning">Next review {standard.nextReviewDueAt.slice(0, 10)}</span> : null}
+                  {summary.openCount > 0 ? <span className="badge badge-warning">Open gaps {summary.openCount}</span> : null}
                 </div>
               </div>
               <p>{standard.requirementSummary}</p>
+              <p className="muted">
+                Highest severity {summary.highestSeverity ?? "none"} / verification backlog {summary.verificationBacklog}
+                {summary.oldestDueAt ? ` / oldest gap due ${summary.oldestDueAt.slice(0, 10)}` : ""}
+              </p>
               {canManage ? (
                 <div className="actions">
                   <button type="button" className="secondary-button" onClick={() => loadStandardIntoForm(standard)} disabled={submitting}>
                     Edit mapping
                   </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      setGapStandardId(standard.id);
+                      setGapBinderId(standard.latestBinderId ?? "");
+                      setGapOwnerRole(standard.ownerRole);
+                    }}
+                    disabled={submitting}
+                  >
+                    Open gap
+                  </button>
                 </div>
               ) : null}
             </article>
-          ))}
+            );
+          })}
           {!loading && standards.length === 0 ? <p className="muted">No standards mapped yet.</p> : null}
         </div>
       </div>
@@ -527,7 +823,9 @@ export default function StandardsPage(): JSX.Element {
       <div className="card">
         <h2>Binders</h2>
         <div className="stack">
-          {binders.map((binder) => (
+          {binders.map((binder) => {
+            const summary = binderGapSummary(binder.id);
+            return (
             <article key={binder.id} className="card subtle-card">
               <div className="section-heading">
                 <div>
@@ -536,9 +834,14 @@ export default function StandardsPage(): JSX.Element {
                 </div>
                 <div className="status-badges">
                   <span className="badge badge-info">{binder.status}</span>
+                  {summary.openCount > 0 ? <span className="badge badge-warning">Open gaps {summary.openCount}</span> : null}
                 </div>
               </div>
               <p>{binder.summary}</p>
+              <p className="muted">
+                Highest severity {summary.highestSeverity ?? "none"} / verification backlog {summary.verificationBacklog}
+                {summary.oldestDueAt ? ` / oldest gap due ${summary.oldestDueAt.slice(0, 10)}` : ""}
+              </p>
               <div className="actions">
                 {canManage && ["draft", "sent_back"].includes(binder.status) ? (
                   <button type="button" className="secondary-button" onClick={() => loadBinderIntoForm(binder)} disabled={submitting}>
@@ -562,7 +865,8 @@ export default function StandardsPage(): JSX.Element {
                 ) : null}
               </div>
             </article>
-          ))}
+            );
+          })}
           {!loading && binders.length === 0 ? <p className="muted">No evidence binders yet.</p> : null}
         </div>
       </div>

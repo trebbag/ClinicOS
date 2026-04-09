@@ -43,12 +43,34 @@ type WorkerJob = {
 
 type ChecklistItem = {
   id: string;
+  checklistRunId: string;
   areaLabel: string;
   label: string;
   required: boolean;
   status: string;
   note: string | null;
   reviewActionItemId: string | null;
+};
+
+type RoomReadiness = {
+  room: {
+    id: string;
+    roomLabel: string;
+    roomType: string;
+    status: string;
+    checklistAreaLabel: string;
+    notes: string | null;
+  };
+  checklistRun: { id: string; roomId: string | null } | null;
+  readinessStatus: "ready" | "attention_needed" | "blocked" | "inactive";
+  counts: {
+    totalItems: number;
+    completedItems: number;
+    blockedItems: number;
+    waivedItems: number;
+    pendingItems: number;
+    requiredRemaining: number;
+  };
 };
 
 type OfficeDashboard = {
@@ -60,7 +82,16 @@ type OfficeDashboard = {
   dailyPacket: DocumentRecord | null;
   closeoutDocument: DocumentRecord | null;
   checklistRun: { id: string } | null;
+  checklistRuns: Array<{ id: string; roomId: string | null }>;
   checklistItems: ChecklistItem[];
+  rooms: RoomReadiness[];
+  roomSummary: {
+    activeRooms: number;
+    readyRooms: number;
+    attentionNeededRooms: number;
+    blockedRooms: number;
+    inactiveRooms: number;
+  };
   issues: ActionItem[];
   routineItems: ActionItem[];
   escalations: ActionItem[];
@@ -98,6 +129,10 @@ export default function OfficeManagerPage(): JSX.Element {
   const [issueDescription, setIssueDescription] = useState("");
   const [closeoutNotes, setCloseoutNotes] = useState("");
   const [checklistNotes, setChecklistNotes] = useState<Record<string, string>>({});
+  const [newRoomId, setNewRoomId] = useState("");
+  const [newRoomLabel, setNewRoomLabel] = useState("");
+  const [newRoomType, setNewRoomType] = useState<"front_desk" | "exam" | "procedure" | "lab" | "virtual" | "common">("exam");
+  const [newRoomAreaLabel, setNewRoomAreaLabel] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -141,6 +176,16 @@ export default function OfficeManagerPage(): JSX.Element {
     return lookup;
   }, [dashboard?.relatedJobs]);
 
+  const roomLabelByRunId = useMemo(() => {
+    const lookup = new Map<string, string>();
+    for (const room of dashboard?.rooms ?? []) {
+      if (room.checklistRun?.id) {
+        lookup.set(room.checklistRun.id, room.room.roomLabel);
+      }
+    }
+    return lookup;
+  }, [dashboard?.rooms]);
+
   async function handleCreateIssue(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -161,6 +206,45 @@ export default function OfficeManagerPage(): JSX.Element {
       await load();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to create issue.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCreateRoom(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoading(true);
+    try {
+      await apiRequest("/office-ops/rooms", actor, {
+        method: "POST",
+        body: JSON.stringify({
+          id: newRoomId,
+          roomLabel: newRoomLabel,
+          roomType: newRoomType,
+          checklistAreaLabel: newRoomAreaLabel || newRoomLabel
+        })
+      });
+      setNewRoomId("");
+      setNewRoomLabel("");
+      setNewRoomAreaLabel("");
+      setNewRoomType("exam");
+      await load();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Unable to create room.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleBootstrapRooms() {
+    setLoading(true);
+    try {
+      await apiRequest("/office-ops/rooms/bootstrap-defaults", actor, {
+        method: "POST"
+      });
+      await load();
+    } catch (bootstrapError) {
+      setError(bootstrapError instanceof Error ? bootstrapError.message : "Unable to bootstrap office rooms.");
     } finally {
       setLoading(false);
     }
@@ -216,13 +300,13 @@ export default function OfficeManagerPage(): JSX.Element {
   }
 
   async function handleChecklistUpdate(item: ChecklistItem, status: "complete" | "blocked" | "waived") {
-    if (!dashboard?.checklistRun) {
+    if (!item.checklistRunId) {
       return;
     }
 
     setLoading(true);
     try {
-      await apiRequest(`/office-ops/checklist-runs/${dashboard.checklistRun.id}/items/${item.id}`, actor, {
+      await apiRequest(`/office-ops/checklist-runs/${item.checklistRunId}/items/${item.id}`, actor, {
         method: "PATCH",
         body: JSON.stringify({
           status,
@@ -304,10 +388,10 @@ export default function OfficeManagerPage(): JSX.Element {
           </div>
         </div>
         <div className="card">
-          <div className="muted">Planner sync health</div>
-          <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{dashboard?.plannerSync.synced ?? 0} synced</div>
+          <div className="muted">Room readiness</div>
+          <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{dashboard?.roomSummary.readyRooms ?? 0} ready</div>
           <div className="muted" style={{ marginTop: 8 }}>
-            {dashboard?.plannerSync.syncErrors ?? 0} sync errors
+            {dashboard?.roomSummary.blockedRooms ?? 0} blocked / {dashboard?.roomSummary.attentionNeededRooms ?? 0} attention needed
           </div>
         </div>
       </div>
@@ -323,6 +407,41 @@ export default function OfficeManagerPage(): JSX.Element {
         </div>
 
         <div className="card">
+          <h2>Rooms</h2>
+          <div className="actions" style={{ marginBottom: 12 }}>
+            <button className="button secondary" onClick={() => { void handleBootstrapRooms(); }} disabled={loading}>
+              Bootstrap default rooms
+            </button>
+          </div>
+          <ul>
+            {(dashboard?.rooms ?? []).map((entry) => (
+              <li key={entry.room.id} style={{ marginBottom: 12 }}>
+                <strong>{entry.room.roomLabel}</strong>{" "}
+                <span className={`badge badge-${entry.readinessStatus}`}>{statusBadge(entry.readinessStatus)}</span>{" "}
+                <span className={`badge badge-${entry.room.status}`}>{statusBadge(entry.room.status)}</span>
+                <div className="muted">
+                  {entry.room.roomType.replaceAll("_", " ")} / {entry.counts.completedItems} of {entry.counts.totalItems} checklist items complete
+                </div>
+              </li>
+            ))}
+          </ul>
+          <form className="stack" onSubmit={(event) => { void handleCreateRoom(event); }}>
+            <input value={newRoomId} onChange={(event) => setNewRoomId(event.target.value)} placeholder="room id" required />
+            <input value={newRoomLabel} onChange={(event) => setNewRoomLabel(event.target.value)} placeholder="Room label" required />
+            <select value={newRoomType} onChange={(event) => setNewRoomType(event.target.value as typeof newRoomType)}>
+              <option value="exam">Exam</option>
+              <option value="procedure">Procedure</option>
+              <option value="lab">Lab</option>
+              <option value="front_desk">Front desk</option>
+              <option value="virtual">Virtual</option>
+              <option value="common">Common</option>
+            </select>
+            <input value={newRoomAreaLabel} onChange={(event) => setNewRoomAreaLabel(event.target.value)} placeholder="Checklist area label" />
+            <button className="button" type="submit" disabled={loading}>Create room</button>
+          </form>
+        </div>
+
+        <div className="card">
           <h2>Daily packet</h2>
           {dashboard?.dailyPacket ? (
             <div className="stack">
@@ -334,6 +453,9 @@ export default function OfficeManagerPage(): JSX.Element {
               </div>
               <div className="muted">
                 Checklist progress: {dashboard.checklist.completedItems}/{dashboard.checklist.totalItems} complete, {dashboard.checklist.waivedItems} waived
+              </div>
+              <div className="muted">
+                Active rooms: {dashboard.roomSummary.activeRooms}, ready {dashboard.roomSummary.readyRooms}, blocked {dashboard.roomSummary.blockedRooms}
               </div>
               {dashboard.closeoutDocument ? (
                 <div className="muted">
@@ -358,7 +480,8 @@ export default function OfficeManagerPage(): JSX.Element {
           <ul>
             {dashboard.checklistItems.map((item) => (
               <li key={item.id} style={{ marginBottom: 12 }}>
-                <strong>{item.areaLabel}</strong> <span className={`badge badge-${item.status}`}>{statusBadge(item.status)}</span>
+                <strong>{roomLabelByRunId.get(item.checklistRunId) ?? item.areaLabel}</strong>{" "}
+                <span className={`badge badge-${item.status}`}>{statusBadge(item.status)}</span>
                 {!item.required ? <span className="badge badge-archived" style={{ marginLeft: 8 }}>optional</span> : null}
                 <div>{item.label}</div>
                 <textarea

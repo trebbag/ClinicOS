@@ -15,11 +15,15 @@ The repository now has a working pilot backbone for:
 - a pilot-ops admin page for auth, worker, and Microsoft readiness checks
 - a first-class pilot-ops alert summary for runtime, Microsoft, worker, auth, office-ops, and scorecard risks
 - a first-class worker runtime health surface with last heartbeat, last completed batch, recent failure detail, and oldest queued/processing job age visible through Pilot Ops and `/ops/worker-health`
+- recent worker runtime history, last manual worker-batch request time, and last stale-processing cleanup time surfaced directly through Pilot Ops and `/ops/worker-health`
 - a capability-gated manual worker batch trigger through `/worker-jobs/run-once` and Pilot Ops, so operators can intentionally drain one batch when the background worker needs help
+- deterministic critical-ops alert dispatch through the existing Teams/webhook notification path with audit trail and cooldown-aware dedupe
 - office-ops dashboard reads, daily closeout artifacts, overdue maintenance sweeps, and scorecard history views
 - room-readiness checklist templates/runs/items with closeout gating and office-manager inline updates
+- first-class room/master-data records with default bootstrap, per-room checklist runs, room readiness rollups, and office-manager room management
 - Planner task reconciliation back into Clinic OS action-item status and sync health
 - manual HR/training requirement tracking with gap summaries and follow-up task creation from scorecard reviews
+- recurring HR/training plans with deterministic requirement materialization, cycle tracking, overdue follow-up task closure, and scorecards visibility
 - scorecard history enrichment with rolling averages and open training-gap counts
 - first-class incident and CAPA records with deterministic review/resolution commands, linked workflow runs, audit events, and quality UI management
 - first-class committee and QAPI records with committee registry, meeting scheduling, packet generation, approval routing, QAPI snapshotting, and decision-to-action-item follow-through
@@ -31,6 +35,7 @@ The repository now has a working pilot backbone for:
 - first-class telehealth stewardship packets tied to telehealth service-line governance, practice-agreement linkage, delegation coverage, controlled clinical-governance review, publication sync, and a dedicated telehealth UI
 - first-class controlled-substance stewardship packets with practice-agreement linkage, service-line coverage, controlled clinical-governance review, publication sync, and a dedicated stewardship UI
 - first-class standards mappings and evidence binders with deterministic review status, binder-driven evidence readiness, controlled clinical-governance review, publication sync, and a dedicated standards/evidence UI
+- first-class evidence-gap remediation records with manual and deterministic creation paths, linked action-item escalation, explicit verification, QAPI trend reporting, and standards/evidence UI visibility
 - device-bound profile auth with enrollment codes, trusted device/session cookies, pilot-ops profile/device management, and a simple login flow
 - same-origin deployment plumbing for a public web origin that proxies browser API requests through `/clinic-api/*`
 - Render-first blueprint, startup/readiness validation, and a deploy smoke script for stub-mode pilots
@@ -44,19 +49,21 @@ The repository now has a working pilot backbone for:
 - a broader live role-validation command that can exercise synthetic office-manager, quality-lead, and HR-lead device flows against the deployed pilot
 - a pilot ops runbook with Render promotion, rollback, cleanup, and smoke instructions
 - first-class runtime-agent execution with prompt-backed agent specs, bounded internal tool allowlists, a real Responses API tool loop, structured run results, audit events, capability-gated API routes, and a dedicated runtime-agents UI
+- runtime agents now require explicit `RUNTIME_AGENTS_ENABLED=true` enablement instead of turning on accidentally whenever an API key is present
+- deployment-promotion checklist records and Pilot Ops hardening signals for runtime-agent freeze, latest smoke proof, rollback verification, and target auth mode
 - live Microsoft validation now distinguishes between Graph-probed surfaces and config-only Teams webhook checks
 - the repo now has a working Microsoft-live local readiness path with external Postgres bootstrap, persisted integration validation records, API readiness checks, and worker startup on real env values
 - API and worker runtime now use `tsx` start scripts as the pilot-safe execution path while the workspace-package compiled ESM layout remains a later cleanup item
 
 The following areas are still placeholders or partial:
 - production identity integration beyond enrolled-browser trust and the optional trusted-proxy groundwork
-- richer alert delivery integrations beyond the new cleanup/runbook/dashboard baseline
-- multi-room office master data, richer checklist analytics, and fuller Planner reconciliation breadth
-- broader HR/training workflows beyond manual requirements/completions and longer-range scorecard analytics
-- richer committee/QAPI trend history, standards-to-survey analytics, and evidence-gap remediation tooling beyond the new QAPI dashboard snapshot
-- deeper commercial claims-governance breadth, service-line-specific analytics, and clinic-specific governance breadth beyond the new practice-agreement slice
-- deeper runtime-agent eval coverage, approval-aware rollout policy, richer operator guardrails, and broader agent families beyond the first bounded execution slice
-- deeper deployment, observability, and environment promotion workflows
+- richer alert delivery integrations beyond the current critical-alert Teams/webhook baseline
+- richer checklist analytics, multi-room reporting depth, and fuller Planner reconciliation breadth
+- broader HR/training workflows beyond recurring plans/manual requirements and longer-range scorecard analytics
+- richer committee/QAPI trend history, standards-to-survey analytics, and evidence-gap remediation automation beyond the new evidence-gap/QAPI trend slice
+- deeper commercial claims-governance breadth, service-line-specific analytics, and clinic-specific governance breadth beyond the new revenue analytics slice
+- deeper runtime-agent eval coverage, approval-aware rollout policy, richer operator guardrails, and broader agent families beyond the explicitly frozen first bounded execution slice
+- deeper identity hardening, deployment observability, and environment promotion workflows
 
 Operational note from the latest live validation:
 
@@ -83,3 +90,12 @@ Operational note from the latest live validation:
   - revenue-review records with live commercial snapshots
   - revenue/commercial committee packets that now include a dedicated revenue section
   - a dedicated `/revenue` dashboard wired to those new records
+- the repo now also includes deeper commercial and evidence analytics:
+  - payer-issue aging buckets, pricing-review buckets, and revenue trend slices on `/revenue`
+  - service-line commercial risk indicators for stale pricing governance, stale revenue review coverage, and weak claims governance
+  - explicit evidence-gap tracking, verification workflow, and QAPI trend buckets for incidents, CAPAs, standards, binders, and evidence remediation
+- the repo now also includes the last broad MVP-comfort slice in local code and database state:
+  - room master data with per-room readiness tracking and checklist binding
+  - recurring HR/training plans with deterministic requirement generation and follow-up closure
+  - deployment-promotion checklist records and Pilot Ops hardening visibility for post-pilot rollout discipline
+- those newest room/training/deploy-hardening changes are repo-ready and database-ready, but they still need one more Render redeploy before they are live in the deployed app

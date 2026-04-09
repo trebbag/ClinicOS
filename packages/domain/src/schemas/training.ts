@@ -20,9 +20,36 @@ export const trainingRequirementSchema = z.object({
   employeeRole: z.string(),
   requirementType: trainingRequirementTypeSchema,
   title: z.string(),
+  planId: z.string().nullable().default(null),
+  sourceCycleKey: z.string().nullable().default(null),
+  followUpActionItemId: z.string().nullable().default(null),
   dueDate: z.string().nullable().default(null),
   notes: z.string().nullable().default(null),
   lastReminderSentAt: z.string().nullable().default(null),
+  createdBy: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+});
+
+export const trainingPlanStatusSchema = z.enum([
+  "active",
+  "inactive",
+  "archived"
+]);
+
+export const trainingPlanRecordSchema = z.object({
+  id: z.string(),
+  employeeRole: z.string(),
+  employeeId: z.string().nullable().default(null),
+  requirementType: trainingRequirementTypeSchema,
+  title: z.string(),
+  cadenceDays: z.number().int().positive(),
+  leadTimeDays: z.number().int().nonnegative(),
+  validityDays: z.number().int().positive().nullable().default(null),
+  ownerRole: z.string(),
+  status: trainingPlanStatusSchema,
+  notes: z.string().nullable().default(null),
+  lastMaterializedAt: z.string().nullable().default(null),
   createdBy: z.string(),
   createdAt: z.string(),
   updatedAt: z.string()
@@ -70,14 +97,24 @@ export const trainingGapSummarySchema = z.object({
 export const trainingDashboardSchema = z.object({
   employeeId: z.string(),
   employeeRole: z.string(),
+  plans: z.array(trainingPlanRecordSchema),
   requirements: z.array(trainingRequirementSchema),
   completions: z.array(trainingCompletionRecordSchema),
-  gapSummary: trainingGapSummarySchema
+  gapSummary: trainingGapSummarySchema,
+  planSummary: z.object({
+    activePlans: z.number().int().nonnegative(),
+    generatedRequirements: z.number().int().nonnegative(),
+    upcomingRequirements: z.number().int().nonnegative(),
+    overdueRequirements: z.number().int().nonnegative(),
+    openFollowUps: z.number().int().nonnegative()
+  })
 });
 
 export type TrainingRequirementType = z.infer<typeof trainingRequirementTypeSchema>;
 export type TrainingGapStatus = z.infer<typeof trainingGapStatusSchema>;
 export type TrainingRequirement = z.infer<typeof trainingRequirementSchema>;
+export type TrainingPlanStatus = z.infer<typeof trainingPlanStatusSchema>;
+export type TrainingPlanRecord = z.infer<typeof trainingPlanRecordSchema>;
 export type TrainingCompletionRecord = z.infer<typeof trainingCompletionRecordSchema>;
 export type TrainingGapItem = z.infer<typeof trainingGapItemSchema>;
 export type TrainingGapSummary = z.infer<typeof trainingGapSummarySchema>;
@@ -88,6 +125,9 @@ export function createTrainingRequirement(input: {
   employeeRole: string;
   requirementType: TrainingRequirementType;
   title: string;
+  planId?: string | null;
+  sourceCycleKey?: string | null;
+  followUpActionItemId?: string | null;
   dueDate?: string | null;
   notes?: string | null;
   createdBy: string;
@@ -99,9 +139,45 @@ export function createTrainingRequirement(input: {
     employeeRole: input.employeeRole,
     requirementType: input.requirementType,
     title: input.title,
+    planId: input.planId ?? null,
+    sourceCycleKey: input.sourceCycleKey ?? null,
+    followUpActionItemId: input.followUpActionItemId ?? null,
     dueDate: input.dueDate ?? null,
     notes: input.notes ?? null,
     lastReminderSentAt: null,
+    createdBy: input.createdBy,
+    createdAt: now,
+    updatedAt: now
+  });
+}
+
+export function createTrainingPlanRecord(input: {
+  employeeRole: string;
+  employeeId?: string | null;
+  requirementType: TrainingRequirementType;
+  title: string;
+  cadenceDays: number;
+  leadTimeDays?: number;
+  validityDays?: number | null;
+  ownerRole: string;
+  status?: TrainingPlanStatus;
+  notes?: string | null;
+  createdBy: string;
+}): TrainingPlanRecord {
+  const now = new Date().toISOString();
+  return trainingPlanRecordSchema.parse({
+    id: randomId("training_plan"),
+    employeeRole: input.employeeRole,
+    employeeId: input.employeeId ?? null,
+    requirementType: input.requirementType,
+    title: input.title,
+    cadenceDays: input.cadenceDays,
+    leadTimeDays: input.leadTimeDays ?? 14,
+    validityDays: input.validityDays ?? null,
+    ownerRole: input.ownerRole,
+    status: input.status ?? "active",
+    notes: input.notes ?? null,
+    lastMaterializedAt: null,
     createdBy: input.createdBy,
     createdAt: now,
     updatedAt: now
@@ -137,9 +213,35 @@ export const trainingRequirementCreateSchema = z.object({
   employeeRole: z.enum(roles),
   requirementType: trainingRequirementTypeSchema,
   title: z.string().min(3),
+  planId: z.string().optional(),
+  sourceCycleKey: z.string().optional(),
   dueDate: z.string().nullable().optional(),
   notes: z.string().max(2000).nullable().optional()
 });
+
+export const trainingPlanCreateSchema = z.object({
+  employeeRole: z.enum(roles),
+  employeeId: z.string().min(1).nullable().optional(),
+  requirementType: trainingRequirementTypeSchema,
+  title: z.string().min(3),
+  cadenceDays: z.number().int().min(30).max(730),
+  leadTimeDays: z.number().int().min(0).max(180).default(14),
+  validityDays: z.number().int().min(1).max(730).nullable().optional(),
+  ownerRole: z.enum(roles),
+  notes: z.string().max(2000).nullable().optional()
+});
+
+export const trainingPlanUpdateSchema = z.object({
+  status: trainingPlanStatusSchema.optional(),
+  cadenceDays: z.number().int().min(30).max(730).optional(),
+  leadTimeDays: z.number().int().min(0).max(180).optional(),
+  validityDays: z.number().int().min(1).max(730).nullable().optional(),
+  ownerRole: z.enum(roles).optional(),
+  notes: z.string().max(2000).nullable().optional()
+}).refine(
+  (value) => Object.values(value).some((entry) => entry !== undefined),
+  "At least one training-plan field must be updated."
+);
 
 export const trainingCompletionCreateSchema = z.object({
   requirementId: z.string().min(1),

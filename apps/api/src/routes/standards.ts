@@ -76,4 +76,39 @@ export async function registerStandardsRoutes(app: FastifyInstance): Promise<voi
     const params = request.params as { id: string };
     return app.clinicService.publishEvidenceBinder(actor, params.id);
   });
+
+  app.get("/evidence-gaps", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "standards.view");
+    const query = request.query as {
+      status?: string;
+      ownerRole?: string;
+      severity?: string;
+      standardId?: string;
+      binderId?: string;
+      committeeMeetingId?: string;
+      serviceLineId?: string;
+    };
+    return app.clinicService.listEvidenceGaps(query);
+  });
+
+  app.post("/evidence-gaps", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "standards.manage");
+    return app.clinicService.createEvidenceGap(actor, request.body);
+  });
+
+  app.patch("/evidence-gaps/:id", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "standards.manage");
+    const params = request.params as { id: string };
+    return app.clinicService.updateEvidenceGap(actor, params.id, request.body);
+  });
+
+  app.post("/evidence-gaps/:id/verify", async (request) => {
+    const actor = actorFromRequest(request);
+    requireCapability(actor, "standards.manage");
+    const params = request.params as { id: string };
+    return app.clinicService.verifyEvidenceGap(actor, params.id, request.body);
+  });
 }
