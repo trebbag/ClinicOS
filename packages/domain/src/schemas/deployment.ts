@@ -19,7 +19,9 @@ export const deploymentPromotionChecklistKeySchema = z.enum([
 
 export const deploymentPromotionChecklistItemStatusSchema = z.enum([
   "pending",
+  "in_progress",
   "completed",
+  "blocked",
   "not_applicable"
 ]);
 
@@ -48,8 +50,25 @@ export const trustedProxyReadinessSchema = z.object({
   sharedSecretConfigured: z.boolean(),
   allowedSkewSeconds: z.number().int().positive(),
   expectedHeaders: z.array(z.string()),
+  signatureValidationReady: z.boolean(),
   currentAuthMode: authModeSchema,
   ready: z.boolean()
+});
+
+export const deploymentChecklistProgressSchema = z.object({
+  totalItems: z.number().int().nonnegative(),
+  completedItems: z.number().int().nonnegative(),
+  blockedItems: z.number().int().nonnegative(),
+  completionPercent: z.number().min(0).max(100)
+});
+
+export const alertDeliveryHistoryEntrySchema = z.object({
+  key: z.string(),
+  scope: z.string(),
+  severity: z.string(),
+  dispatchedAt: z.string(),
+  cooldownMinutes: z.number().int().positive().nullable().default(null),
+  messageId: z.string().nullable().default(null)
 });
 
 export const deploymentPromotionRecordSchema = z.object({
@@ -119,7 +138,9 @@ export const deployHardeningStatusSchema = z.object({
   trustedProxyReadiness: trustedProxyReadinessSchema,
   recommendedTargetAuthMode: authModeSchema,
   latestPromotion: deploymentPromotionRecordSchema.nullable(),
+  latestPromotionChecklistProgress: deploymentChecklistProgressSchema.nullable(),
   latestAlertDispatchAt: z.string().nullable(),
+  alertHistory: z.array(alertDeliveryHistoryEntrySchema),
   latestRollbackVerificationAt: z.string().nullable(),
   latestSmokeAt: z.string().nullable()
 });
@@ -129,6 +150,8 @@ export type DeploymentPromotionChecklistKey = z.infer<typeof deploymentPromotion
 export type DeploymentPromotionChecklistItemStatus = z.infer<typeof deploymentPromotionChecklistItemStatusSchema>;
 export type DeploymentPromotionChecklistItemRecord = z.infer<typeof deploymentPromotionChecklistItemRecordSchema>;
 export type DeploymentRollbackVerification = z.infer<typeof deploymentRollbackVerificationSchema>;
+export type DeploymentChecklistProgress = z.infer<typeof deploymentChecklistProgressSchema>;
+export type AlertDeliveryHistoryEntry = z.infer<typeof alertDeliveryHistoryEntrySchema>;
 export type DeploymentPromotionRecord = z.infer<typeof deploymentPromotionRecordSchema>;
 export type DeploymentPromotionCreateCommand = z.infer<typeof deploymentPromotionCreateSchema>;
 export type DeploymentPromotionUpdateCommand = z.infer<typeof deploymentPromotionUpdateSchema>;

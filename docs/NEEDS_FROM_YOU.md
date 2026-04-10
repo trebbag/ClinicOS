@@ -213,40 +213,43 @@ The deployed Render stack is still healthy and pilot-usable, but the main remain
 
 ## What I still need from you next
 
-1. Fix the current Render API boot failure by setting `RUNTIME_AGENTS_ENABLED=false`
-   - the current API deploy failure is expected from the new production hardening rule
-   - set this on the `clinic-os-api` service at minimum
-   - recommended for consistency: also set it on `clinic-os-web` and `clinic-os-worker`
-   - after saving it, redeploy the affected services
-
-2. Keep `RUNTIME_AGENTS_ENABLED=false` explicit on Render
-   - runtime agents should stay shipped but intentionally disabled
-   - the live smoke path now checks this posture
-   - the current deployed disabled reason is still not the explicit freeze reason
-   - set the flag on the web and API environments so the deployed hardening status flips to explicit disablement
-
-3. Redeploy the latest web, API, and worker again
+1. Redeploy the latest web, API, and worker again
    - this newest local pass adds:
-     - richer worker runtime-state history and poll-attempt visibility
-     - a bounded API-side production worker-assist loop
-     - timeout-bounded runtime-state audit writes so the worker cannot stall on heartbeat logging
-     - deployment-promotion checklist item execution in Pilot Ops
-     - room readiness/checklist analytics in Office Manager
-     - recurring training/coaching analytics in Scorecards
-     - the new UI/UX documentation package in `docs/product/`
+     - deeper QAPI rollups and trend history
+     - richer room/readiness/checklist/Planner analytics
+     - richer recurring training and coaching-risk analytics
+     - deeper revenue and service-line comparison analytics
+     - richer Pilot Ops hardening visibility for trusted-proxy signature readiness, deployment checklist progress, and recent alert delivery history
+     - updated standards survey-readiness summary cards
 
-4. Recheck worker behavior after that redeploy
-   - the API service now has a bounded production worker-assist loop through `API_BACKGROUND_WORKER_ASSIST_ENABLED=true`
-   - after redeploy, `/ops/worker-health` should start showing poll activity even if the dedicated worker still is not heartbeating
-   - if the dedicated `clinic-os-worker` service still is not emitting runtime events, compare its Render logs to the timestamps shown in `/ops/worker-health`
+2. Rerun the two auth-backed live checks after that redeploy
+   - `npm run smoke:worker-health -- https://your-pilot-url.example.com`
+   - `npm run smoke:pilot-live -- https://your-pilot-url.example.com`
 
-5. Optional later real-user rollout details
+3. Confirm the newest live surfaces in the deployed app
+   - Pilot Ops:
+     - trusted-proxy signature readiness
+     - latest deployment checklist progress
+     - recent alert delivery history
+   - Office Manager:
+     - checklist template performance
+     - repeat-attention rooms
+     - Planner reconciliation by workflow type
+   - Scorecards:
+     - employee training risk
+     - owner-role workload
+   - Revenue:
+     - pricing freshness buckets
+     - claims coverage buckets
+     - service-line commercial comparisons
+
+4. Optional later real-user rollout details
    - one label per additional computer/device
    - primary profile for that device
    - up to two backup profiles if needed
    - named office manager / quality lead / HR lead profiles when you want them added
 
-6. Watch the new Pilot Ops worker-health surface during normal use
+5. Watch the new Pilot Ops worker-health surface during normal use
    - confirm `last heartbeat` keeps moving forward
    - confirm `operating state` is no longer stuck at `not polling`
    - confirm `last poll attempt` keeps moving
@@ -280,4 +283,4 @@ The next bounded validation step is:
 
 After that, the next major engineering step should be:
 
-- live validation of the new room/training/deploy-hardening surfaces, then either deeper office/HR analytics or later post-pilot identity hardening and runtime-agent rollout discipline
+- deeper commercial/service-line reporting depth, post-pilot identity hardening, or a later runtime-agent rollout-discipline pass

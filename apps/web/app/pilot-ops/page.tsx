@@ -69,6 +69,7 @@ type ConfigStatus = {
       sharedSecretConfigured: boolean;
       allowedSkewSeconds: number;
       expectedHeaders: string[];
+      signatureValidationReady: boolean;
       currentAuthMode: "dev_headers" | "trusted_proxy" | "device_profiles";
       ready: boolean;
     };
@@ -97,7 +98,21 @@ type ConfigStatus = {
         completedBy: string | null;
       };
     } | null;
+    latestPromotionChecklistProgress: {
+      totalItems: number;
+      completedItems: number;
+      blockedItems: number;
+      completionPercent: number;
+    } | null;
     latestAlertDispatchAt: string | null;
+    alertHistory: Array<{
+      key: string;
+      scope: "runtime" | "microsoft" | "worker" | "auth" | "office_ops" | "scorecards";
+      severity: "info" | "warning" | "critical";
+      dispatchedAt: string;
+      cooldownMinutes: number | null;
+      messageId: string | null;
+    }>;
     latestRollbackVerificationAt: string | null;
     latestSmokeAt: string | null;
   };
@@ -1078,7 +1093,17 @@ export default function PilotOpsPage(): JSX.Element {
             <span>{configStatus?.hardening.trustedProxyReadiness.sharedSecretConfigured ? "secret configured" : "secret missing"}</span>
             <span>
               Allowed skew {configStatus?.hardening.trustedProxyReadiness.allowedSkewSeconds ?? 0} sec.
+              {" "}Signature validation {configStatus?.hardening.trustedProxyReadiness.signatureValidationReady ? "ready" : "not ready"}.
               {" "}Expected headers {configStatus?.hardening.trustedProxyReadiness.expectedHeaders?.join(", ") ?? "none"}.
+            </span>
+          </div>
+          <div className="table-row">
+            <span>Latest checklist progress</span>
+            <span>{configStatus?.hardening.latestPromotionChecklistProgress?.completionPercent ?? 0}%</span>
+            <span>
+              {configStatus?.hardening.latestPromotionChecklistProgress
+                ? `${configStatus.hardening.latestPromotionChecklistProgress.completedItems} of ${configStatus.hardening.latestPromotionChecklistProgress.totalItems} completed, ${configStatus.hardening.latestPromotionChecklistProgress.blockedItems} blocked.`
+                : "No deployment checklist execution recorded yet."}
             </span>
           </div>
           <div className="table-row">
@@ -1090,6 +1115,28 @@ export default function PilotOpsPage(): JSX.Element {
             </span>
           </div>
         </div>
+        {configStatus?.hardening.alertHistory.length ? (
+          <div className="table" style={{ marginTop: 12 }}>
+            <div className="table-row table-head">
+              <span>Recent alert delivery</span>
+              <span>When</span>
+              <span>Detail</span>
+            </div>
+            {configStatus.hardening.alertHistory.map((entry) => (
+              <div key={`${entry.key}-${entry.dispatchedAt}`} className="table-row">
+                <span>
+                  {entry.key}
+                  <div className="muted">{entry.scope} / {entry.severity}</div>
+                </span>
+                <span>{new Date(entry.dispatchedAt).toLocaleString()}</span>
+                <span>
+                  Cooldown {entry.cooldownMinutes ?? "n/a"} min.
+                  {" "}Message {entry.messageId ?? "not recorded"}.
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div className="card">

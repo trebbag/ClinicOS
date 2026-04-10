@@ -11,7 +11,12 @@ export async function registerCommitteeRoutes(app: FastifyInstance): Promise<voi
   app.get("/qapi/trends", async (request) => {
     const actor = actorFromRequest(request);
     requireCapability(actor, "committees.view");
-    return app.clinicService.getQapiTrendSummary();
+    const query = request.query as {
+      months?: string;
+    };
+    return app.clinicService.getQapiTrendSummary({
+      months: query.months ? Number(query.months) : undefined
+    });
   });
 
   app.get("/committees", async (request) => {

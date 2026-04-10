@@ -1066,9 +1066,10 @@ export class ClinicApiService {
     const generatedAt = new Date().toISOString();
     const dateRangeEnd = endOfDay(command.dateTo ?? generatedAt);
     const dateRangeStart = startOfDay(command.dateFrom ?? subtractDays(dateRangeEnd, 29));
-    const [rooms, checklistRuns, officeManagerItems, escalationItems] = await Promise.all([
+    const [rooms, checklistRuns, checklistTemplates, officeManagerItems, escalationItems] = await Promise.all([
       this.repository.listRooms(command.roomType ? { roomType: command.roomType } : undefined),
       this.repository.listChecklistRuns(),
+      this.repository.listChecklistTemplates(),
       this.repository.listActionItems({ ownerRole: "office_manager" }),
       this.repository.listActionItems({ ownerRole: "medical_director" })
     ]);
@@ -1086,6 +1087,7 @@ export class ClinicApiService {
     )).flat();
     const runById = new Map(scopedRuns.map((run) => [run.id, run] as const));
     const roomById = new Map(scopedRooms.map((room) => [room.id, room] as const));
+    const templateById = new Map(checklistTemplates.map((template) => [template.id, template] as const));
     const itemsByRunId = new Map<string, ChecklistItemRecord[]>();
     for (const item of checklistItems) {
       const current = itemsByRunId.get(item.checklistRunId) ?? [];
@@ -1175,6 +1177,111 @@ export class ClinicApiService {
       || (item.closedAt === null && isOpenActionStatus(item.status))
     );
     const openPlannerItems = plannerItems.filter((item) => isOpenActionStatus(item.status));
+    const templatePerformance = Array.from(
+      scopedRuns.reduce((map, run) => {
+        const template = templateById.get(run.templateId);
+        if (!template) {
+          return map;
+        }
+
+        const current = map.get(template.id) ?? {
+          templateId: template.id,
+          templateName: template.name,
+          workflowDefinitionId: template.workflowDefinitionId,
+          totalRuns: 0,
+          blockedItems: 0,
+          missedRequiredItems: 0,
+          completionLatencies: [] as number[]
+        };
+        const runItems = itemsByRunId.get(run.id) ?? [];
+        current.totalRuns += 1;
+        current.blockedItems += runItems.filter((item) => item.status === "blocked").length;
+        current.missedRequiredItems += runItems.filter((item) => item.required && !["complete", "waived"].includes(item.status)).length;
+        current.completionLatencies.push(
+          ...runItems
+            .filter((item) => item.completedAt !== null)
+            .map((item) =>
+              Math.max(0, Math.round((new Date(item.completedAt ?? run.createdAt).getTime() - new Date(run.createdAt).getTime()) / 60_000))
+            )
+        );
+        map.set(template.id, current);
+        return map;
+      }, new Map<string, {
+        templateId: string;
+        templateName: string;
+        workflowDefinitionId: string;
+        totalRuns: number;
+        blockedItems: number;
+        missedRequiredItems: number;
+        completionLatencies: number[];
+      }>())
+    ).map(([, value]) => ({
+      templateId: value.templateId,
+      templateName: value.templateName,
+      workflowDefinitionId: value.workflowDefinitionId,
+      totalRuns: value.totalRuns,
+      blockedItems: value.blockedItems,
+      missedRequiredItems: value.missedRequiredItems,
+      averageCompletionLatencyMinutes: value.completionLatencies.length > 0
+        ? Math.round(value.completionLatencies.reduce((sum, entry) => sum + entry, 0) / value.completionLatencies.length)
+        : null
+    })).sort((left, right) =>
+      right.missedRequiredItems - left.missedRequiredItems
+      || right.blockedItems - left.blockedItems
+      || left.templateName.localeCompare(right.templateName)
+    );
+    const repeatAttentionRooms = roomRows
+      .filter((room) => room.repeatAttentionDays > 0 || room.missedRequiredItems > 0)
+      .map((room) => ({
+        roomId: room.roomId,
+        roomLabel: room.roomLabel,
+        roomType: room.roomType,
+        attentionDays: room.attentionNeededDays,
+        blockedDays: room.blockedDays,
+        missedRequiredItems: room.missedRequiredItems
+      }))
+      .sort((left, right) =>
+        right.missedRequiredItems - left.missedRequiredItems
+        || (right.attentionDays + right.blockedDays) - (left.attentionDays + left.blockedDays)
+        || left.roomLabel.localeCompare(right.roomLabel)
+      );
+    const workflowTypeBreakdown = Array.from(
+      plannerItems.reduce((map, item) => {
+        const workflowType = item.kind;
+        const bucket = map.get(workflowType) ?? {
+          workflowType,
+          openActionItems: 0,
+          overdueOpenActionItems: 0,
+          pendingCreate: 0,
+          syncErrors: 0
+        };
+        const isOpen = isOpenActionStatus(item.status);
+        if (isOpen) {
+          bucket.openActionItems += 1;
+        }
+        if (isOpen && item.dueDate !== null && item.dueDate < generatedAt) {
+          bucket.overdueOpenActionItems += 1;
+        }
+        if (item.syncStatus === "pending_create") {
+          bucket.pendingCreate += 1;
+        }
+        if (item.syncStatus === "sync_error") {
+          bucket.syncErrors += 1;
+        }
+        map.set(workflowType, bucket);
+        return map;
+      }, new Map<string, {
+        workflowType: string;
+        openActionItems: number;
+        overdueOpenActionItems: number;
+        pendingCreate: number;
+        syncErrors: number;
+      }>())
+    ).map(([, value]) => value).sort((left, right) =>
+      right.overdueOpenActionItems - left.overdueOpenActionItems
+      || right.syncErrors - left.syncErrors
+      || left.workflowType.localeCompare(right.workflowType)
+    );
 
     return {
       generatedAt,
@@ -1210,8 +1317,11 @@ export class ClinicApiService {
             return age >= 7 && age <= 30;
           }).length,
           overThirtyDays: openPlannerItems.filter((item) => daysBetween(generatedAt, item.createdAt) > 30).length
-        }
-      }
+        },
+        workflowTypeBreakdown
+      },
+      templatePerformance,
+      repeatAttentionRooms
     };
   }
 
@@ -2136,6 +2246,7 @@ export class ClinicApiService {
 
   async getRevenueDashboardSummary(filters?: {
     serviceLineId?: string;
+    historyMonths?: number;
   }): Promise<RevenueDashboardSummary> {
     return this.buildRevenueDashboardSummary(filters);
   }
@@ -2340,8 +2451,11 @@ export class ClinicApiService {
     return this.buildCommitteeQapiDashboardSummary();
   }
 
-  async getQapiTrendSummary(): Promise<QapiTrendSummary> {
-    return this.buildQapiTrendSummary();
+  async getQapiTrendSummary(input?: unknown): Promise<QapiTrendSummary> {
+    const command = z.object({
+      months: z.number().int().min(3).max(24).default(6)
+    }).parse(input ?? {});
+    return this.buildQapiTrendSummary(command.months);
   }
 
   async listCommitteeMeetings(filters?: {
@@ -2619,10 +2733,15 @@ export class ClinicApiService {
     publishedPublicAssetCount: number;
     latestPricingGovernanceStatus: PricingGovernanceRecord["status"] | null;
     latestPricingReviewDueAt: string | null;
+    pricingGovernanceFreshness: "current" | "due_soon" | "overdue" | "missing";
     latestRevenueReviewStatus: RevenueReviewRecord["status"] | null;
     latestRevenueReviewDate: string | null;
+    revenueReviewFreshnessDays: number | null;
     weakClaimsGovernance: boolean;
+    commercialRiskLevel: "low" | "medium" | "high" | "critical";
   }>> {
+    const now = new Date().toISOString();
+    const dueSoonThreshold = addDays(now, 30);
     const [serviceLines, packs, publicAssets, pricingGovernance, revenueReviews] = await Promise.all([
       this.repository.listServiceLines(filters),
       this.repository.listServiceLinePacks(),
@@ -2636,16 +2755,47 @@ export class ClinicApiService {
       const serviceAssets = publicAssets.filter((asset) => asset.serviceLine === serviceLine.id);
       const latestPricing = pricingGovernance.find((record) => record.serviceLineId === serviceLine.id) ?? null;
       const latestReview = revenueReviews.find((record) => record.serviceLineId === serviceLine.id) ?? null;
+      const pricingGovernanceFreshness =
+        latestPricing === null
+          ? "missing"
+          : latestPricing.reviewDueAt === null
+            ? "current"
+            : latestPricing.reviewDueAt < now
+              ? "overdue"
+              : latestPricing.reviewDueAt <= dueSoonThreshold
+                ? "due_soon"
+                : "current";
+      const revenueReviewFreshnessAnchor = latestReview?.completedAt ?? latestReview?.targetReviewDate ?? null;
+      const revenueReviewFreshnessDays = revenueReviewFreshnessAnchor
+        ? daysBetween(now, revenueReviewFreshnessAnchor)
+        : null;
+      const publishedAssets = serviceAssets.filter((asset) => asset.status === "published");
+      const riskScore = [
+        serviceLine.governanceStatus !== "published",
+        pricingGovernanceFreshness === "overdue" || pricingGovernanceFreshness === "missing",
+        revenueReviewFreshnessDays !== null && revenueReviewFreshnessDays > 45,
+        !serviceLine.hasClaimsInventory && publishedAssets.length > 0
+      ].filter(Boolean).length;
+      const commercialRiskLevel = riskScore >= 3
+        ? "critical"
+        : riskScore === 2
+          ? "high"
+          : riskScore === 1
+            ? "medium"
+            : "low";
       return {
         serviceLine,
         latestPack: serviceLinePacks[0] ?? null,
         linkedPublicAssetCount: serviceAssets.length,
-        publishedPublicAssetCount: serviceAssets.filter((asset) => asset.status === "published").length,
+        publishedPublicAssetCount: publishedAssets.length,
         latestPricingGovernanceStatus: latestPricing?.status ?? null,
         latestPricingReviewDueAt: latestPricing?.reviewDueAt ?? null,
+        pricingGovernanceFreshness,
         latestRevenueReviewStatus: latestReview?.status ?? null,
         latestRevenueReviewDate: latestReview?.targetReviewDate ?? latestReview?.completedAt ?? null,
-        weakClaimsGovernance: !serviceLine.hasClaimsInventory && serviceAssets.some((asset) => asset.status === "published")
+        revenueReviewFreshnessDays,
+        weakClaimsGovernance: !serviceLine.hasClaimsInventory && publishedAssets.length > 0,
+        commercialRiskLevel
       };
     });
   }
@@ -5162,9 +5312,28 @@ export class ClinicApiService {
         "x-clinic-auth-ts",
         "x-clinic-auth-signature"
       ],
+      signatureValidationReady: trustedProxyConfigured,
       currentAuthMode,
       ready: trustedProxyConfigured
     };
+    const latestPromotionChecklistProgress = latestPromotion
+      ? {
+          totalItems: latestPromotion.checklistItems.length,
+          completedItems: latestPromotion.checklistItems.filter((item) => item.status === "completed").length,
+          blockedItems: latestPromotion.checklistItems.filter((item) => item.status === "blocked").length,
+          completionPercent: latestPromotion.checklistItems.length > 0
+            ? Math.round((latestPromotion.checklistItems.filter((item) => item.status === "completed").length / latestPromotion.checklistItems.length) * 100)
+            : 0
+        }
+      : null;
+    const alertHistory = alerts.slice(0, 5).map((event) => ({
+      key: event.entityId,
+      scope: typeof event.payload?.scope === "string" ? event.payload.scope : "runtime",
+      severity: typeof event.payload?.severity === "string" ? event.payload.severity : "critical",
+      dispatchedAt: event.createdAt,
+      cooldownMinutes: typeof event.payload?.cooldownMinutes === "number" ? event.payload.cooldownMinutes : null,
+      messageId: typeof event.payload?.messageId === "string" ? event.payload.messageId : null
+    }));
 
     return {
       currentAuthMode,
@@ -5175,7 +5344,9 @@ export class ClinicApiService {
       trustedProxyReadiness,
       recommendedTargetAuthMode: "trusted_proxy",
       latestPromotion,
+      latestPromotionChecklistProgress,
       latestAlertDispatchAt,
+      alertHistory,
       latestRollbackVerificationAt,
       latestSmokeAt
     };
@@ -6475,6 +6646,97 @@ export class ClinicApiService {
         return map;
       }, new Map<string, { employeeRole: string; openFollowUps: number; overdueFollowUps: number }>())
     ).map(([, value]) => value);
+    const employeeRisks = Array.from(
+      relevantRequirements.reduce((map, requirement) => {
+        const key = `${requirement.employeeId}:${requirement.employeeRole}`;
+        const status = statusByRequirement.get(requirement.id) ?? "missing";
+        const bucket = map.get(key) ?? {
+          employeeId: requirement.employeeId,
+          employeeRole: requirement.employeeRole,
+          openRequirements: 0,
+          overdueRequirements: 0,
+          expiringSoonRequirements: 0,
+          repeatedOverdueCycles: 0,
+          openFollowUps: 0,
+          overdueFollowUps: 0
+        };
+        if (isTrainingGapOpen(status)) {
+          bucket.openRequirements += 1;
+        }
+        if (status === "overdue") {
+          bucket.overdueRequirements += 1;
+        }
+        if (status === "expiring_soon") {
+          bucket.expiringSoonRequirements += 1;
+        }
+
+        const followUp = requirement.followUpActionItemId
+          ? followUpActions.find((item) => item.id === requirement.followUpActionItemId) ?? null
+          : null;
+        if (followUp && isOpenActionStatus(followUp.status)) {
+          bucket.openFollowUps += 1;
+          if (followUp.dueDate !== null && followUp.dueDate < generatedAt) {
+            bucket.overdueFollowUps += 1;
+          }
+        }
+        map.set(key, bucket);
+        return map;
+      }, new Map<string, {
+        employeeId: string;
+        employeeRole: string;
+        openRequirements: number;
+        overdueRequirements: number;
+        expiringSoonRequirements: number;
+        repeatedOverdueCycles: number;
+        openFollowUps: number;
+        overdueFollowUps: number;
+      }>())
+    ).map(([, value]) => ({
+      ...value,
+      repeatedOverdueCycles: repeatedOverdueCycles
+        .filter((entry) => entry.employeeId === value.employeeId && entry.employeeRole === value.employeeRole)
+        .reduce((sum, entry) => sum + entry.repeatedCycles, 0)
+    })).sort((left, right) =>
+      right.overdueRequirements - left.overdueRequirements
+      || right.openFollowUps - left.openFollowUps
+      || left.employeeId.localeCompare(right.employeeId)
+    );
+    const ownerRoleSummaries = Array.from(
+      relevantPlans.reduce((map, plan) => {
+        const bucket = map.get(plan.ownerRole) ?? {
+          ownerRole: plan.ownerRole,
+          activePlans: 0,
+          openRequirements: 0,
+          overdueRequirements: 0,
+          openFollowUps: 0
+        };
+        if (plan.status === "active") {
+          bucket.activePlans += 1;
+        }
+
+        const planRequirements = relevantRequirements.filter((requirement) => requirement.planId === plan.id);
+        bucket.openRequirements += planRequirements.filter((requirement) => openRequirementIds.has(requirement.id)).length;
+        bucket.overdueRequirements += planRequirements.filter((requirement) => statusByRequirement.get(requirement.id) === "overdue").length;
+        bucket.openFollowUps += planRequirements.filter((requirement) => {
+          const followUp = requirement.followUpActionItemId
+            ? followUpActions.find((item) => item.id === requirement.followUpActionItemId) ?? null
+            : null;
+          return Boolean(followUp && isOpenActionStatus(followUp.status));
+        }).length;
+        map.set(plan.ownerRole, bucket);
+        return map;
+      }, new Map<string, {
+        ownerRole: string;
+        activePlans: number;
+        openRequirements: number;
+        overdueRequirements: number;
+        openFollowUps: number;
+      }>())
+    ).map(([, value]) => value).sort((left, right) =>
+      right.overdueRequirements - left.overdueRequirements
+      || right.openFollowUps - left.openFollowUps
+      || left.ownerRole.localeCompare(right.ownerRole)
+    );
 
     return {
       generatedAt,
@@ -6515,7 +6777,9 @@ export class ClinicApiService {
       followUpActionBurdenByRole,
       repeatedOverdueCycles,
       recentCompletionTrend,
-      requirementCycles
+      requirementCycles,
+      employeeRisks,
+      ownerRoleSummaries
     };
   }
 
@@ -7596,6 +7860,7 @@ export class ClinicApiService {
     const openIncidents = incidents.filter((incident) => incident.status !== "closed");
     const openCapas = capas.filter((capa) => capa.status !== "closed");
     const openEvidenceGaps = evidenceGaps.filter((gap) => !["verified", "archived"].includes(gap.status));
+    const verifiedEvidenceGaps = evidenceGaps.filter((gap) => gap.status === "verified");
     const overdueStandardsReviews = standards.filter((standard) =>
       standard.nextReviewDueAt !== null && standard.nextReviewDueAt < now
     );
@@ -7612,6 +7877,12 @@ export class ClinicApiService {
       agreement.expiresAt !== null && agreement.expiresAt <= practiceAgreementExpiryThreshold
     );
     const standardsMissingCurrentEvidence = standards.filter((standard) => standard.evidenceDocumentIds.length === 0);
+    const evidenceGapActionItems = (await Promise.all(
+      openEvidenceGaps
+        .map((gap) => gap.actionItemId)
+        .filter((value): value is string => Boolean(value))
+        .map((actionItemId) => this.repository.getActionItem(actionItemId))
+    )).filter((item): item is ActionItemRecord => Boolean(item));
 
     return {
       openIncidents: openIncidents.length,
@@ -7619,8 +7890,12 @@ export class ClinicApiService {
       openCapas: openCapas.length,
       overdueCapas: openCapas.filter((capa) => capa.dueDate < now).length,
       openEvidenceGaps: openEvidenceGaps.length,
+      verifiedEvidenceGaps: verifiedEvidenceGaps.length,
       criticalEvidenceGaps: openEvidenceGaps.filter((gap) => gap.severity === "critical").length,
+      blockedEvidenceGaps: openEvidenceGaps.filter((gap) => gap.status === "blocked").length,
       overdueEvidenceGaps: openEvidenceGaps.filter((gap) => gap.dueDate !== null && gap.dueDate < now).length,
+      evidenceGapVerificationBacklog: openEvidenceGaps.filter((gap) => gap.status === "ready_for_verification").length,
+      evidenceGapActionItemsOpen: evidenceGapActionItems.filter((item) => isOpenActionStatus(item.status)).length,
       overdueActionItems: overview.overdueActionItems,
       pendingApprovals: overview.openApprovals,
       overdueScorecardReviews: overview.overdueScorecardReviews,
@@ -7628,9 +7903,13 @@ export class ClinicApiService {
       standardsAttentionNeeded: standards.filter((standard) => standard.status === "attention_needed").length,
       standardsReviewPending: standards.filter((standard) => standard.status === "review_pending").length,
       overdueStandardsReviews: overdueStandardsReviews.length,
+      standardsSurveyReady: standards.filter((standard) => standard.status === "complete").length,
+      standardsWithCurrentEvidenceCoverage: standards.filter((standard) => standard.evidenceDocumentIds.length > 0).length,
       standardsMissingCurrentEvidence: standardsMissingCurrentEvidence.length,
+      standardsMissingBinderLink: standards.filter((standard) => standard.latestBinderId === null).length,
       evidenceBindersDraft: binders.filter((binder) => binder.status === "draft").length,
       evidenceBindersInReview: evidenceBindersInReview.length,
+      evidenceBindersPublished: binders.filter((binder) => binder.status === "published").length,
       controlledSubstancePacketsNeedingReview: controlledSubstancePacketsNeedingReview.length,
       controlledSubstancePacketsPublished: controlledSubstancePackets.filter((packet) => packet.status === "published").length,
       telehealthPacketsNeedingReview: telehealthPacketsNeedingReview.length,
@@ -7638,7 +7917,7 @@ export class ClinicApiService {
     };
   }
 
-  private async buildQapiTrendSummary(): Promise<QapiTrendSummary> {
+  private async buildQapiTrendSummary(requestedMonths = 6): Promise<QapiTrendSummary> {
     const generatedAt = new Date().toISOString();
     const [
       incidents,
@@ -7654,9 +7933,9 @@ export class ClinicApiService {
       this.repository.listEvidenceBinders()
     ]);
 
-    const periods = Array.from({ length: 6 }, (_value, index) => {
+    const periods = Array.from({ length: requestedMonths }, (_value, index) => {
       const date = new Date();
-      date.setUTCMonth(date.getUTCMonth() - (5 - index));
+      date.setUTCMonth(date.getUTCMonth() - (requestedMonths - 1 - index));
       const periodStart = startOfMonth(date.toISOString());
       const periodEnd = endOfMonth(date.toISOString());
       const periodLabel = new Intl.DateTimeFormat("en-US", {
@@ -7691,10 +7970,49 @@ export class ClinicApiService {
         evidenceBindersPublished: binders.filter((record) => record.publishedAt !== null && within(record.publishedAt)).length
       };
     });
+    const rollup = {
+      requestedMonths,
+      incidentsOpened: periods.reduce((sum, period) => sum + period.incidentsOpened, 0),
+      incidentsClosed: periods.reduce((sum, period) => sum + period.incidentsClosed, 0),
+      capasOpened: periods.reduce((sum, period) => sum + period.capasOpened, 0),
+      capasClosed: periods.reduce((sum, period) => sum + period.capasClosed, 0),
+      evidenceGapsOpened: periods.reduce((sum, period) => sum + period.evidenceGapsOpened, 0),
+      evidenceGapsVerified: periods.reduce((sum, period) => sum + period.evidenceGapsVerified, 0),
+      averageOverdueStandardsReviews: Number(
+        (periods.reduce((sum, period) => sum + period.overdueStandardsReviews, 0) / Math.max(1, periods.length)).toFixed(1)
+      ),
+      averageEvidenceBindersInReview: Number(
+        (periods.reduce((sum, period) => sum + period.evidenceBindersInReview, 0) / Math.max(1, periods.length)).toFixed(1)
+      ),
+      currentOpenEvidenceGaps: evidenceGaps.filter((record) => !["verified", "archived"].includes(record.status)).length,
+      currentVerificationBacklog: evidenceGaps.filter((record) => record.status === "ready_for_verification").length,
+      currentStandardsMissingEvidence: standards.filter((record) => record.evidenceDocumentIds.length === 0).length
+    };
+    const latestPeriod = periods[periods.length - 1];
+    const highlights = [
+      latestPeriod.incidentsOpened > latestPeriod.incidentsClosed
+        ? `${latestPeriod.periodLabel}: incidents opened outpaced closures (${latestPeriod.incidentsOpened} vs ${latestPeriod.incidentsClosed}).`
+        : null,
+      latestPeriod.capasOpened > latestPeriod.capasClosed
+        ? `${latestPeriod.periodLabel}: CAPAs opened outpaced closures (${latestPeriod.capasOpened} vs ${latestPeriod.capasClosed}).`
+        : null,
+      latestPeriod.evidenceGapsOpened > latestPeriod.evidenceGapsVerified
+        ? `${latestPeriod.periodLabel}: evidence-gap creation outpaced verification (${latestPeriod.evidenceGapsOpened} vs ${latestPeriod.evidenceGapsVerified}).`
+        : null,
+      rollup.currentStandardsMissingEvidence > 0
+        ? `${rollup.currentStandardsMissingEvidence} standards still lack a current evidence document.`
+        : null,
+      rollup.currentVerificationBacklog > 0
+        ? `${rollup.currentVerificationBacklog} evidence gaps are waiting for explicit verification.`
+        : null
+    ].filter((value): value is string => Boolean(value));
 
     return {
       generatedAt,
-      periods
+      requestedMonths,
+      periods,
+      rollup,
+      highlights
     };
   }
 
@@ -7716,8 +8034,10 @@ export class ClinicApiService {
 
   private async buildRevenueDashboardSummary(input?: {
     serviceLineId?: string;
+    historyMonths?: number;
   }): Promise<RevenueDashboardSummary> {
     const serviceLineId = input?.serviceLineId;
+    const historyMonths = Math.max(3, Math.min(24, input?.historyMonths ?? 6));
     const now = new Date().toISOString();
     const dueSoonThreshold = addDays(now, 30);
     const [payerIssues, pricingGovernance, revenueReviews, serviceLines, publicAssets] = await Promise.all([
@@ -7788,9 +8108,89 @@ export class ClinicApiService {
         missingPricingGovernance: publishedPack && !activePricing.some((record) => record.serviceLineId === serviceLine.id)
       };
     });
-    const trends = Array.from({ length: 6 }, (_value, index) => {
+    const pricingFreshnessBuckets = {
+      current: scopedServiceLines.filter((serviceLine) => {
+        const latestPricing = pricingGovernance.find((record) => record.serviceLineId === serviceLine.id) ?? null;
+        return latestPricing !== null && (latestPricing.reviewDueAt === null || latestPricing.reviewDueAt > dueSoonThreshold);
+      }).length,
+      dueSoon: scopedServiceLines.filter((serviceLine) => {
+        const latestPricing = pricingGovernance.find((record) => record.serviceLineId === serviceLine.id) ?? null;
+        return Boolean(latestPricing?.reviewDueAt && latestPricing.reviewDueAt >= now && latestPricing.reviewDueAt <= dueSoonThreshold);
+      }).length,
+      overdue: scopedServiceLines.filter((serviceLine) => {
+        const latestPricing = pricingGovernance.find((record) => record.serviceLineId === serviceLine.id) ?? null;
+        return Boolean(latestPricing?.reviewDueAt && latestPricing.reviewDueAt < now);
+      }).length,
+      missing: scopedServiceLines.filter((serviceLine) =>
+        !pricingGovernance.some((record) => record.serviceLineId === serviceLine.id)
+      ).length
+    };
+    const claimsCoverageBuckets = {
+      covered: scopedServiceLines.filter((serviceLine) =>
+        serviceLine.hasClaimsInventory && publishedAssets.some((asset) => asset.serviceLine === serviceLine.id)
+      ).length,
+      weak: serviceLinesWeakClaimsGovernance.length,
+      none: scopedServiceLines.filter((serviceLine) =>
+        !serviceLine.hasClaimsInventory && !publishedAssets.some((asset) => asset.serviceLine === serviceLine.id)
+      ).length
+    };
+    const serviceLineComparisons = scopedServiceLines.map((serviceLine) => {
+      const latestPricing = pricingGovernance.find((record) => record.serviceLineId === serviceLine.id) ?? null;
+      const latestReview = revenueReviews.find((review) => review.serviceLineId === serviceLine.id) ?? null;
+      const serviceLinePublishedAssets = publishedAssets.filter((asset) => asset.serviceLine === serviceLine.id);
+      const publishedPack = serviceLine.governanceStatus === "published";
+      const pricingFreshness: "current" | "due_soon" | "overdue" | "missing" =
+        latestPricing === null
+          ? "missing"
+          : latestPricing.reviewDueAt === null
+            ? "current"
+            : latestPricing.reviewDueAt < now
+              ? "overdue"
+              : latestPricing.reviewDueAt <= dueSoonThreshold
+                ? "due_soon"
+                : "current";
+      const revenueReviewFreshnessAnchor = latestReview?.completedAt ?? latestReview?.targetReviewDate ?? null;
+      const revenueReviewFreshnessDays = revenueReviewFreshnessAnchor
+        ? daysBetween(now, revenueReviewFreshnessAnchor)
+        : null;
+      const claimsCoverageStatus: "covered" | "weak" | "none" = serviceLine.hasClaimsInventory
+        ? "covered"
+        : serviceLinePublishedAssets.length > 0
+          ? "weak"
+          : "none";
+      const comparisonRiskScore = [
+        !publishedPack,
+        pricingFreshness === "overdue" || pricingFreshness === "missing",
+        revenueReviewFreshnessDays !== null && revenueReviewFreshnessDays > 45,
+        claimsCoverageStatus === "weak"
+      ].filter(Boolean).length;
+      const commercialRiskLevel: "low" | "medium" | "high" | "critical" = comparisonRiskScore >= 3
+        ? "critical"
+        : comparisonRiskScore === 2
+          ? "high"
+          : comparisonRiskScore === 1
+            ? "medium"
+            : "low";
+      return {
+        serviceLineId: serviceLine.id,
+        governanceStatus: serviceLine.governanceStatus,
+        publishedPack,
+        latestPricingGovernanceStatus: latestPricing?.status ?? null,
+        pricingFreshness,
+        latestRevenueReviewStatus: latestReview?.status ?? null,
+        revenueReviewFreshnessDays,
+        publishedPublicAssets: serviceLinePublishedAssets.length,
+        claimsCoverageStatus,
+        commercialRiskLevel
+      };
+    }).sort((left, right) => {
+      const rank = { critical: 0, high: 1, medium: 2, low: 3 } as const;
+      return rank[left.commercialRiskLevel] - rank[right.commercialRiskLevel]
+        || left.serviceLineId.localeCompare(right.serviceLineId);
+    });
+    const trends = Array.from({ length: historyMonths }, (_value, index) => {
       const date = new Date();
-      date.setUTCMonth(date.getUTCMonth() - (5 - index));
+      date.setUTCMonth(date.getUTCMonth() - (historyMonths - 1 - index));
       const periodStart = startOfMonth(date.toISOString());
       const periodEnd = endOfMonth(date.toISOString());
       const periodLabel = new Intl.DateTimeFormat("en-US", {
@@ -7837,8 +8237,11 @@ export class ClinicApiService {
       publicAssetsAtRisk: publicAssetsAtRisk.length,
       payerIssueAging,
       pricingReviewBuckets,
+      pricingFreshnessBuckets,
+      claimsCoverageBuckets,
       trends,
       serviceLineRisks,
+      serviceLineComparisons,
       attentionItems: [
         ...escalatedPayerIssues.slice(0, 3).map((issue) => `Escalated payer issue: ${issue.title}`),
         ...pricingAttentionNeeded.slice(0, 3).map((record) => `Pricing governance needs attention: ${record.title}`),
@@ -8034,8 +8437,8 @@ export class ClinicApiService {
     const agingPricingItems = pricingGovernance
       .filter((record) => record.reviewDueAt !== null || ["approval_pending", "publish_pending", "attention_needed"].includes(record.status))
       .slice(0, 4);
-    const serviceLineRiskLines = summary.serviceLineRisks
-      .filter((risk) => risk.missingPricingGovernance || risk.weakClaimsGovernance || risk.publicAssetsAtRisk > 0)
+    const serviceLineRiskLines = summary.serviceLineComparisons
+      .filter((risk) => risk.commercialRiskLevel !== "low")
       .slice(0, 4);
 
     return [
@@ -8072,7 +8475,7 @@ export class ClinicApiService {
       "### Service-line commercial risks",
       ...(serviceLineRiskLines.length > 0
         ? serviceLineRiskLines.map((risk) =>
-            `- ${risk.serviceLineId.replaceAll("_", " ")}: missing pricing=${risk.missingPricingGovernance ? "yes" : "no"}, weak claims=${risk.weakClaimsGovernance ? "yes" : "no"}, public assets at risk=${risk.publicAssetsAtRisk}`
+            `- ${risk.serviceLineId.replaceAll("_", " ")}: risk ${risk.commercialRiskLevel}, pricing ${risk.pricingFreshness}, revenue review freshness ${risk.revenueReviewFreshnessDays ?? "n/a"} days, claims ${risk.claimsCoverageStatus}, published assets ${risk.publishedPublicAssets}`
           )
         : ["- No current service-line risk flags."]),
       "",

@@ -115,3 +115,10 @@ Operational note from the latest live validation:
   - the API can run a bounded production worker-assist loop when `API_BACKGROUND_WORKER_ASSIST_ENABLED=true`
   - `render.yaml` now enables that assist loop for the API service by default
   - the next redeploy should confirm whether the deployed queue now drains even if the dedicated Render worker still misses polls
+- the latest local repo pass now deepens the remaining full-product oversight layers without widening into new agent breadth:
+  - deeper QAPI rollups and longer-history trend views with evidence-gap verification, published-binder, and survey-readiness counts
+  - richer room analytics for checklist template performance, repeat-attention rooms, and Planner reconciliation by workflow type
+  - richer recurring training analytics for employee risk, owner-role workload, repeated overdue cycles, and follow-up burden
+  - deeper revenue and service-line analytics for pricing freshness, claims-coverage buckets, and commercial-risk comparisons
+  - richer Pilot Ops hardening visibility for trusted-proxy signature readiness, deployment checklist progress, and recent critical alert delivery history
+  - updated standards UI survey-readiness coverage summaries plus service-line/Pilot Ops UI visibility for the new analytics surfaces

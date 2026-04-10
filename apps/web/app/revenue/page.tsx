@@ -40,6 +40,17 @@ type RevenueSummary = {
     pendingApproval: number;
     attentionNeeded: number;
   };
+  pricingFreshnessBuckets?: {
+    current: number;
+    dueSoon: number;
+    overdue: number;
+    missing: number;
+  };
+  claimsCoverageBuckets?: {
+    covered: number;
+    weak: number;
+    none: number;
+  };
   trends?: Array<{
     periodLabel: string;
     periodStart: string;
@@ -57,6 +68,18 @@ type RevenueSummary = {
     publicAssetsAtRisk: number;
     weakClaimsGovernance: boolean;
     missingPricingGovernance: boolean;
+  }>;
+  serviceLineComparisons?: Array<{
+    serviceLineId: ServiceLineId;
+    governanceStatus: string;
+    publishedPack: boolean;
+    latestPricingGovernanceStatus: PricingGovernanceRecord["status"] | null;
+    pricingFreshness: "current" | "due_soon" | "overdue" | "missing";
+    latestRevenueReviewStatus: RevenueReviewRecord["status"] | null;
+    revenueReviewFreshnessDays: number | null;
+    publishedPublicAssets: number;
+    claimsCoverageStatus: "covered" | "weak" | "none";
+    commercialRiskLevel: "low" | "medium" | "high" | "critical";
   }>;
   attentionItems: string[];
 };
@@ -129,6 +152,7 @@ export default function RevenuePage(): JSX.Element {
   const [payerIssues, setPayerIssues] = useState<PayerIssueRecord[]>([]);
   const [pricingRecords, setPricingRecords] = useState<PricingGovernanceRecord[]>([]);
   const [revenueReviews, setRevenueReviews] = useState<RevenueReviewRecord[]>([]);
+  const [historyMonths, setHistoryMonths] = useState("12");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -168,7 +192,7 @@ export default function RevenuePage(): JSX.Element {
     setLoading(true);
     try {
       const [summaryResponse, payerIssueResponse, pricingResponse, reviewResponse] = await Promise.all([
-        apiRequest<RevenueSummary>("/revenue/summary", actor),
+        apiRequest<RevenueSummary>(`/revenue/summary?historyMonths=${historyMonths}`, actor),
         apiRequest<PayerIssueRecord[]>("/payer-issues", actor),
         apiRequest<PricingGovernanceRecord[]>("/pricing-governance", actor),
         apiRequest<RevenueReviewRecord[]>("/revenue-reviews", actor)
@@ -187,7 +211,7 @@ export default function RevenuePage(): JSX.Element {
 
   useEffect(() => {
     void loadData();
-  }, [actor?.actorId, actor?.role, canView]);
+  }, [actor?.actorId, actor?.role, canView, historyMonths]);
 
   async function runMutation(action: () => Promise<void>): Promise<void> {
     setSubmitting(true);
@@ -362,8 +386,18 @@ export default function RevenuePage(): JSX.Element {
 
       <article className="card stack">
         <div className="actions" style={{ justifyContent: "space-between" }}>
-          <h2>Dashboard</h2>
-          <span className="muted">{loading ? "Loading..." : "Current revenue signal"}</span>
+          <div className="stack" style={{ gap: 4 }}>
+            <h2>Dashboard</h2>
+            <span className="muted">{loading ? "Loading..." : "Current revenue signal"}</span>
+          </div>
+          <label className="stack" style={{ minWidth: 160 }}>
+            <span className="muted">Trend window</span>
+            <select value={historyMonths} onChange={(event) => setHistoryMonths(event.target.value)}>
+              <option value="6">Last 6 months</option>
+              <option value="12">Last 12 months</option>
+              <option value="18">Last 18 months</option>
+            </select>
+          </label>
         </div>
         {summary ? (
           <>
@@ -392,6 +426,14 @@ export default function RevenuePage(): JSX.Element {
                 <div className="card"><div className="muted">Pricing overdue</div><strong>{summary.pricingReviewBuckets.overdue}</strong></div>
                 <div className="card"><div className="muted">Pending approval</div><strong>{summary.pricingReviewBuckets.pendingApproval}</strong></div>
                 <div className="card"><div className="muted">Attention needed</div><strong>{summary.pricingReviewBuckets.attentionNeeded}</strong></div>
+              </div>
+            ) : null}
+            {summary.pricingFreshnessBuckets && summary.claimsCoverageBuckets ? (
+              <div className="grid cols-4">
+                <div className="card"><div className="muted">Pricing current</div><strong>{summary.pricingFreshnessBuckets.current}</strong></div>
+                <div className="card"><div className="muted">Pricing due soon / overdue</div><strong>{summary.pricingFreshnessBuckets.dueSoon} / {summary.pricingFreshnessBuckets.overdue}</strong></div>
+                <div className="card"><div className="muted">Pricing missing</div><strong>{summary.pricingFreshnessBuckets.missing}</strong></div>
+                <div className="card"><div className="muted">Claims coverage</div><strong>{summary.claimsCoverageBuckets.covered} covered / {summary.claimsCoverageBuckets.weak} weak / {summary.claimsCoverageBuckets.none} none</strong></div>
               </div>
             ) : null}
             <div className="stack">
@@ -442,6 +484,26 @@ export default function RevenuePage(): JSX.Element {
                       {risk.weakClaimsGovernance ? "Weak claims governance. " : ""}
                       {risk.publicAssetsAtRisk > 0 ? `${risk.publicAssetsAtRisk} public assets at risk.` : "No active commercial risk flags."}
                     </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {summary.serviceLineComparisons?.length ? (
+              <div className="table">
+                <div className="table-row table-head">
+                  <span>Service line</span>
+                  <span>Governance</span>
+                  <span>Pricing freshness</span>
+                  <span>Review freshness</span>
+                  <span>Claims / risk</span>
+                </div>
+                {summary.serviceLineComparisons.map((comparison) => (
+                  <div key={comparison.serviceLineId} className="table-row">
+                    <span>{comparison.serviceLineId.replaceAll("_", " ")}</span>
+                    <span>{comparison.governanceStatus.replaceAll("_", " ")}</span>
+                    <span>{comparison.pricingFreshness}{comparison.latestPricingGovernanceStatus ? ` / ${comparison.latestPricingGovernanceStatus}` : ""}</span>
+                    <span>{comparison.revenueReviewFreshnessDays != null ? `${comparison.revenueReviewFreshnessDays} days` : "n/a"}</span>
+                    <span>{comparison.claimsCoverageStatus} / {comparison.commercialRiskLevel}</span>
                   </div>
                 ))}
               </div>

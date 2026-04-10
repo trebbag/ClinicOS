@@ -139,6 +139,25 @@ export const coachingTrendSummarySchema = z.object({
   periods: z.array(coachingTrendBucketSchema)
 });
 
+export const trainingEmployeeRiskRowSchema = z.object({
+  employeeId: z.string(),
+  employeeRole: z.string(),
+  openRequirements: z.number().int().nonnegative(),
+  overdueRequirements: z.number().int().nonnegative(),
+  expiringSoonRequirements: z.number().int().nonnegative(),
+  repeatedOverdueCycles: z.number().int().nonnegative(),
+  openFollowUps: z.number().int().nonnegative(),
+  overdueFollowUps: z.number().int().nonnegative()
+});
+
+export const trainingOwnerRoleSummarySchema = z.object({
+  ownerRole: z.string(),
+  activePlans: z.number().int().nonnegative(),
+  openRequirements: z.number().int().nonnegative(),
+  overdueRequirements: z.number().int().nonnegative(),
+  openFollowUps: z.number().int().nonnegative()
+});
+
 export const trainingPlanAnalyticsSummarySchema = z.object({
   generatedAt: z.string(),
   employeeId: z.string().nullable().default(null),
@@ -174,7 +193,9 @@ export const trainingPlanAnalyticsSummarySchema = z.object({
     repeatedCycles: z.number().int().positive()
   })),
   recentCompletionTrend: coachingTrendSummarySchema,
-  requirementCycles: z.array(requirementCycleSummarySchema)
+  requirementCycles: z.array(requirementCycleSummarySchema),
+  employeeRisks: z.array(trainingEmployeeRiskRowSchema),
+  ownerRoleSummaries: z.array(trainingOwnerRoleSummarySchema)
 });
 
 export type TrainingRequirementType = z.infer<typeof trainingRequirementTypeSchema>;
@@ -189,6 +210,8 @@ export type TrainingDashboard = z.infer<typeof trainingDashboardSchema>;
 export type RequirementCycleSummary = z.infer<typeof requirementCycleSummarySchema>;
 export type CoachingTrendBucket = z.infer<typeof coachingTrendBucketSchema>;
 export type CoachingTrendSummary = z.infer<typeof coachingTrendSummarySchema>;
+export type TrainingEmployeeRiskRow = z.infer<typeof trainingEmployeeRiskRowSchema>;
+export type TrainingOwnerRoleSummary = z.infer<typeof trainingOwnerRoleSummarySchema>;
 export type TrainingPlanAnalyticsSummary = z.infer<typeof trainingPlanAnalyticsSummarySchema>;
 
 export function createTrainingRequirement(input: {

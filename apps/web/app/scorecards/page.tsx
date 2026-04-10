@@ -169,6 +169,23 @@ type TrainingAnalytics = {
     repeatedOverdueCycles: number;
     openFollowUps: number;
   }>;
+  employeeRisks: Array<{
+    employeeId: string;
+    employeeRole: string;
+    openRequirements: number;
+    overdueRequirements: number;
+    expiringSoonRequirements: number;
+    repeatedOverdueCycles: number;
+    openFollowUps: number;
+    overdueFollowUps: number;
+  }>;
+  ownerRoleSummaries: Array<{
+    ownerRole: string;
+    activePlans: number;
+    openRequirements: number;
+    overdueRequirements: number;
+    openFollowUps: number;
+  }>;
 };
 
 const defaultCsv = `employee_id,employee_role,period_start,period_end,task_completion_rate,training_completion_rate,audit_pass_rate,issue_close_rate,complaint_count,note_lag_days,refill_turnaround_hours,schedule_fill_rate
@@ -796,6 +813,56 @@ export default function ScorecardsPage(): JSX.Element {
             </div>
           ) : (
             <div className="muted">Completion trend data will populate as recurring requirements and completions accumulate.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid cols-2">
+        <div className="card">
+          <h2>Employee training risk</h2>
+          {trainingAnalytics?.employeeRisks.length ? (
+            <div className="table">
+              <div className="table-row table-head">
+                <span>Employee</span>
+                <span>Open / overdue</span>
+                <span>Expiring / repeated</span>
+                <span>Follow-ups</span>
+              </div>
+              {trainingAnalytics.employeeRisks.map((risk) => (
+                <div key={`${risk.employeeId}:${risk.employeeRole}`} className="table-row">
+                  <span>{risk.employeeId} / {risk.employeeRole}</span>
+                  <span>{risk.openRequirements} / {risk.overdueRequirements}</span>
+                  <span>{risk.expiringSoonRequirements} / {risk.repeatedOverdueCycles}</span>
+                  <span>{risk.openFollowUps} open / {risk.overdueFollowUps} overdue</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="muted">Employee-level training risk will populate once recurring plans materialize across more profiles.</div>
+          )}
+        </div>
+
+        <div className="card">
+          <h2>Owner workload</h2>
+          {trainingAnalytics?.ownerRoleSummaries.length ? (
+            <div className="table">
+              <div className="table-row table-head">
+                <span>Owner role</span>
+                <span>Active plans</span>
+                <span>Open / overdue</span>
+                <span>Open follow-ups</span>
+              </div>
+              {trainingAnalytics.ownerRoleSummaries.map((entry) => (
+                <div key={entry.ownerRole} className="table-row">
+                  <span>{entry.ownerRole}</span>
+                  <span>{entry.activePlans}</span>
+                  <span>{entry.openRequirements} / {entry.overdueRequirements}</span>
+                  <span>{entry.openFollowUps}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="muted">Owner-role workload appears once recurring plans and follow-up items exist in the current view.</div>
           )}
         </div>
       </div>

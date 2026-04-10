@@ -7,8 +7,12 @@ export async function registerRevenueRoutes(app: FastifyInstance): Promise<void>
     requireCapability(actor, "revenue.view");
     const query = request.query as {
       serviceLineId?: string;
+      historyMonths?: string;
     };
-    return app.clinicService.getRevenueDashboardSummary(query);
+    return app.clinicService.getRevenueDashboardSummary({
+      serviceLineId: query.serviceLineId,
+      historyMonths: query.historyMonths ? Number(query.historyMonths) : undefined
+    });
   });
 
   app.get("/payer-issues", async (request) => {

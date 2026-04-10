@@ -96,7 +96,33 @@ export const plannerReconciliationSummarySchema = z.object({
     underSevenDays: z.number().int().nonnegative(),
     sevenToThirtyDays: z.number().int().nonnegative(),
     overThirtyDays: z.number().int().nonnegative()
-  })
+  }),
+  workflowTypeBreakdown: z.array(z.object({
+    workflowType: z.string(),
+    openActionItems: z.number().int().nonnegative(),
+    overdueOpenActionItems: z.number().int().nonnegative(),
+    pendingCreate: z.number().int().nonnegative(),
+    syncErrors: z.number().int().nonnegative()
+  }))
+});
+
+export const checklistTemplatePerformanceSchema = z.object({
+  templateId: z.string(),
+  templateName: z.string(),
+  workflowDefinitionId: z.string(),
+  totalRuns: z.number().int().nonnegative(),
+  blockedItems: z.number().int().nonnegative(),
+  missedRequiredItems: z.number().int().nonnegative(),
+  averageCompletionLatencyMinutes: z.number().nonnegative().nullable()
+});
+
+export const repeatAttentionRoomSchema = z.object({
+  roomId: z.string(),
+  roomLabel: z.string(),
+  roomType: roomTypeSchema,
+  attentionDays: z.number().int().nonnegative(),
+  blockedDays: z.number().int().nonnegative(),
+  missedRequiredItems: z.number().int().nonnegative()
 });
 
 export const roomAnalyticsSummarySchema = z.object({
@@ -108,7 +134,9 @@ export const roomAnalyticsSummarySchema = z.object({
   readinessTrend: z.array(roomReadinessTrendBucketSchema),
   rooms: z.array(roomAnalyticsItemSchema),
   checklist: checklistTrendSummarySchema,
-  plannerReconciliation: plannerReconciliationSummarySchema
+  plannerReconciliation: plannerReconciliationSummarySchema,
+  templatePerformance: z.array(checklistTemplatePerformanceSchema),
+  repeatAttentionRooms: z.array(repeatAttentionRoomSchema)
 });
 
 export const roomCreateSchema = z.object({
@@ -140,6 +168,8 @@ export type RoomReadinessTrendBucket = z.infer<typeof roomReadinessTrendBucketSc
 export type RoomAnalyticsItem = z.infer<typeof roomAnalyticsItemSchema>;
 export type ChecklistTrendSummary = z.infer<typeof checklistTrendSummarySchema>;
 export type PlannerReconciliationSummary = z.infer<typeof plannerReconciliationSummarySchema>;
+export type ChecklistTemplatePerformance = z.infer<typeof checklistTemplatePerformanceSchema>;
+export type RepeatAttentionRoom = z.infer<typeof repeatAttentionRoomSchema>;
 export type RoomAnalyticsSummary = z.infer<typeof roomAnalyticsSummarySchema>;
 export type RoomCreateCommand = z.infer<typeof roomCreateSchema>;
 export type RoomUpdateCommand = z.infer<typeof roomUpdateSchema>;

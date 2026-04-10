@@ -165,7 +165,31 @@ type OfficeAnalytics = {
       sevenToThirtyDays: number;
       overThirtyDays: number;
     };
+    workflowTypeBreakdown: Array<{
+      workflowType: string;
+      openActionItems: number;
+      overdueOpenActionItems: number;
+      pendingCreate: number;
+      syncErrors: number;
+    }>;
   };
+  templatePerformance: Array<{
+    templateId: string;
+    templateName: string;
+    workflowDefinitionId: string;
+    totalRuns: number;
+    blockedItems: number;
+    missedRequiredItems: number;
+    averageCompletionLatencyMinutes: number | null;
+  }>;
+  repeatAttentionRooms: Array<{
+    roomId: string;
+    roomLabel: string;
+    roomType: string;
+    attentionDays: number;
+    blockedDays: number;
+    missedRequiredItems: number;
+  }>;
 };
 
 function statusBadge(status: string): string {
@@ -635,6 +659,24 @@ export default function OfficeManagerPage(): JSX.Element {
               <strong>{analytics?.plannerReconciliation.agingBuckets.overThirtyDays ?? 0}</strong>
             </div>
           </div>
+          {analytics?.plannerReconciliation.workflowTypeBreakdown.length ? (
+            <div className="table" style={{ marginTop: 16 }}>
+              <div className="table-row table-head">
+                <span>Workflow type</span>
+                <span>Open</span>
+                <span>Overdue</span>
+                <span>Planner sync</span>
+              </div>
+              {analytics.plannerReconciliation.workflowTypeBreakdown.map((bucket) => (
+                <div key={bucket.workflowType} className="table-row">
+                  <span>{bucket.workflowType.replaceAll("_", " ")}</span>
+                  <span>{bucket.openActionItems}</span>
+                  <span>{bucket.overdueOpenActionItems}</span>
+                  <span>{bucket.pendingCreate} pending / {bucket.syncErrors} errors</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -666,6 +708,58 @@ export default function OfficeManagerPage(): JSX.Element {
         ) : (
           <div className="muted">No room analytics are available yet for this date range.</div>
         )}
+      </div>
+
+      <div className="grid cols-2">
+        <div className="card">
+          <h2>Checklist template performance</h2>
+          {analytics?.templatePerformance.length ? (
+            <div className="table">
+              <div className="table-row table-head">
+                <span>Template</span>
+                <span>Runs</span>
+                <span>Missed required</span>
+                <span>Blocked / latency</span>
+              </div>
+              {analytics.templatePerformance.map((template) => (
+                <div key={template.templateId} className="table-row">
+                  <span>{template.templateName}</span>
+                  <span>{template.totalRuns}</span>
+                  <span>{template.missedRequiredItems}</span>
+                  <span>
+                    {template.blockedItems} blocked / {template.averageCompletionLatencyMinutes != null ? `${template.averageCompletionLatencyMinutes} min` : "n/a"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="muted">Template-level analytics appear once checklist runs accumulate in the selected window.</div>
+          )}
+        </div>
+
+        <div className="card">
+          <h2>Repeat attention rooms</h2>
+          {analytics?.repeatAttentionRooms.length ? (
+            <div className="table">
+              <div className="table-row table-head">
+                <span>Room</span>
+                <span>Attention days</span>
+                <span>Blocked days</span>
+                <span>Missed required</span>
+              </div>
+              {analytics.repeatAttentionRooms.map((room) => (
+                <div key={room.roomId} className="table-row">
+                  <span>{room.roomLabel}</span>
+                  <span>{room.attentionDays}</span>
+                  <span>{room.blockedDays}</span>
+                  <span>{room.missedRequiredItems}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="muted">No repeat-attention room patterns are currently flagged in this window.</div>
+          )}
+        </div>
       </div>
 
       <div className="card">

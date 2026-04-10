@@ -153,6 +153,22 @@ export default function StandardsPage(): JSX.Element {
     () => evidenceGaps.filter((gap) => gap.status === "ready_for_verification").length,
     [evidenceGaps]
   );
+  const standardsWithCurrentEvidenceCoverage = useMemo(
+    () => standards.filter((standard) => standard.evidenceDocumentIds.length > 0).length,
+    [standards]
+  );
+  const standardsMissingBinderLink = useMemo(
+    () => standards.filter((standard) => !standard.latestBinderId).length,
+    [standards]
+  );
+  const surveyReadyStandards = useMemo(
+    () => standards.filter((standard) => ["evidence_ready", "review_pending", "complete"].includes(standard.status)).length,
+    [standards]
+  );
+  const publishedBinders = useMemo(
+    () => binders.filter((binder) => binder.status === "published").length,
+    [binders]
+  );
 
   function standardGapSummary(standardId: string) {
     const linked = openEvidenceGaps.filter((gap) => gap.standardId === standardId);
@@ -482,6 +498,29 @@ export default function StandardsPage(): JSX.Element {
           </div>
         </div>
         {error ? <div className="alert alert-error">{error}</div> : null}
+      </div>
+
+      <div className="grid cols-4">
+        <div className="card">
+          <div className="muted">Survey-ready standards</div>
+          <strong>{surveyReadyStandards}</strong>
+          <div className="muted">Evidence-ready, review-pending, or complete.</div>
+        </div>
+        <div className="card">
+          <div className="muted">Current evidence coverage</div>
+          <strong>{standardsWithCurrentEvidenceCoverage}</strong>
+          <div className="muted">Standards linked to at least one evidence document.</div>
+        </div>
+        <div className="card">
+          <div className="muted">Missing binder linkage</div>
+          <strong>{standardsMissingBinderLink}</strong>
+          <div className="muted">Mapped standards without a latest binder reference.</div>
+        </div>
+        <div className="card">
+          <div className="muted">Published binders</div>
+          <strong>{publishedBinders}</strong>
+          <div className="muted">Survey packets currently approved and published.</div>
+        </div>
       </div>
 
       <div className="grid two-column">

@@ -5,6 +5,7 @@ import {
   createAuditEvent,
   createChecklistItemRecord,
   createChecklistRun,
+  createChecklistTemplate,
   createDeviceEnrollmentCode,
   createDeviceSession,
   createEnrolledDevice,
@@ -1767,6 +1768,13 @@ describe("Clinic API", () => {
     expect(configStatus.statusCode).toBe(200);
     expect(configStatus.json<{ microsoft: { mode: string }; pilotUsable: boolean }>().microsoft.mode).toBe("stub");
     expect(configStatus.json<{ microsoft: { mode: string }; pilotUsable: boolean }>().pilotUsable).toBe(true);
+    expect(configStatus.json<{
+      hardening: {
+        trustedProxyReadiness: {
+          signatureValidationReady: boolean;
+        };
+      };
+    }>().hardening.trustedProxyReadiness.signatureValidationReady).toBe(false);
 
     await readyApp.close();
   });
@@ -2149,8 +2157,24 @@ describe("Clinic API", () => {
       createdBy: "office-manager-user"
     });
     officeRepository.rooms.push(room);
+    const template = createChecklistTemplate({
+      name: "Daily opening",
+      workflowDefinitionId: "office_manager_daily",
+      createdBy: "office-manager-user",
+      items: [
+        {
+          label: "Sanitize exam surfaces",
+          areaLabel: room.checklistAreaLabel
+        },
+        {
+          label: "Verify sharps bin",
+          areaLabel: room.checklistAreaLabel
+        }
+      ]
+    });
+    officeRepository.checklistTemplates.push(template);
     const run = createChecklistRun({
-      templateId: "daily_opening",
+      templateId: template.id,
       workflowRunId: "workflow_office_1",
       roomId: room.id,
       targetDate: "2026-04-08"
@@ -2212,7 +2236,13 @@ describe("Clinic API", () => {
     const analyticsBody = analytics.json<{
       rooms: Array<{ roomId: string; trackedDays: number; missedRequiredItems: number }>;
       checklist: { totalRuns: number; blockedItems: number };
-      plannerReconciliation: { syncErrors: number; overdueOpenActionItems: number };
+      plannerReconciliation: {
+        syncErrors: number;
+        overdueOpenActionItems: number;
+        workflowTypeBreakdown: Array<{ workflowType: string; syncErrors: number }>;
+      };
+      templatePerformance: Array<{ templateId: string; blockedItems: number; missedRequiredItems: number }>;
+      repeatAttentionRooms: Array<{ roomId: string; missedRequiredItems: number }>;
     }>();
     expect(analyticsBody.rooms).toHaveLength(1);
     expect(analyticsBody.rooms[0].roomId).toBe(room.id);
@@ -2222,6 +2252,30 @@ describe("Clinic API", () => {
     expect(analyticsBody.checklist.blockedItems).toBe(1);
     expect(analyticsBody.plannerReconciliation.syncErrors).toBe(1);
     expect(analyticsBody.plannerReconciliation.overdueOpenActionItems).toBeGreaterThanOrEqual(1);
+    expect(analyticsBody.plannerReconciliation.workflowTypeBreakdown).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workflowType: "review",
+          syncErrors: 1
+        })
+      ])
+    );
+    expect(analyticsBody.templatePerformance).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          blockedItems: 1,
+          missedRequiredItems: 1
+        })
+      ])
+    );
+    expect(analyticsBody.repeatAttentionRooms).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          roomId: room.id,
+          missedRequiredItems: 1
+        })
+      ])
+    );
 
     await officeApp.close();
   });
@@ -2341,6 +2395,8 @@ describe("Clinic API", () => {
       followUpActionBurdenByRole: Array<{ employeeRole: string; openFollowUps: number; overdueFollowUps: number }>;
       repeatedOverdueCycles: Array<{ planId: string; repeatedCycles: number }>;
       requirementCycles: Array<{ planId: string; overdueRequirements: number; openFollowUps: number }>;
+      employeeRisks: Array<{ employeeId: string; overdueRequirements: number; repeatedOverdueCycles: number; openFollowUps: number }>;
+      ownerRoleSummaries: Array<{ ownerRole: string; activePlans: number; overdueRequirements: number; openFollowUps: number }>;
     }>();
     expect(analyticsBody.activePlans).toBe(1);
     expect(analyticsBody.completionTimeliness.late).toBe(1);
@@ -2365,6 +2421,26 @@ describe("Clinic API", () => {
       expect.arrayContaining([
         expect.objectContaining({
           planId: plan.id,
+          overdueRequirements: 2,
+          openFollowUps: 1
+        })
+      ])
+    );
+    expect(analyticsBody.employeeRisks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          employeeId: "EMP-100",
+          overdueRequirements: 2,
+          repeatedOverdueCycles: 2,
+          openFollowUps: 1
+        })
+      ])
+    );
+    expect(analyticsBody.ownerRoleSummaries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ownerRole: "hr_lead",
+          activePlans: 1,
           overdueRequirements: 2,
           openFollowUps: 1
         })
@@ -2420,6 +2496,24 @@ describe("Clinic API", () => {
     const smokeItem = created.checklistItems.find((item) => item.checklistKey === "smoke_passed");
     expect(smokeItem?.status).toBe("pending");
 
+    deploymentRepository.auditEvents.push({
+      ...createAuditEvent({
+        eventType: "ops.alert_dispatched",
+        entityType: "ops_alert",
+        entityId: "worker.heartbeat_stalled",
+        actorId: "medical_director-user",
+        actorRole: "medical_director",
+        actorName: "medical_director-user",
+        payload: {
+          scope: "worker",
+          severity: "critical",
+          cooldownMinutes: 30,
+          messageId: "teams_alert_1"
+        }
+      }),
+      createdAt: "2026-04-08T14:00:00.000Z"
+    });
+
     const updateResponse = await deploymentApp.inject({
       method: "PATCH",
       url: `/ops/deployment-promotions/${created.id}/checklist-items/${smokeItem?.id}`,
@@ -2454,6 +2548,32 @@ describe("Clinic API", () => {
         expect.objectContaining({ checklistKey: "smoke_passed" })
       ])
     );
+    expect(configStatus.json<{
+      hardening: {
+        latestPromotionChecklistProgress: {
+          totalItems: number;
+          completedItems: number;
+          completionPercent: number;
+        } | null;
+        alertHistory: Array<{ key: string; messageId: string | null }>;
+        trustedProxyReadiness: { signatureValidationReady: boolean };
+      };
+    }>().hardening.latestPromotionChecklistProgress).toEqual(
+      expect.objectContaining({
+        totalItems: created.checklistItems.length,
+        completedItems: 2
+      })
+    );
+    expect(configStatus.json<{ hardening: { latestPromotionChecklistProgress: { completionPercent: number } | null } }>().hardening.latestPromotionChecklistProgress?.completionPercent).toBeGreaterThan(0);
+    expect(configStatus.json<{ hardening: { alertHistory: Array<{ key: string; messageId: string | null }> } }>().hardening.alertHistory).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "worker.heartbeat_stalled",
+          messageId: "teams_alert_1"
+        })
+      ])
+    );
+    expect(configStatus.json<{ hardening: { trustedProxyReadiness: { signatureValidationReady: boolean } } }>().hardening.trustedProxyReadiness.signatureValidationReady).toBe(false);
 
     await deploymentApp.close();
   });
@@ -3452,14 +3572,24 @@ describe("Clinic API", () => {
 
     const qapiTrends = await app.inject({
       method: "GET",
-      url: "/qapi/trends",
+      url: "/qapi/trends?months=12",
       headers: headers("medical_director")
     });
     expect(qapiTrends.statusCode).toBe(200);
-    const trendBody = qapiTrends.json<{ periods: Array<{ evidenceGapsOpened: number; evidenceGapsVerified: number }> }>();
-    expect(trendBody.periods).toHaveLength(6);
+    const trendBody = qapiTrends.json<{
+      requestedMonths: number;
+      periods: Array<{ evidenceGapsOpened: number; evidenceGapsVerified: number }>;
+      rollup: { evidenceGapsOpened: number; evidenceGapsVerified: number; currentOpenEvidenceGaps: number };
+      highlights: string[];
+    }>();
+    expect(trendBody.requestedMonths).toBe(12);
+    expect(trendBody.periods).toHaveLength(12);
     expect(trendBody.periods.some((period) => period.evidenceGapsOpened >= 1)).toBe(true);
     expect(trendBody.periods.some((period) => period.evidenceGapsVerified >= 1)).toBe(true);
+    expect(trendBody.rollup.evidenceGapsOpened).toBeGreaterThanOrEqual(1);
+    expect(trendBody.rollup.evidenceGapsVerified).toBeGreaterThanOrEqual(1);
+    expect(trendBody.rollup.currentOpenEvidenceGaps).toBeGreaterThanOrEqual(0);
+    expect(trendBody.highlights.length).toBeGreaterThan(0);
   });
 
   it("dispatches critical ops alerts and exposes deeper revenue and service-line analytics", async () => {
@@ -3575,20 +3705,32 @@ describe("Clinic API", () => {
 
     const summaryResponse = await alertApp.inject({
       method: "GET",
-      url: "/revenue/summary?serviceLineId=telehealth",
+      url: "/revenue/summary?serviceLineId=telehealth&historyMonths=12",
       headers: headers("medical_director")
     });
     expect(summaryResponse.statusCode).toBe(200);
     const summary = summaryResponse.json<{
       payerIssueAging: { escalated: number; dueSoon: number };
       pricingReviewBuckets: { reviewDueSoon: number };
+      pricingFreshnessBuckets: { current: number; dueSoon: number; overdue: number; missing: number };
+      claimsCoverageBuckets: { covered: number; weak: number; none: number };
       trends: Array<{ periodLabel: string }>;
       serviceLineRisks: Array<{ serviceLineId: string }>;
+      serviceLineComparisons: Array<{ serviceLineId: string; pricingFreshness: string; commercialRiskLevel: string }>;
     }>();
     expect(summary.payerIssueAging.escalated).toBeGreaterThanOrEqual(1);
     expect(summary.pricingReviewBuckets.reviewDueSoon).toBeGreaterThanOrEqual(1);
-    expect(summary.trends.length).toBe(6);
+    expect(summary.pricingFreshnessBuckets.dueSoon).toBeGreaterThanOrEqual(1);
+    expect(summary.claimsCoverageBuckets.none + summary.claimsCoverageBuckets.weak + summary.claimsCoverageBuckets.covered).toBeGreaterThanOrEqual(1);
+    expect(summary.trends.length).toBe(12);
     expect(summary.serviceLineRisks.some((risk) => risk.serviceLineId === "telehealth")).toBe(true);
+    expect(summary.serviceLineComparisons).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          serviceLineId: "telehealth"
+        })
+      ])
+    );
 
     const serviceLinesResponse = await alertApp.inject({
       method: "GET",
@@ -3597,10 +3739,19 @@ describe("Clinic API", () => {
     });
     expect(serviceLinesResponse.statusCode).toBe(200);
     const telehealth = serviceLinesResponse
-      .json<Array<{ serviceLine: { id: string }; latestPricingGovernanceStatus: string | null; latestRevenueReviewStatus: string | null }>>()
+      .json<Array<{
+        serviceLine: { id: string };
+        latestPricingGovernanceStatus: string | null;
+        pricingGovernanceFreshness: string;
+        latestRevenueReviewStatus: string | null;
+        revenueReviewFreshnessDays: number | null;
+        commercialRiskLevel: string;
+      }>>()
       .find((row) => row.serviceLine.id === "telehealth");
     expect(telehealth?.latestPricingGovernanceStatus).toBeTruthy();
     expect(telehealth?.latestRevenueReviewStatus).toBeTruthy();
+    expect(telehealth?.pricingGovernanceFreshness).toBeTruthy();
+    expect(telehealth?.commercialRiskLevel).toBeTruthy();
 
     await alertApp.close();
   });

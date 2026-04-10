@@ -115,9 +115,27 @@ export const qapiTrendBucketSchema = z.object({
   evidenceBindersPublished: z.number().int().nonnegative()
 });
 
+export const qapiTrendRollupSchema = z.object({
+  requestedMonths: z.number().int().positive(),
+  incidentsOpened: z.number().int().nonnegative(),
+  incidentsClosed: z.number().int().nonnegative(),
+  capasOpened: z.number().int().nonnegative(),
+  capasClosed: z.number().int().nonnegative(),
+  evidenceGapsOpened: z.number().int().nonnegative(),
+  evidenceGapsVerified: z.number().int().nonnegative(),
+  averageOverdueStandardsReviews: z.number().nonnegative(),
+  averageEvidenceBindersInReview: z.number().nonnegative(),
+  currentOpenEvidenceGaps: z.number().int().nonnegative(),
+  currentVerificationBacklog: z.number().int().nonnegative(),
+  currentStandardsMissingEvidence: z.number().int().nonnegative()
+});
+
 export const qapiTrendSummarySchema = z.object({
   generatedAt: z.string(),
-  periods: z.array(qapiTrendBucketSchema)
+  requestedMonths: z.number().int().positive(),
+  periods: z.array(qapiTrendBucketSchema),
+  rollup: qapiTrendRollupSchema,
+  highlights: z.array(z.string())
 });
 
 export type EvidenceGapStatus = z.infer<typeof evidenceGapStatusSchema>;
@@ -127,6 +145,7 @@ export type EvidenceGapCreateCommand = z.infer<typeof evidenceGapCreateSchema>;
 export type EvidenceGapUpdateCommand = z.infer<typeof evidenceGapUpdateSchema>;
 export type EvidenceGapVerificationCommand = z.infer<typeof evidenceGapVerifySchema>;
 export type QapiTrendBucket = z.infer<typeof qapiTrendBucketSchema>;
+export type QapiTrendRollup = z.infer<typeof qapiTrendRollupSchema>;
 export type QapiTrendSummary = z.infer<typeof qapiTrendSummarySchema>;
 
 export function normalizeEvidenceGapKey(input: {

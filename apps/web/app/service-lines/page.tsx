@@ -50,9 +50,12 @@ type ServiceLineSummary = {
   publishedPublicAssetCount: number;
   latestPricingGovernanceStatus: "draft" | "approval_pending" | "approved" | "publish_pending" | "published" | "attention_needed" | null;
   latestPricingReviewDueAt: string | null;
+  pricingGovernanceFreshness: "current" | "due_soon" | "overdue" | "missing";
   latestRevenueReviewStatus: "draft" | "review_pending" | "completed" | "archived" | null;
   latestRevenueReviewDate: string | null;
+  revenueReviewFreshnessDays: number | null;
   weakClaimsGovernance: boolean;
+  commercialRiskLevel: "low" | "medium" | "high" | "critical";
 };
 
 type ApprovalTask = {
@@ -274,6 +277,7 @@ export default function ServiceLinesPage(): JSX.Element {
                     <div className="muted">
                       {row.latestPricingReviewDueAt ? `Review due ${row.latestPricingReviewDueAt.slice(0, 10)}` : "No pricing review date"}
                     </div>
+                    <div className="muted">Freshness {row.pricingGovernanceFreshness.replaceAll("_", " ")}</div>
                   </div>
                   <div className="card">
                     <div className="muted">Revenue review</div>
@@ -281,12 +285,38 @@ export default function ServiceLinesPage(): JSX.Element {
                     <div className="muted">
                       {row.latestRevenueReviewDate ? row.latestRevenueReviewDate.slice(0, 10) : "No recent revenue review"}
                     </div>
+                    <div className="muted">
+                      Freshness {row.revenueReviewFreshnessDays != null ? `${row.revenueReviewFreshnessDays} days` : "not established"}
+                    </div>
                   </div>
                   <div className="card">
                     <div className="muted">Claims-governance risk</div>
                     <strong>{row.weakClaimsGovernance ? "Attention needed" : "Covered"}</strong>
                     <div className="muted">
                       {row.weakClaimsGovernance ? "Published assets outpace claims governance coverage." : "Claims inventory is keeping pace."}
+                    </div>
+                  </div>
+                </div>
+                <div className="grid cols-3">
+                  <div className="card">
+                    <div className="muted">Commercial risk</div>
+                    <strong>{row.commercialRiskLevel}</strong>
+                    <div className="muted">
+                      Combines governance-pack status, pricing freshness, revenue review freshness, and claims coverage.
+                    </div>
+                  </div>
+                  <div className="card">
+                    <div className="muted">Pricing freshness</div>
+                    <strong>{row.pricingGovernanceFreshness.replaceAll("_", " ")}</strong>
+                    <div className="muted">
+                      {row.latestPricingReviewDueAt ? `Due ${row.latestPricingReviewDueAt.slice(0, 10)}` : "No scheduled review date"}
+                    </div>
+                  </div>
+                  <div className="card">
+                    <div className="muted">Revenue freshness</div>
+                    <strong>{row.revenueReviewFreshnessDays != null ? `${row.revenueReviewFreshnessDays} days` : "not set"}</strong>
+                    <div className="muted">
+                      {row.latestRevenueReviewDate ? `Anchor ${row.latestRevenueReviewDate.slice(0, 10)}` : "No review anchor date"}
                     </div>
                   </div>
                 </div>

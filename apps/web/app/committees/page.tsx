@@ -58,8 +58,12 @@ type CommitteeQapiDashboardSummary = {
   openCapas: number;
   overdueCapas: number;
   openEvidenceGaps: number;
+  verifiedEvidenceGaps: number;
   criticalEvidenceGaps: number;
+  blockedEvidenceGaps: number;
   overdueEvidenceGaps: number;
+  evidenceGapVerificationBacklog: number;
+  evidenceGapActionItemsOpen: number;
   overdueActionItems: number;
   pendingApprovals: number;
   overdueScorecardReviews: number;
@@ -67,9 +71,13 @@ type CommitteeQapiDashboardSummary = {
   standardsAttentionNeeded: number;
   standardsReviewPending: number;
   overdueStandardsReviews: number;
+  standardsSurveyReady: number;
+  standardsWithCurrentEvidenceCoverage: number;
   standardsMissingCurrentEvidence: number;
+  standardsMissingBinderLink: number;
   evidenceBindersDraft: number;
   evidenceBindersInReview: number;
+  evidenceBindersPublished: number;
   controlledSubstancePacketsNeedingReview: number;
   controlledSubstancePacketsPublished: number;
   telehealthPacketsNeedingReview: number;
@@ -78,6 +86,7 @@ type CommitteeQapiDashboardSummary = {
 
 type QapiTrendSummary = {
   generatedAt: string;
+  requestedMonths: number;
   periods: Array<{
     periodLabel: string;
     periodStart: string;
@@ -93,6 +102,21 @@ type QapiTrendSummary = {
     evidenceBindersInReview: number;
     evidenceBindersPublished: number;
   }>;
+  rollup: {
+    requestedMonths: number;
+    incidentsOpened: number;
+    incidentsClosed: number;
+    capasOpened: number;
+    capasClosed: number;
+    evidenceGapsOpened: number;
+    evidenceGapsVerified: number;
+    averageOverdueStandardsReviews: number;
+    averageEvidenceBindersInReview: number;
+    currentOpenEvidenceGaps: number;
+    currentVerificationBacklog: number;
+    currentStandardsMissingEvidence: number;
+  };
+  highlights: string[];
 };
 
 type CommitteeMeetingRecord = {
@@ -194,6 +218,7 @@ export default function CommitteesPage(): JSX.Element {
   const [approvals, setApprovals] = useState<ApprovalTask[]>([]);
   const [qapiSummary, setQapiSummary] = useState<CommitteeQapiDashboardSummary | null>(null);
   const [qapiTrends, setQapiTrends] = useState<QapiTrendSummary | null>(null);
+  const [qapiTrendMonths, setQapiTrendMonths] = useState("12");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -252,7 +277,7 @@ export default function CommitteesPage(): JSX.Element {
         apiRequest<CommitteeRecord[]>("/committees?isActive=true", actor),
         apiRequest<CommitteeMeetingRecord[]>("/committee-meetings", actor),
         apiRequest<CommitteeQapiDashboardSummary>("/committees/qapi-summary", actor),
-        apiRequest<QapiTrendSummary>("/qapi/trends", actor),
+        apiRequest<QapiTrendSummary>(`/qapi/trends?months=${qapiTrendMonths}`, actor),
         hasCapability("approvals.view")
           ? apiRequest<ApprovalTask[]>("/approvals?status=requested", actor)
           : Promise.resolve([])
@@ -274,7 +299,7 @@ export default function CommitteesPage(): JSX.Element {
 
   useEffect(() => {
     void loadData();
-  }, [actor, canView]);
+  }, [actor, canView, qapiTrendMonths]);
 
   async function runMutation(action: () => Promise<void>): Promise<void> {
     setSubmitting(true);
@@ -461,7 +486,7 @@ export default function CommitteesPage(): JSX.Element {
             <div className="card">
               <div className="muted">Open evidence gaps</div>
               <strong>{qapiSummary.openEvidenceGaps}</strong>
-              <div className="muted">Critical: {qapiSummary.criticalEvidenceGaps}</div>
+              <div className="muted">Critical: {qapiSummary.criticalEvidenceGaps} · blocked {qapiSummary.blockedEvidenceGaps}</div>
             </div>
             <div className="card">
               <div className="muted">Pending approvals</div>
@@ -473,6 +498,11 @@ export default function CommitteesPage(): JSX.Element {
               <strong>{qapiSummary.overdueActionItems}</strong>
               <div className="muted">Scorecard reviews: {qapiSummary.overdueScorecardReviews}</div>
             </div>
+            <div className="card">
+              <div className="muted">Verification backlog</div>
+              <strong>{qapiSummary.evidenceGapVerificationBacklog}</strong>
+              <div className="muted">Evidence-gap follow-ups open: {qapiSummary.evidenceGapActionItemsOpen}</div>
+            </div>
           </div>
           <div className="grid cols-4">
             <div className="card">
@@ -483,12 +513,12 @@ export default function CommitteesPage(): JSX.Element {
             <div className="card">
               <div className="muted">Overdue standard reviews</div>
               <strong>{qapiSummary.overdueStandardsReviews}</strong>
-              <div className="muted">Binder drafts: {qapiSummary.evidenceBindersDraft}</div>
+              <div className="muted">Binder drafts: {qapiSummary.evidenceBindersDraft} · published {qapiSummary.evidenceBindersPublished}</div>
             </div>
             <div className="card">
               <div className="muted">Standards missing current evidence</div>
               <strong>{qapiSummary.standardsMissingCurrentEvidence}</strong>
-              <div className="muted">Overdue evidence gaps: {qapiSummary.overdueEvidenceGaps}</div>
+              <div className="muted">Current evidence coverage: {qapiSummary.standardsWithCurrentEvidenceCoverage}</div>
             </div>
             <div className="card">
               <div className="muted">Evidence binders in review</div>
@@ -514,6 +544,16 @@ export default function CommitteesPage(): JSX.Element {
                   : "No critical governance escalations in the current snapshot."}
               </div>
             </div>
+            <div className="card">
+              <div className="muted">Survey-ready standards</div>
+              <strong>{qapiSummary.standardsSurveyReady}</strong>
+              <div className="muted">Missing binder link: {qapiSummary.standardsMissingBinderLink}</div>
+            </div>
+            <div className="card">
+              <div className="muted">Evidence gaps verified</div>
+              <strong>{qapiSummary.verifiedEvidenceGaps}</strong>
+              <div className="muted">Overdue evidence gaps: {qapiSummary.overdueEvidenceGaps}</div>
+            </div>
           </div>
         </article>
       ) : null}
@@ -521,9 +561,45 @@ export default function CommitteesPage(): JSX.Element {
       {qapiTrends ? (
         <article className="card stack">
           <div className="actions" style={{ justifyContent: "space-between" }}>
-            <h2>QAPI Trends</h2>
-            <span className="muted">Generated {new Date(qapiTrends.generatedAt).toLocaleString()}</span>
+            <div className="stack" style={{ gap: 4 }}>
+              <h2>QAPI Trends</h2>
+              <span className="muted">Generated {new Date(qapiTrends.generatedAt).toLocaleString()}</span>
+            </div>
+            <label className="stack" style={{ minWidth: 160 }}>
+              <span className="muted">Trend window</span>
+              <select value={qapiTrendMonths} onChange={(event) => setQapiTrendMonths(event.target.value)}>
+                <option value="6">Last 6 months</option>
+                <option value="12">Last 12 months</option>
+                <option value="18">Last 18 months</option>
+              </select>
+            </label>
           </div>
+          <div className="grid cols-4">
+            <div className="card">
+              <div className="muted">Incidents opened / closed</div>
+              <strong>{qapiTrends.rollup.incidentsOpened} / {qapiTrends.rollup.incidentsClosed}</strong>
+            </div>
+            <div className="card">
+              <div className="muted">CAPAs opened / closed</div>
+              <strong>{qapiTrends.rollup.capasOpened} / {qapiTrends.rollup.capasClosed}</strong>
+            </div>
+            <div className="card">
+              <div className="muted">Evidence gaps opened / verified</div>
+              <strong>{qapiTrends.rollup.evidenceGapsOpened} / {qapiTrends.rollup.evidenceGapsVerified}</strong>
+            </div>
+            <div className="card">
+              <div className="muted">Current backlog</div>
+              <strong>{qapiTrends.rollup.currentOpenEvidenceGaps}</strong>
+              <div className="muted">Verification backlog {qapiTrends.rollup.currentVerificationBacklog}</div>
+            </div>
+          </div>
+          {qapiTrends.highlights.length ? (
+            <ul className="stack" style={{ margin: 0, paddingLeft: 18 }}>
+              {qapiTrends.highlights.map((highlight) => (
+                <li key={highlight}>{highlight}</li>
+              ))}
+            </ul>
+          ) : null}
           <div className="table">
             <div className="table-row table-head">
               <span>Period</span>

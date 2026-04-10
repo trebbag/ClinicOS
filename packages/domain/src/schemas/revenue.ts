@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { randomId } from "../common";
 import { roles, serviceLines, type Role, type ServiceLine } from "../enums";
+import { serviceLineGovernanceStatusSchema } from "./serviceLine";
 
 export const payerIssueStatusSchema = z.enum([
   "open",
@@ -100,6 +101,17 @@ export const revenueDashboardSummarySchema = z.object({
     pendingApproval: z.number().int().nonnegative(),
     attentionNeeded: z.number().int().nonnegative()
   }),
+  pricingFreshnessBuckets: z.object({
+    current: z.number().int().nonnegative(),
+    dueSoon: z.number().int().nonnegative(),
+    overdue: z.number().int().nonnegative(),
+    missing: z.number().int().nonnegative()
+  }),
+  claimsCoverageBuckets: z.object({
+    covered: z.number().int().nonnegative(),
+    weak: z.number().int().nonnegative(),
+    none: z.number().int().nonnegative()
+  }),
   trends: z.array(z.object({
     periodLabel: z.string(),
     periodStart: z.string(),
@@ -117,6 +129,18 @@ export const revenueDashboardSummarySchema = z.object({
     publicAssetsAtRisk: z.number().int().nonnegative(),
     weakClaimsGovernance: z.boolean(),
     missingPricingGovernance: z.boolean()
+  })),
+  serviceLineComparisons: z.array(z.object({
+    serviceLineId: z.enum(serviceLines),
+    governanceStatus: serviceLineGovernanceStatusSchema,
+    publishedPack: z.boolean(),
+    latestPricingGovernanceStatus: pricingGovernanceStatusSchema.nullable(),
+    pricingFreshness: z.enum(["current", "due_soon", "overdue", "missing"]),
+    latestRevenueReviewStatus: revenueReviewStatusSchema.nullable(),
+    revenueReviewFreshnessDays: z.number().int().nonnegative().nullable(),
+    publishedPublicAssets: z.number().int().nonnegative(),
+    claimsCoverageStatus: z.enum(["covered", "weak", "none"]),
+    commercialRiskLevel: z.enum(["low", "medium", "high", "critical"])
   })),
   attentionItems: z.array(z.string())
 });
